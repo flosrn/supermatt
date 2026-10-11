@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-10-11
+
+### Fixed
+
+- `setup-supermatt-skills`: uses the current GitLab issue-list JSON option and paginates GitHub native child issues.
+- `dependency-vetting`: distinguishes unverified registry claims from independently verified metadata.
+- `ideate`: queues frame tasks within host worker capacity and reports when independent verification is unavailable.
+- `improve-architecture`: uses the shared `codebase-design` deletion test.
+- `improve-tests`: permits the documented setup-only renderer stub exception while retaining real adapter smoke tests.
+- `jury`: queues both voting and review seats within available capacity without dropping seats for scheduling limits.
+- `prototype`: checks file-URL storage support and provides explicit export/import when storage is unavailable.
+- `qa`: propagates failed terminal captures through polling and declares the terminal driver's prerequisites.
+- `retro`: verifies session identity before selecting a transcript instead of assuming the newest file belongs to the current session.
+- `ship-pr`: checks external CI even when Actions is disabled and requires configuration evidence before declaring that no CI applies.
+- `tdd`: declares mutation-runner prerequisites and retains failure diagnostics under `test-failed` until the caller verifies the intended assertion.
+- `teach`: describes lesson HTML entry files and the shared assets required when exporting them.
+- `triage`: includes the supporting inspection in the example brief's no-change claim.
+- `writing-for-agents`: limits description-removal claims to Claude Code and explains cross-host restrictions through invocation policy.
+
 ## [0.19.0] - 2026-10-09
 
 ### Changed
@@ -571,7 +590,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Claude Code and Codex marketplaces for the plugin and its 25 engineering and productivity skills.
 
-[unreleased]: https://github.com/svyatov/supermatt/compare/v0.19.0...HEAD
+[unreleased]: https://github.com/svyatov/supermatt/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/svyatov/supermatt/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/svyatov/supermatt/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/svyatov/supermatt/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/svyatov/supermatt/compare/v0.17.0...v0.18.0

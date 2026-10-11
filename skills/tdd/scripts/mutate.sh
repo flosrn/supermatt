@@ -6,11 +6,14 @@
 # on its first line, then the exact text to find, a line holding only ====, and
 # the text to put in its place. Only the first match is replaced.
 #
-# Prints one line per mutation file: red (TEST failed), GREEN (TEST passed: no
+# Prints one line per mutation file: test-failed (inspect TEST's output), GREEN (TEST passed: no
 # test protects that behavior), timeout (TEST ran past SECONDS and was killed),
 # broken (BUILD failed, which proves nothing), or missing (the text to find is
 # not in the file). SECONDS defaults to five times the unchanged run plus a
-# minute. Exits 1 unless every mutation is red. Exits 2 before any mutation
+# minute. Failed TEST output is printed on stderr with its mutation name.
+# Exit 0 means every TEST failed, not that each failed for the intended assertion:
+# the caller must verify that evidence before counting a mutation as red.
+# Exits 1 if any mutation has another outcome. Exits 2 before any mutation
 # when BUILD or TEST already fails on the unchanged code, since every mutation
 # would then read red. After a broken mutation, a hint on stderr names its
 # usual cause, an unused name.
@@ -57,7 +60,7 @@ stop() {
 cleanup() {
   stop
   if [ -n "$target" ]; then cp "$backup" "$target"; fi
-  rm -f "$backup" "$backup.expired"
+  rm -f "$backup" "$backup.expired" "$backup.output"
 }
 
 backup=$(mktemp)
@@ -82,7 +85,7 @@ supervise='
 # to pass, fail or timeout.
 run_test() {
   rm -f "$backup.expired"
-  perl -e "$supervise" "$1" "$backup.expired" sh -c "$test" > /dev/null 2>&1 &
+  perl -e "$supervise" "$1" "$backup.expired" sh -c "$test" > "$backup.output" 2>&1 &
   group=$!
   if wait "$group" 2> /dev/null; then outcome=pass; else outcome=fail; fi
   stop
@@ -121,14 +124,18 @@ for m in "$@"; do
     run_test "$limit"
     case $outcome in
     pass) result=GREEN ;;
-    fail) result=red ;;
+    fail)
+      result=test-failed
+      printf 'mutate.sh: TEST failed for %s; inspect the cause:\n' "$m" >&2
+      cat "$backup.output" >&2
+      ;;
     *) result=timeout ;;
     esac
   fi
   cp "$backup" "$target"
   target=
   echo "$m $result"
-  [ "$result" = red ] || status=1
+  [ "$result" = test-failed ] || status=1
   [ "$result" = broken ] && broken=1
 done
 if [ -n "${broken-}" ]; then

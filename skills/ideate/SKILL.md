@@ -28,13 +28,13 @@ Done when the subject is named or the user picked Surprise me.
 
 ### 2. Ground
 
-Read the glossary and the ADRs (`docs/agents/domain.md` gives the layout; by default `GLOSSARY.md` and `docs/adr/` at the root), and the README. Then spawn one Explore subagent to map the subject: what exists, where it hurts, what recently changed (`git log`), open TODOs, and open issues in the repo's issue tracker (`docs/agents/issue-tracker.md` says where). It returns a **grounding summary** of at most 150 lines, with `file:line` pointers for every claim.
+Read the glossary and the ADRs (`docs/agents/domain.md` gives the layout; by default `GLOSSARY.md` and `docs/adr/` at the root), and the README. Then spawn one Explore subagent to map the subject: what exists, where it hurts, what recently changed (`git log`), open TODOs, and open issues in the repo's issue tracker (`docs/agents/issue-tracker.md` says where). It returns a **grounding summary** of at most 150 lines, with `file:line` pointers for every claim. If subagents are unavailable, perform this task and the later generation and verification tasks sequentially yourself, and report the lack of an independent verifier.
 
 Done when the grounding summary exists. If grounding fails (no repo, empty repo), say so and ideate from the user's description, with `reasoned:` and `external:` bases only.
 
 ### 3. Generate
 
-Spawn the frame subagents in parallel, in one message. Each gets the same grounding summary, the focus, and its assigned **frames**. A frame is a starting bias, not a fence; cross-frame ideas are welcome.
+Check the host's worker limit and occupied slots. Dispatch only the frame tasks that fit, queue the rest, and start the next task when a worker finishes. If capacity is unknown, use one worker at a time. Each gets the same grounding summary, the focus, and its assigned **frames**. A frame is a starting bias, not a fence; cross-frame ideas are welcome.
 
 1. **Pain and friction**: what is slow, broken, or annoying.
 2. **Inversion, removal, or automation**: flip a painful step, delete it, or automate it away.
@@ -43,11 +43,11 @@ Spawn the frame subagents in parallel, in one message. Each gets the same ground
 5. **Cross-domain analogy**: how a different field solves the same shape of problem. Push past the first analogy.
 6. **Constraint-flipping**: take a constraint to its opposite or extreme (budget 10x or 0, one user or a million), and keep the design that falls out.
 
-Use four agents: frames 1, 2, and 4 get one each; frames 3, 5, and 6 share the fourth, since all three invert givens. Give every agent this charter:
+Use four frame tasks: frames 1, 2, and 4 get one each; frames 3, 5, and 6 share the fourth, since all three invert givens. Give every task this charter:
 
 > The user will pick one of these ideas to build, so an idea earns its place only if it could change what they do next. Your first few ideas are the obvious ones: treat them as warm-up. Return about 6 per frame, each with a title, a 2-4 sentence summary, a tagged basis, and one line on why it matters. A `direct:` basis quotes a line you read, never a guessed citation. Drop any idea you cannot give a basis. Stay inside the focus.
 
-Done when every agent has returned.
+Done when all four frame tasks have returned results.
 
 ### 4. Merge
 

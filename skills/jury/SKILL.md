@@ -48,7 +48,9 @@ This host is Codex when any of `CODEX_SANDBOX`, `CODEX_SESSION_ID`, or `CODEX_TH
 
 ## Step 4: Blind vote
 
-Dispatch every seat in one message, so no juror can see another's answer. A host seat is a fresh subagent, never a fork of this conversation, that gets only the juror prompt. The Codex seat is a Bash call in the same message, with a 600000 ms timeout. Make its directory first with `mktemp -d`:
+Before each round, check the host's worker limit and occupied slots. Dispatch only seats that fit, queue the rest, and start them as workers finish. If capacity is unknown, use one worker at a time. A capacity rejection leaves the seat queued; it consumes no retry and is never a reason to drop it. Every seat gets the original blind inputs, without earlier seats' answers from that round.
+
+A host seat is a fresh subagent, never a fork of this conversation, that gets only the juror prompt. The Codex seat is a Bash call with a 600000 ms timeout, dispatched alongside the host seats that fit. Make its directory first with `mktemp -d`:
 
 ```bash
 codex exec --ignore-user-config --disable apps --disable plugins -s read-only -c 'approval_policy="never"' --ephemeral --skip-git-repo-check -C <project root> -o <temp dir>/vote.md - > <temp dir>/codex.log 2>&1 <<'EOF'
@@ -85,7 +87,7 @@ Run one review round, never more. More rounds make jurors agree with each other,
 
 1. **Check facts.** Find the factual claims the jurors disagree on that could change the vote. Check each against its source yourself, and mark it verified, contradicted, or unverifiable.
 2. **Anonymize.** Remove the lens names from the juror blocks. Label them Position A, B, C, and give each reviewer its own shuffled order.
-3. **Dispatch fresh reviewers**, one per seat, in one message, never forks. The Codex seat reviews through `codex exec` with `-o <temp dir>/review.md` and the same log redirect, unless it failed in Step 4. If that call fails, dispatch a host reviewer and record the swap. A fresh reviewer wrote none of the positions, so it has no answer of its own to protect.
+3. **Dispatch fresh reviewers**, one per seat, never forks, using Step 4's capacity checks and queue. Every reviewer gets the same brief, fact checks, and anonymized positions, without earlier reviewers' answers. The Codex seat reviews through `codex exec` with `-o <temp dir>/review.md` and the same log redirect, unless it failed in Step 4. If that call fails, queue a host reviewer and record the swap. A fresh reviewer wrote none of the positions, so it has no answer of its own to protect.
 
 The reviewer prompt:
 

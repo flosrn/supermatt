@@ -102,8 +102,8 @@ Truncation should break at the last word boundary before 1024 characters
 and append "..." to indicate truncation.
 
 **Key interfaces:**
-- The `SkillMetadata` type's `description` field: no type change needed,
-  but the validation/processing logic that populates it needs to respect
+- Inspection of `SkillMetadata` confirms its `description` field accepts a string,
+  so no type change is needed. The validation/processing logic needs to respect
   word boundaries
 - Any function that reads SKILL.md frontmatter and extracts the description
 

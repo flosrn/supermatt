@@ -92,14 +92,16 @@ keys() {
 }
 
 show() {
-  tmux capture-pane -p -t "$1" |
+  capture="$(tmux capture-pane -p -t "$1")" || return 1
+  printf '%s\n' "$capture" |
     perl -CSD -0777 -pe 's/([\x{e000}-\x{f8ff}\x{f0000}-\x{10ffff}])/sprintf("[U+%04X]", ord $1)/ge; s/\n+\z/\n/'
 }
 
 # colors reads the SGR codes of capture-pane -e. tmux carries the attributes
 # from one row to the next, so the state carries too.
 colors() {
-  tmux capture-pane -p -e -t "$1" | perl -CSD -ne '
+  capture="$(tmux capture-pane -p -e -t "$1")" || return 1
+  printf '%s\n' "$capture" | perl -CSD -ne '
     BEGIN { $fg = "default"; $bold = "" }
     sub run { my $t = shift; $t =~ s/([\x{e000}-\x{f8ff}\x{f0000}-\x{10ffff}])/sprintf("[U+%04X]", ord $1)/ge;
       print qq($. $fg$bold "$t"\n) if $t =~ /\S/ }
@@ -131,7 +133,7 @@ wait_for() {
   while :; do
     # Read whether the program has exited before the screen, so a dead pane's screen is final.
     dead="$(tmux display -p -t "$session" '#{pane_dead}')" || exit 1
-    screen="$(show "$session")"
+    screen="$(show "$session")" || return 1
     case $screen in
     *"$text"*) shown=yes ;;
     *) shown=no ;;
@@ -153,7 +155,7 @@ wait_for() {
 # settle polls until the screen stays the same for three polls in a row, then prints it.
 settle() {
   session=$1 tries=50 same=0
-  last="$(show "$session")"
+  last="$(show "$session")" || return 1
   while [ "$same" -lt 3 ]; do
     if [ "$tries" -le 0 ]; then
       printf '%s\n' "$last"
@@ -162,7 +164,7 @@ settle() {
     fi
     tries=$((tries - 1))
     sleep 0.1
-    screen="$(show "$session")"
+    screen="$(show "$session")" || return 1
     if [ "$screen" = "$last" ]; then
       same=$((same + 1))
     else

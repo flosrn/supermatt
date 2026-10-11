@@ -3,7 +3,7 @@ name: qa
 description: "QA a change in the running program, the way its user meets it: drive a CLI or terminal UI through tmux, a web app through a browser, and check every requested behavior against what you observe. Use after implementing a change and before code review, or when the user asks for a QA pass, a smoke test, or a click-through of a change, or asks whether it actually works."
 argument-hint: "[fixed-point] [spec-path]"
 license: MIT
-compatibility: Drives terminal programs through tmux, and web apps through whichever browser tool the session has (Chrome DevTools MCP, Claude in Chrome, Playwright MCP, or the host's own).
+compatibility: Terminal QA requires tmux, Perl, and a POSIX shell. Web QA uses whichever browser tool the session has (Chrome DevTools MCP, Claude in Chrome, Playwright MCP, or the host's own).
 ---
 
 QA checks the running program against what was requested; tests check the code against what its author expected. A scenario passes only on a result you **observed** in the running program. A green suite, a read of the code, or an exit status on its own is not an observation.

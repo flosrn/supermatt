@@ -61,7 +61,7 @@ Read the scoped hot spots yourself, guided by the map from 1b: the verdict, the 
 - Where do tightly-coupled modules create integration risk in the seams between them?
 - Which parts of the codebase are untested, or hard to test through their current interface?
 
-**Deletion test.** For anything you suspect is shallow, ask: would deleting it concentrate complexity, or just move it? "Concentrates" is the signal you want. "Moves it" means the module was a pass-through and the candidate is elsewhere.
+**Deletion test.** Follow `codebase-design`'s test: if deleting a module makes complexity vanish, it was a pass-through; if complexity reappears across its callers, it was earning its keep. Use this result with the observed friction to decide whether the cluster needs deepening.
 
 **Repairing a leak.** Two options only: merge the modules that share the knowledge, or extract the knowledge into a new module, but extract only if that new module can have a *simple* interface. Otherwise you have moved the leak, not fixed it, and added a module to learn.
 

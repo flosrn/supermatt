@@ -12,7 +12,7 @@ The rule: never install, add, or recommend a package until you have opened the u
 
 Follow the link **from the upstream project to the install command**. Never work the other direction, from a search result or a registry page back to a project.
 
-A registry page is not evidence about a project. Everything on it except the package name and the maintainer account is text the publisher typed: author, email, homepage, repository link, README, license. A repository URL on a registry page proves nothing until you open it and confirm it exists and matches.
+Treat unverified registry metadata as publisher-supplied claims: author, email, homepage, repository link, README, and license. Where the registry independently verifies a field or attestation, check what that verification establishes and compare the verified identity with the intended upstream project. Still open the upstream repository or docs and confirm the published installation instructions.
 
 If upstream documents no registry install, then there is no registry package, whatever the registry shows. Stop and say so. Do not install it, do not pin around it, and do not quietly swap in an alternative. Pinning untrusted code to a SHA is the same code with better bookkeeping, not a fix.
 
