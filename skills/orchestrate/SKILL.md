@@ -1,9 +1,9 @@
 ---
 name: orchestrate
-description: "Work through a repository's GitHub issues unattended in parallel lanes, driving workers in the host harness, Claude Code, Codex, or OMP, in herdr panes and git worktrees to verify specs, triage bugs, implement, refactor, and merge each issue, and report lessons for the operator."
+description: "Work through GitHub issues or local Markdown tickets unattended in parallel lanes, with workers in Herdr panes and git worktrees."
 argument-hint: "[parallel runs]"
 disable-model-invocation: true
-compatibility: Designed for Claude Code, Codex, and OMP. Requires the host harness CLI, herdr, gh, and Bun or Node.js 18.17 or later (built-in modules only). OMP requires Herdr's OMP integration. The notification uses osascript, so it shows on macOS only.
+compatibility: Designed for Claude Code, Codex, and OMP. Requires the host harness CLI, herdr, gh for GitHub PR shipping, and Bun or Node.js 18.17 or later (built-in modules only). Supports GitHub issues and local Markdown trackers. OMP requires Herdr's OMP integration. The notification uses osascript, so it shows on macOS only.
 license: MIT
 ---
 
@@ -11,8 +11,8 @@ license: MIT
 
 You are the orchestrator. You do not write code. You pick issues, drive workers in the same harness that runs you, and check their results. The work runs in LANES parallel lanes: each lane is a herdr pane beside yours and a git worktree of its own, and works one issue at a time. A spec whose tickets are all closed comes first: one worker session **V** checks the whole spec against the code (see [SPEC.md](SPEC.md)). Bugs come next, then the other tickets. Each ticket runs through up to four worker sessions, each with a fresh context:
 
-1. **T**: `/triage #N`, only for a bug that is not triaged yet, to make it ready for an agent.
-2. **A**: `/implement #N`, which QAs, reviews, and fixes its own work, then any fixes it left.
+1. **T**: `/triage REF`, only for a bug that is not triaged yet, to make it ready for an agent.
+2. **A**: `/implement REF`, which QAs, reviews, and fixes its own work, then any fixes it left.
 3. **B**: `/refactor`, then `/ship-pr` to merge.
 4. **C**: `/retro` over A and B, reporting candidates for the operator without applying them.
 
@@ -26,9 +26,9 @@ Repeat until a stop condition is met. Never ask the user anything, through a que
 3. Set KIND from the harness running this skill: `codex` for Codex, `claude` for Claude Code, or `omp` for OMP. Use the current session's harness identity first. When unavailable, read `herdr agent get "$HERDR_PANE_ID"` `.result.agent.agent`; accept only `claude`, `codex`, or `omp`. If that does not identify it, `CLAUDE_CODE_CHILD_SESSION=1` identifies Claude Code, and any of `CODEX_SANDBOX`, `CODEX_SESSION_ID`, or `CODEX_THREAD_ID` identifies Codex. `CLAUDECODE` alone is insufficient because IDE terminals can inherit it; `OMP_PROFILE`, `OMPCODE`, and model/provider names do not identify the host. If the harness is unknown or `command -v "$KIND"` fails, say so and stop. Every worker and restart uses KIND; a failed launch parks its lane instead of switching harnesses.
    For OMP, require `omp` in `herdr agent start --help` and an enabled OMP integration in `herdr integration status`. Report an unsupported installation or missing integration and stop without upgrading or installing it. For Claude Code, SESSION_ROOT is `$CLAUDE_CONFIG_DIR/projects/`, or `~/.claude/projects/` when unset. For Codex, it is `$CODEX_HOME/sessions/`, or `~/.codex/sessions/` when unset. OMP uses the integration's resolved transcript paths, not SESSION_ROOT: profile, XDG, and session-directory overrides can relocate storage. Send skills using the notation below.
 4. Run `herdr --skill` and follow its rules. Parse every ID from JSON output. Never close a tab or pane you did not create.
-5. Read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`. If either is missing, or the tracker is not GitHub, say so and stop. READY, BUG, and TRIAGE are the label strings that `triage-labels.md` maps to the ready-for-agent, bug, and needs-triage roles.
+5. Read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`. If either is missing, or the tracker is neither GitHub nor local Markdown, say so and stop. READY, BUG, and TRIAGE are the label strings that `triage-labels.md` maps to the ready-for-agent, bug, and needs-triage roles. For local Markdown, read [LOCAL.md](LOCAL.md) now and retain its tracker ownership rules for every worker. GitHub remains the PR host in either mode.
 6. Your working directory is the repo's main checkout. It stays on DEFAULT for the whole run; the workers work in the lanes' worktrees. DEFAULT is the output of `gh repo view --json defaultBranchRef --jq .defaultBranchRef.name`. Run `git switch DEFAULT && git -c pull.rebase=false pull --ff-only`. The command-local setting keeps a user's rebase default out of this fast-forward operation. The tree must be clean. If it is not, stop. If `git check-ignore -q .claude/worktrees/x` fails, append the line `.claude/worktrees/` to `.git/info/exclude`, so the worktrees stay out of `git status`.
-7. LANES is the number in the arguments, or 1 when there is none. RUN_START is `date -u +%Y-%m-%dT%H:%M:%SZ`. RUN is `bun` when `command -v bun` finds it, else `node`. Run `RUN <this skill's directory>/scripts/next-issue.mjs READY BUG TRIAGE` and print the queue it lists, so the operator sees what will run.
+7. LANES is the number in the arguments, or 1 when there is none. RUN_START is `date -u +%Y-%m-%dT%H:%M:%SZ`. RUN is `bun` when `command -v bun` finds it, else `node`. QUEUE is `RUN <this skill's directory>/scripts/next-issue.mjs READY BUG TRIAGE`; for local Markdown insert `--local ROOT` before the labels, with ROOT from LOCAL.md. Run QUEUE and print its output so the operator sees what will run. A nonzero result is a failed queue read, never an empty queue.
 8. Open the lanes (see Lanes).
 
 ### Skill notation
@@ -39,7 +39,7 @@ For OMP, require skill commands enabled and the SuperMatt skills discoverable by
 
 ## Lanes
 
-Lane L, from 1 to LANES, has a pane, a worker agent named `PROJECT-work-K-L`, and a worktree at `<repo root>/.claude/worktrees/orch-K-L`, inside the repo so Claude Code's folder trust carries over. Codex and OMP use the same worktree location. Below, PANE, WORKER, and WT are the current lane's, and every git command about the lane's work runs as `git -C WT`. IN_FLIGHT is the set of issues the lanes hold, parked lanes included.
+Lane L, from 1 to LANES, has a pane, a worker agent named `PROJECT-work-K-L`, and a worktree at `<repo root>/.claude/worktrees/orch-K-L`, inside the repo so Claude Code's folder trust carries over. Codex and OMP use the same worktree location. Below, PANE, WORKER, and WT are the current lane's, and every git command about the lane's work runs as `git -C WT`. IN_FLIGHT is the set of issue keys the lanes hold, parked lanes included: GitHub numbers or repository-relative Markdown paths. REF is `#N` for GitHub or the absolute canonical file path for local Markdown; DISPLAY is `#N` or the repository-relative path. Use REF in worker prompts and DISPLAY in phase names and reports.
 
 - **Open the lanes** once, at setup, as shell panes stacked in one column right of yours, with equal heights. Lane 1: `herdr pane split "$HERDR_PANE_ID" --direction right --no-focus --cwd "$PWD"`. Lane L above 1: `herdr pane split <lane L-1's pane> --direction down --ratio R --no-focus --cwd "$PWD"`, where R is 1/(LANES-L+2), the share lane L-1 keeps. Save each `.result.pane.pane_id`. The panes stay for the whole run.
 - **Create the worktree** on branch B: `git fetch origin && git worktree add -b B WT origin/DEFAULT`, or `git worktree add --detach WT origin/DEFAULT` with no branch. Leave `.env*` files uncopied by default. Have the worker try the repository's checks and local preview without credentials. Supply environment values only when a required operation reports that it needs them and existing user authorization permits access. Preserve user restrictions on reading, copying, linking, or loading environment files; if a required value cannot be supplied within those restrictions, park the lane with the exact requirement.
@@ -86,7 +86,7 @@ For OMP, resolve OMP_WORKER_CONFIG to the absolute path of [omp-worker.yml](omp-
 - **Start the worker**: `herdr pane run PANE "cd WT"` with WT shell-quoted inside the command, then start the selected harness: for `claude`, `herdr agent start WORKER --kind claude --pane PANE -- --model MODEL --effort EFFORT`; for `codex`, `herdr agent start WORKER --kind codex --pane PANE -- --model MODEL -c model_reasoning_effort=EFFORT`; for `omp`, `herdr agent start "$WORKER" --kind omp --pane "$PANE" -- --model "$MODEL" --thinking "$EFFORT" --no-prewalk --config "$OMP_WORKER_CONFIG"`, with MODEL and EFFORT from the current phase row. Shell-quote every substituted path and value in all recipes. Then run `herdr pane report-metadata PANE --source orchestrate --display-agent "worker L"`. The shell can still be starting, or the last worker still exiting: if `agent start` returns `agent_pane_busy` or says the name is in use, run `sleep 3` and start it again, up to five times. If it returns `agent_not_ready`, a startup dialog such as folder trust holds the worker: answer it (see Answer a dialog).
 - **Stop the worker**: read `herdr agent get WORKER` `.result.agent.agent_session`. When `kind` is `path`, retain its absolute `value` directly in SESSIONS (the issue's worker evidence for retro); never prepend SESSION_ROOT or append `.jsonl`. Retain any previously known path even if this final metadata read omits it. For Claude/Codex IDs, retain the value and its transcript path under SESSION_ROOT when found. Capture evidence before `herdr agent prompt WORKER "/exit"`; this native OMP command is not `/skill:exit`. The pane stays. Transcripts stay at their recorded paths when WT is removed.
 - **Restart the worker**: stop it and confirm its harness process has exited, then start it. Use a fresh launch, not `/restart`.
-- **Show phase P**: at the start of each phase below, set the lane's phase to `#N P` and run `herdr tab rename "$HERDR_TAB_ID" "<each busy lane's phase, joined by ' | '>"`.
+- **Show phase P**: at the start of each phase below, set the lane's phase to `DISPLAY P` and run `herdr tab rename "$HERDR_TAB_ID" "<each busy lane's phase, joined by ' | '>"`.
 - **Wait for the worker**: run every `herdr agent prompt ... --wait` as a background command, so the other lanes go on meanwhile. When it returns, run `herdr agent wait WORKER --until idle --until done --until blocked` in the background and let it notify you. The wait can return `done` between two turns while sub-agents are still running, so then run `sleep 15` and `herdr agent get WORKER`: if it is `working`, wait for the worker again. If the worker is `blocked`, answer the dialog (see Answer a dialog) and wait for the worker again.
 - **Read the worker's reply**: check its current state with `herdr agent get WORKER`. Use `herdr agent read WORKER --source visible --lines <n>` while it is working, blocked, or unknown; use `--source recent-unwrapped` for history only after it settles at idle or done. Capturing alternate-screen history can require scrolling, which Herdr refuses while a worker is active. If a history read returns `agent_not_idle` because the state changed, read with `--source visible` and continue; this read-mode mismatch is recoverable and does not park the lane.
   After an OMP worker's first completed turn, validate `.result.agent.agent_session`: require `kind = "path"` and an absolute `value`, and retain that filename in SESSIONS. A missing/non-path native reference parks the lane with the exact evidence gap; never substitute another session's transcript. Session creation is lazy, so do not require a file before the first turn.
@@ -100,14 +100,14 @@ When a worker is `blocked`, or has an open question (QUESTION is not NONE, or it
 
 ### 1. Pick the issue
 
-If the operator asked you to pause, the lane goes idle. Otherwise run `RUN <this skill's directory>/scripts/next-issue.mjs READY BUG TRIAGE` in the main checkout. It lists the open, unassigned issues to work on, with an open blocker (native, or a `Blocked by:` line) dropped: specs whose tickets are all closed, then bugs, then the rest, lowest number first. Each line is `number<TAB>title<TAB>spec|ready|triage`. Specs and TRIAGE bugs count only when the repo's own team filed them.
+If the operator asked you to pause, the lane goes idle. Otherwise run QUEUE in the main checkout. It lists the open, unassigned issues to work on, with an open blocker (native, or a `Blocked by:` line) dropped: specs whose tickets are all closed, then bugs, then the rest, lowest number first, then path for tied local numbers. Each line is `key<TAB>title<TAB>spec|ready|triage`. GitHub specs and TRIAGE bugs count only when the repo's own team filed them. Local files use the repository's trusted tracker; malformed or missing blocker references fail the read.
 
-Take the first line whose number is not in IN_FLIGHT. If there is none, the lane goes idle. Add N to IN_FLIGHT and say which issue you picked, as `lane L: #N title`. Empty SESSIONS. Create the worktree: with no branch for a `spec`; otherwise on branch `fix/N-<slug>` for an issue labelled BUG and `feat/N-<slug>` for any other, where slug is the title in lowercase kebab case, at most 40 characters. If its last column is `spec`, verify it: read [SPEC.md](SPEC.md). If it is `triage`, triage it first: read [TRIAGE.md](TRIAGE.md).
+Take the first line whose key is not in IN_FLIGHT. If there is none, the lane goes idle. Add its key to IN_FLIGHT, set REF and DISPLAY, and say `lane L: DISPLAY title`. Empty SESSIONS. Create the worktree: with no branch for a `spec`; otherwise on branch `fix/ID-<slug>` for an issue labelled BUG and `feat/ID-<slug>` for any other, where slug is the title in lowercase kebab case, at most 40 characters. ID is N for GitHub; for local files use K-L plus a counter incremented on each pick in that lane, so repeated numbers and titles cannot collide. If its last column is `spec`, verify it: read [SPEC.md](SPEC.md). If it is `triage`, triage it first: read [TRIAGE.md](TRIAGE.md).
 
 ### 2. Implement (session A)
 
 1. Show phase `implement`. Start the worker.
-2. `herdr agent prompt WORKER "/implement #N" --wait` with no `--timeout`, then wait for the worker. For Codex and OMP, append to the translated prompt: `Complete implementation and QA, then stop before code-review. The orchestrator will run code-review and fix its findings in a fresh session.` This can take a long time.
+2. `herdr agent prompt WORKER "/implement REF" --wait` with no `--timeout`, then wait for the worker. Substitute and quote REF before sending. For Codex and OMP, append to the translated prompt: `Complete implementation and QA, then stop before code-review. The orchestrator will run code-review and fix its findings in a fresh session.` This can take a long time.
 3. Run `git -C WT log --oneline origin/DEFAULT..HEAD`. If it is empty, ask the five-line question from step 3. If QUESTION is not NONE, answer it, wait for the worker, and run this check again. Otherwise read the pane, report what the worker said, and park the lane.
 
 ### 3. Check the worker
@@ -121,7 +121,7 @@ herdr agent read WORKER --source recent-unwrapped --lines 40
 
 - BUSY=yes: run `sleep 60` in the background, then ask again. If BUSY is still yes after 30 minutes, park the lane.
 - QUESTION is not NONE: answer it (see Answer a question).
-- QA=NONE with no reusable lane result: run `git -C WT log --format=%s origin/DEFAULT..HEAD`. If every subject has the type `refactor`, the branch changes nothing a user can see: QA is `skipped, refactor only`. Otherwise show phase `qa`, restart the worker, prompt it with `/qa origin/DEFAULT #N` (`--wait`, no timeout), and wait for the worker. Ask it the same five-line question.
+- QA=NONE with no reusable lane result: run `git -C WT log --format=%s origin/DEFAULT..HEAD`. If every subject has the type `refactor`, the branch changes nothing a user can see: QA is `skipped, refactor only`. Otherwise show phase `qa`, restart the worker, prompt it with `/qa origin/DEFAULT REF` (`--wait`, no timeout), and wait for the worker. Ask it the same five-line question.
 - REVIEW=NONE with no reusable lane result: show phase `review`, restart the worker, prompt it with `/code-review` (`--wait`, no timeout), and wait for the worker. Ask it the same five-line question.
 
 ### 4. Fix findings
@@ -139,8 +139,8 @@ If UNFIXED is not NONE, show phase `fix`, prompt the current worker with `/fix-f
 Other lanes may have merged since this branch started. Wait for the ship slot (see Run the lanes), then bring the branch onto the current DEFAULT. The branch is not pushed yet, so a rebase rewrites nothing shared.
 
 1. Show phase `sync`. Run `git -C WT fetch origin && git -C WT rebase origin/DEFAULT`. If it rebased clean, go to Ship.
-2. It stopped on conflicts: add `#N rebase conflicts in <files>` to the friction log, prompt the current worker with `/resolving-merge-conflicts` (`--wait`, no timeout), and wait for the worker. The rebase is done when `git -C WT status` no longer reports a rebase in progress and `git -C WT status --porcelain` prints nothing. If it is not, park the lane.
-3. The resolved code is code that no QA pass ran: prompt `/qa origin/DEFAULT #N` (`--wait`, no timeout), wait for the worker, and ask the five-line question from step 3. If its QA line has a fail, park the lane. That QA line replaces the one from step 3 in Ship.
+2. It stopped on conflicts: add `DISPLAY rebase conflicts in <files>` to the friction log, prompt the current worker with `/resolving-merge-conflicts` (`--wait`, no timeout), and wait for the worker. The rebase is done when `git -C WT status` no longer reports a rebase in progress and `git -C WT status --porcelain` prints nothing. If it is not, park the lane.
+3. The resolved code is code that no QA pass ran: prompt `/qa origin/DEFAULT REF` (`--wait`, no timeout), wait for the worker, and ask the five-line question from step 3. If its QA line has a fail, park the lane. That QA line replaces the one from step 3 in Ship.
 
 ### 7. Ship
 
@@ -150,7 +150,7 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
 
 ### 8. Close out
 
-1. If issue N is still open, run `gh issue close N --comment "Merged in <PR URL>."`. A closed issue unblocks the issues that wait on it.
+1. Read REF with the configured tracker's **Read an issue** operation. If still open, use its **Close** operation with `Merged in <PR URL>.` For local Markdown, verify the canonical file has its `Closed:` date and comment. A closed issue unblocks the issues that wait on it.
 2. Stop the worker and confirm its harness process has exited.
 3. In the main checkout: `git -c pull.rebase=false pull --ff-only`. The tree must be clean.
 4. Remove the clean worktree and release the ship slot.
@@ -165,9 +165,9 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
 
 ### 10. Report
 
-1. Drop N from IN_FLIGHT.
-2. Run `gh issue list --state all --search "created:>=RUN_START" --json number,title` and add each issue not yet in the friction log as `filed #M title`. Workers file bugs they find outside their issue; the next pick takes them first.
-3. Report one line: `lane L: #N -> <PR URLs, including repairs>, merged, post-merge CI <outcome>, QA <verdict>, review <verdict>, lessons <LESSONS>`. Retain recovery evidence before cleanup.
+1. Drop the key from IN_FLIGHT.
+2. For GitHub, run `gh issue list --state all --search "created:>=RUN_START" --json number,title`. For local Markdown, compare current ticket paths with the initial inventory from LOCAL.md. Add each new issue not yet in the friction log as `filed DISPLAY title`. Workers file bugs they find outside their issue; the next pick takes them first.
+3. Report one line: `lane L: DISPLAY -> <PR URLs, including repairs>, merged, post-merge CI <outcome>, QA <verdict>, review <verdict>, lessons <LESSONS>`. Retain recovery evidence before cleanup.
 4. Go back to Pick the issue.
 
 ## Operator

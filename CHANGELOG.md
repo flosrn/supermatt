@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-12
+
+### Added
+
+- `orchestrate`: supports local Markdown queues alongside GitHub issues, with feature-scoped ticket identity and blockers, spec verification, shared tracker ownership, and closure after GitHub PR merges.
+
+### Fixed
+
+- `wayfinder`: starts research only from the unblocked, unclaimed frontier and keeps prototype decisions out of implementation while planning.
+- `implement`: blocks readiness until every review axis completes, P0/P1 findings are fixed, and remaining findings are fixed or explicitly accepted by the user.
+- `tdd`: stops on failed backups, preserves recovery copies after failed restores, applies explicit timeouts to the unchanged baseline, and corrects the Go mutation example.
+- `qa`: isolates terminal sessions from inherited `TMUX`, supports quoted launch paths, and removes unused launch scripts after rejected starts.
+
 ## [0.19.1] - 2026-10-11
 
 ### Fixed
@@ -590,7 +603,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Claude Code and Codex marketplaces for the plugin and its 25 engineering and productivity skills.
 
-[unreleased]: https://github.com/svyatov/supermatt/compare/v0.19.1...HEAD
+[unreleased]: https://github.com/svyatov/supermatt/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/svyatov/supermatt/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/svyatov/supermatt/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/svyatov/supermatt/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/svyatov/supermatt/compare/v0.18.0...v0.18.1

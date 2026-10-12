@@ -55,7 +55,7 @@ start() {
   [ $# -ge 4 ] || usage
   session=$1 cols=$2 rows=$3
   shift 3
-  launch="$(mktemp "${TMPDIR:-/tmp}/tui-launch.XXXXXX")"
+  launch="$(mktemp "${TMPDIR:-/tmp}/tui-launch.XXXXXX")" || return 1
   {
     echo 'rm -f "$0"'
     echo 'stty oxtabs 2>/dev/null || stty tab3'
@@ -64,10 +64,15 @@ start() {
       printf " '%s'" "$(printf '%s' "$arg" | LC_ALL=C sed "s/'/'\\\\''/g")"
     done
     echo
-  } > "$launch"
-  tmux new-session -d -s "$session" -x "$cols" -y "$rows" -c "$PWD" 'sleep 86400' &&
+  } > "$launch" || { rm -f "$launch"; return 1; }
+  quoted_launch=$(printf '%s' "$launch" | LC_ALL=C sed "s/'/'\\\\''/g")
+  if tmux new-session -d -s "$session" -x "$cols" -y "$rows" -c "$PWD" 'sleep 86400' &&
     tmux set-option -t "$session" remain-on-exit on > /dev/null &&
-    tmux respawn-pane -k -t "$session" "sh '$launch'"
+    tmux respawn-pane -k -t "$session" "sh '$quoted_launch'"; then
+    return 0
+  fi
+  rm -f "$launch"
+  return 1
 }
 
 # keys pauses after Escape, since a program reads Escape and the key right after it as one Alt+key.
@@ -180,6 +185,8 @@ if [ -z "${TMUX_TMPDIR:-}" ]; then
   echo "tui.sh: run export TMUX_TMPDIR=\$DIR first, so this QA run has a tmux server of its own" >&2
   exit 2
 fi
+# TMUX overrides TMUX_TMPDIR when inherited from an enclosing session.
+unset TMUX
 
 [ $# -ge 2 ] || usage
 command=$1
