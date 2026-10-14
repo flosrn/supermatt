@@ -56,8 +56,15 @@ function host({ prs = [], live = null } = {}) {
     if (group === "api" && verb === "graphql") {
       const query = args.find((a) => a.startsWith("query=")).slice(6);
       const p = live;
+      if (query.includes("node(id:")) {
+        const id = args.find((a) => a.startsWith("id=")).slice(3);
+        return JSON.stringify({ data: { node: { comments: page(p.threads.find((x) => x.id === id).comments.nodes, args) } } });
+      }
       let pullRequest;
-      if (query.includes("reviewThreads(")) pullRequest = { reviewThreads: page(p.threads, args) };
+      if (query.includes("reviewThreads(")) {
+        const threads = page(p.threads, args);
+        pullRequest = { reviewThreads: { ...threads, nodes: threads.nodes.map((x) => ({ ...x, comments: page(x.comments.nodes, []) })) } };
+      }
       else if (query.includes("comments(first")) pullRequest = { comments: page(p.comments, args) };
       else if (query.includes("reviews(first")) pullRequest = { reviews: page(p.reviews, args) };
       else pullRequest = {
@@ -192,6 +199,16 @@ test("an external status follows its latest state", async (t) => {
   assert.deepEqual(look().checks.failing.map((c) => c.name), ["ci/ext"]);
   live.checks.push(statusContext("ci/ext", "SUCCESS", "2026-10-14T12:02:00Z"));
   assert.deepEqual([look().checks.failing, look().checks.passing], [[], 1]);
+});
+
+test("reads every comment of a long review thread, so a late reply reopens it", async (t) => {
+  const many = Array.from({ length: 120 }, (_, i) => comment(`TC${i}`, `Point ${i}.`));
+  const { live, stateFile, look } = babysat(t, { threads: [thread("T1", ...many)] });
+  const [first] = look().feedback;
+  assert.equal(first.comments.length, 120);
+  handled(stateFile, { id: "T1", fingerprint: first.fingerprint, disposition: "fixed" });
+  live.threads[0].comments.nodes.push(comment("TC120", "One more thing at the very end."));
+  assert.deepEqual(look().feedback.map((f) => f.id), ["T1"]);
 });
 
 test("an edited comment or a new reply is pending again; the babysitter's own replies are not", async (t) => {

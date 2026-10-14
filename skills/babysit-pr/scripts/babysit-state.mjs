@@ -144,11 +144,13 @@ const CORE = `query($owner: String!, $name: String!, $number: Int!) { viewer { l
   number url state isDraft headRefName headRefOid baseRefName mergeable mergeStateStatus reviewDecision
   baseRef { target { oid } refUpdateRule { requiredStatusCheckContexts } }
   commits(last: 1) { nodes { commit { oid statusCheckRollup { ${CHECKS} } } } } } } }`;
+const COMMENT_PAGE = "pageInfo { hasNextPage endCursor } nodes { id author { login } body url }";
 const CONNECTIONS = {
-  reviewThreads: "reviewThreads(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first: 100) { nodes { id author { login } body url } } } }",
-  comments: "comments(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id author { login } body url } }",
+  reviewThreads: `reviewThreads(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first: 100) { ${COMMENT_PAGE} } } }`,
+  comments: `comments(first: 100, after: $cursor) { ${COMMENT_PAGE} }`,
   reviews: "reviews(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id author { login } body url state } }",
 };
+const THREAD_COMMENTS = `query($id: ID!, $cursor: String) { node(id: $id) { ... on PullRequestReviewThread { comments(first: 100, after: $cursor) { ${COMMENT_PAGE} } } } }`;
 
 function graphql(gh, query, variables) {
   const args = ["api", "graphql", "-f", `query=${query}`];
@@ -157,22 +159,39 @@ function graphql(gh, query, variables) {
   }
   const response = JSON.parse(gh(args));
   if (response.errors?.length) throw new Error(`GitHub GraphQL: ${response.errors.map((e) => e.message).join("; ")}`);
-  if (!response.data?.repository?.pullRequest) throw new Error("GitHub GraphQL: pull request not found");
+  if (!response.data) throw new Error("GitHub GraphQL: empty response");
   return response.data;
 }
 
-// Reads every page of a connection: a first page alone undercounts open feedback.
+function pullRequestOf(data) {
+  if (!data.repository?.pullRequest) throw new Error("GitHub GraphQL: pull request not found");
+  return data.repository.pullRequest;
+}
+
+// Follows a connection to its last page: a first page alone undercounts open feedback.
+function pages(first, next) {
+  const nodes = [...first.nodes];
+  for (let page = first; page.pageInfo.hasNextPage;) {
+    page = next(page.pageInfo.endCursor);
+    nodes.push(...page.nodes);
+  }
+  return nodes;
+}
+
 function all(gh, repo, number, name) {
   const [owner, repoName] = repo.split("/");
   const query = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${CONNECTIONS[name]} } } }`;
-  const nodes = [];
-  let cursor = null;
-  do {
-    const page = graphql(gh, query, { owner, name: repoName, number, cursor }).repository.pullRequest[name];
-    nodes.push(...page.nodes);
-    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
-  } while (cursor);
-  return nodes;
+  const read = (cursor) => pullRequestOf(graphql(gh, query, { owner, name: repoName, number, cursor }))[name];
+  return pages(read(null), read);
+}
+
+// Every comment of one review thread, past its first hundred.
+function threadComments(gh, thread) {
+  return pages(thread.comments, (cursor) => {
+    const comments = graphql(gh, THREAD_COMMENTS, { id: thread.id, cursor }).node?.comments;
+    if (!comments) throw new Error(`GitHub GraphQL: review thread ${thread.id} not found`);
+    return comments;
+  });
 }
 
 // A check is identified by its producer, not its display name: a status and a check run,
@@ -195,7 +214,9 @@ function check(node) {
 // head (latest run per producer), required check names, and the feedback still on the PR.
 export function observe(gh, repo, number) {
   const [owner, name] = repo.split("/");
-  const { viewer, repository: { pullRequest: pr } } = graphql(gh, CORE, { owner, name, number });
+  const data = graphql(gh, CORE, { owner, name, number });
+  const viewer = data.viewer;
+  const pr = pullRequestOf(data);
   const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts ?? { nodes: [], pageInfo: { hasNextPage: false } };
   if (contexts.pageInfo.hasNextPage) throw new Error("more than 100 checks on the head; read them with gh pr checks");
   const latest = new Map();
@@ -208,7 +229,7 @@ export function observe(gh, repo, number) {
 
   const feedback = [];
   for (const t of all(gh, repo, number, "reviewThreads")) {
-    const comments = t.comments.nodes.filter((c) => !ours(c, viewer.login));
+    const comments = threadComments(gh, t).filter((c) => !ours(c, viewer.login));
     if (t.isResolved || !comments.length) continue;
     feedback.push({ id: t.id, kind: "thread", path: t.path, line: t.line, outdated: t.isOutdated, url: comments[0].url,
       comments: comments.map((c) => ({ author: c.author?.login ?? null, body: c.body })), fingerprint: fingerprint(comments.map((c) => [c.id, c.body])) });
