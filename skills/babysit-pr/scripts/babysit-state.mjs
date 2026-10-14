@@ -125,18 +125,19 @@ export function extend(file, duration, { now = Date.now() } = {}) {
 }
 
 // The babysitter ends every reply it posts with this marker, so its own replies never
-// count as new feedback or change a thread's fingerprint.
+// count as new feedback or change a thread's fingerprint. Anyone can paste the marker,
+// so it counts only on comments the authenticated gh account wrote.
 export const MARKER = "<!-- supermatt:babysit-pr -->";
 const SETTLE_SECONDS = 300;
 const MISSING_CHECK_GRACE_SECONDS = 600;
 
 const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
-const ours = (body) => (body ?? "").includes(MARKER);
+const ours = (comment, viewer) => comment.author?.login === viewer && (comment.body ?? "").includes(MARKER);
 
 const CHECKS = `contexts(first: 100) { pageInfo { hasNextPage endCursor } nodes { __typename
   ... on CheckRun { databaseId name status conclusion detailsUrl checkSuite { workflowRun { databaseId } } }
   ... on StatusContext { context state targetUrl createdAt } } }`;
-const CORE = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+const CORE = `query($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) {
   number url state isDraft headRefName headRefOid baseRefName mergeable mergeStateStatus reviewDecision
   baseRef { target { oid } refUpdateRule { requiredStatusCheckContexts } }
   commits(last: 1) { nodes { commit { oid statusCheckRollup { ${CHECKS} } } } } } } }`;
@@ -153,9 +154,8 @@ function graphql(gh, query, variables) {
   }
   const response = JSON.parse(gh(args));
   if (response.errors?.length) throw new Error(`GitHub GraphQL: ${response.errors.map((e) => e.message).join("; ")}`);
-  const pr = response.data?.repository?.pullRequest;
-  if (!pr) throw new Error("GitHub GraphQL: pull request not found");
-  return pr;
+  if (!response.data?.repository?.pullRequest) throw new Error("GitHub GraphQL: pull request not found");
+  return response.data;
 }
 
 // Reads every page of a connection: a first page alone undercounts open feedback.
@@ -165,7 +165,7 @@ function all(gh, repo, number, name) {
   const nodes = [];
   let cursor = null;
   do {
-    const page = graphql(gh, query, { owner, name: repoName, number, cursor })[name];
+    const page = graphql(gh, query, { owner, name: repoName, number, cursor }).repository.pullRequest[name];
     nodes.push(...page.nodes);
     cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
   } while (cursor);
@@ -185,7 +185,7 @@ function check(node) {
 // head (latest run per name), required check names, and the feedback still on the PR.
 export function observe(gh, repo, number) {
   const [owner, name] = repo.split("/");
-  const pr = graphql(gh, CORE, { owner, name, number });
+  const { viewer, repository: { pullRequest: pr } } = graphql(gh, CORE, { owner, name, number });
   const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts ?? { nodes: [], pageInfo: { hasNextPage: false } };
   if (contexts.pageInfo.hasNextPage) throw new Error("more than 100 checks on the head; read them with gh pr checks");
   const latest = new Map();
@@ -199,14 +199,14 @@ export function observe(gh, repo, number) {
 
   const feedback = [];
   for (const t of all(gh, repo, number, "reviewThreads")) {
-    const comments = t.comments.nodes.filter((c) => !ours(c.body));
+    const comments = t.comments.nodes.filter((c) => !ours(c, viewer.login));
     if (t.isResolved || !comments.length) continue;
     feedback.push({ id: t.id, kind: "thread", path: t.path, line: t.line, outdated: t.isOutdated, url: comments[0].url,
       comments: comments.map((c) => ({ author: c.author?.login ?? null, body: c.body })), fingerprint: fingerprint(comments.map((c) => [c.id, c.body])) });
   }
   for (const [kind, connection] of [["comment", "comments"], ["review", "reviews"]]) {
     for (const c of all(gh, repo, number, connection)) {
-      if (!c.body?.trim() || ours(c.body)) continue;
+      if (!c.body?.trim() || ours(c, viewer.login)) continue;
       feedback.push({ id: c.id, kind, author: c.author?.login ?? null, url: c.url, body: c.body, fingerprint: fingerprint(c.body) });
     }
   }

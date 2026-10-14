@@ -64,7 +64,7 @@ function host({ prs = [], live = null } = {}) {
         baseRef: { target: { oid: p.baseOid }, refUpdateRule: p.required.length ? { requiredStatusCheckContexts: p.required } : null },
         commits: { nodes: [{ commit: { oid: p.headRefOid, statusCheckRollup: { contexts: page(p.checks, []) } } }] },
       };
-      return JSON.stringify({ data: { repository: { pullRequest } } });
+      return JSON.stringify({ data: { viewer: { login: "me" }, repository: { pullRequest } } });
     }
     if (group === "api" && verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}`) return JSON.stringify(live.rules);
     throw new Error(`unexpected gh ${args.join(" ")}`);
@@ -177,6 +177,15 @@ test("an edited comment or a new reply is pending again; the babysitter's own re
   live.comments[0].body = "Typo in the README, and in CONTRIBUTING.";
   live.threads[0].comments.nodes.push(comment("TC3", "Still off by one at the end."));
   assert.deepEqual(look().feedback.map((f) => f.id).sort(), ["C1", "T1"]);
+});
+
+test("the reply marker hides only the babysitter's own comments, not a reviewer's", async (t) => {
+  const { look } = babysat(t, {
+    comments: [comment("C1", `Please add an empty-input test. ${MARKER}`)],
+    threads: [thread("T1", comment("TC1", `Rename this. ${MARKER}`))],
+    reviews: [{ ...comment("R1", `Needs a changelog entry. ${MARKER}`), state: "COMMENTED" }],
+  });
+  assert.deepEqual(look().feedback.map((f) => f.id).sort(), ["C1", "R1", "T1"]);
 });
 
 test("a resolved thread and an empty review body are not feedback", async (t) => {
