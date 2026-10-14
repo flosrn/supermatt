@@ -414,23 +414,35 @@ test("a contender that reads start times differently, or cannot read them, keeps
 test("a lock names its owner by pid and start time: the same pid with another start time is a reused pid", async (t) => {
   const { stateFile } = babysat(t);
   const owner = liveProcess(t);
-  writeFileSync(`${stateFile}.lock`, `${owner.pid} ${processStart(owner.pid)}`);
+  writeFileSync(`${stateFile}.lock`, `v1 ${owner.pid} ${processStart(owner.pid)}`);
   assert.throws(() => spend(stateFile, "repair"), /locked by another session/);
-  writeFileSync(`${stateFile}.lock`, `${owner.pid} Thu Jan  1 00:00:00 1970`);
+  writeFileSync(`${stateFile}.lock`, `v1 ${owner.pid} Thu Jan 1 00:00:00 1970`);
+  assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
+});
+
+test("a lock in an older format naming a live pid is kept, whatever start time it carries", async (t) => {
+  const { stateFile } = babysat(t);
+  const owner = liveProcess(t);
+  writeFileSync(`${stateFile}.lock`, `${owner.pid} Fri Oct 16 01:00:00 2026`);
+  assert.throws(() => spend(stateFile, "repair"), /locked by another session/);
+  writeFileSync(`${stateFile}.lock`, `${await deadPid()} Fri Oct 16 01:00:00 2026`);
   assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
 });
 
 test("a snapshot holds the lock across its GitHub reads, so no write lands inside it", async (t) => {
   const { h, stateFile } = babysat(t);
   let inside = null;
+  let record = null;
   const gh = (args) => {
     if (inside === null && args[1] === "graphql") {
+      record = readFileSync(`${stateFile}.lock`, "utf8");
       try { spend(stateFile, "repair"); inside = "ran"; } catch (error) { inside = error.message; }
     }
     return h.gh(args);
   };
   snapshot({ file: stateFile, gh, now: NOW });
   assert.match(inside, /locked by another session/);
+  assert.equal(record, `v1 ${process.pid} ${processStart(process.pid)}`);
   assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
 });
 

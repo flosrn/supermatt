@@ -55,18 +55,24 @@ function alive(pid) {
   }
 }
 
+// The lock record format: "v1 <pid> <start>", start as processStart renders it. A record in
+// another format still names its pid, but its start time is not comparable with ours.
+const LOCK_FORMAT = "v1";
+
 // Who a lock file names, as { pid, start }: undefined when there is no file, null when it
-// names no one. `start` is empty when the writer could not read its own start time.
+// names no one. `start` is empty when it is unknown or not comparable.
 function ownerOf(path) {
   let text;
   try { text = readFileSync(path, "utf8").trim(); } catch { return undefined; }
-  const [first, ...rest] = text.split(" ");
-  const pid = Number(first);
-  return first && Number.isInteger(pid) && pid > 0 ? { pid, start: rest.join(" ") } : null;
+  const words = text.split(" ");
+  const versioned = words[0] === LOCK_FORMAT;
+  const pid = Number(versioned ? words[1] : words[0]);
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  return { pid, start: versioned ? words.slice(2).join(" ") : "" };
 }
 
 let ownStart;
-const me = () => `${process.pid} ${(ownStart ??= processStart(process.pid))}`;
+const me = () => `${LOCK_FORMAT} ${process.pid} ${(ownStart ??= processStart(process.pid))}`;
 
 // A lock file is written complete, then linked into place: it is never seen half written,
 // so one that names no live process is debris. A live pid with another start time is a
