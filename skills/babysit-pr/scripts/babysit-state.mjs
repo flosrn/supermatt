@@ -38,13 +38,16 @@ function update(file, change) {
 const LIMITS = { repair: 2, rerun: 1 };
 const DEFAULT_DURATION = "8h";
 
-// "8h", "90m", "1h30m", "45s", or a bare number of seconds.
+const MAX_DURATION_SECONDS = 7 * 24 * 3600;
+
+// "8h", "90m", "1h30m", "45s", or a bare number of seconds; one second to seven days.
 export function parseDuration(text) {
   const value = String(text).trim();
-  if (/^\d+$/.test(value)) return Number(value);
-  const parts = [...value.matchAll(/(\d+)([hms])/g)];
-  if (!parts.length || parts.map((p) => p[0]).join("") !== value) throw new Error(`bad duration: ${text}`);
-  return parts.reduce((sum, [, n, unit]) => sum + Number(n) * { h: 3600, m: 60, s: 1 }[unit], 0);
+  const parts = /^\d+$/.test(value) ? [[value, value, "s"]] : [...value.matchAll(/(\d+)([hms])/g)];
+  if (!parts.length || parts.map((p) => p[0]).join("") !== value) throw new Error(`bad duration: ${text} (use 90m, 8h, 1h30m)`);
+  const seconds = parts.reduce((sum, [, n, unit]) => sum + Number(n) * { h: 3600, m: 60, s: 1 }[unit], 0);
+  if (!(seconds >= 1 && seconds <= MAX_DURATION_SECONDS)) throw new Error(`duration out of range: ${text} (one second to seven days)`);
+  return seconds;
 }
 
 function budgets(state, now) {

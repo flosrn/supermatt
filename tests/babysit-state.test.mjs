@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, bind, spend, extend, snapshot, handled, ciResult, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
+import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 
@@ -147,6 +147,11 @@ test("a resume keeps the monitoring deadline and the recovery budget", async (t)
   assert.throws(() => spend(resumed.stateFile, "repair"), /exhausted/);
   assert.deepEqual(open(base(dir, h.gh, { now: NOW + 7200_000 })).budgets,
     { deadline_at: "2026-10-14T14:00:00.000Z", monitor_remaining_seconds: 0, repair_cycles_left: 0, transient_reruns_left: 0 });
+});
+
+test("a monitoring duration outside one second to seven days is refused by name", () => {
+  assert.equal(parseDuration("1h30m"), 5400);
+  for (const bad of ["0", "0m", "8d", "200h", "1000000000h", "soon"]) assert.throws(() => parseDuration(bad), new RegExp(bad));
 });
 
 test("feedback that arrives while CI is red is handled before CI", async (t) => {
