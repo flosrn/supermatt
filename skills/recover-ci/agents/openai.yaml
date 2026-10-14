@@ -1,0 +1,3 @@
+interface:
+  display_name: "SuperMatt: Recover CI"
+  short_description: "Diagnose, rerun, or repair a failed CI check, bounded"
