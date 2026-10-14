@@ -215,6 +215,7 @@ export function observe(gh, repo, number) {
 // Order is fixed: feedback, then CI on the current head, then branch currency, then wait.
 export function evaluate(state, seen, now) {
   const invalidated = [];
+  const headMoved = state.head != null && state.head.sha !== seen.head;
   if (state.head?.sha !== seen.head) {
     if (state.head) {
       if (Object.keys(state.ci ?? {}).length) invalidated.push("ci results");
@@ -275,7 +276,7 @@ export function evaluate(state, seen, now) {
   if (!outcome && !next.length) next.push("wait");
 
   return {
-    outcome, next, invalidated,
+    outcome, next, head_moved: headMoved, invalidated,
     pr: { number: seen.number, url: seen.url, state: seen.state, draft: seen.draft, head: seen.head, base_ref: seen.base_ref, base: seen.base },
     feedback: pending,
     checks: { failing, running, missing, passing: seen.checks.filter((c) => c.status === "pass").length, total: seen.checks.length, required: seen.required },

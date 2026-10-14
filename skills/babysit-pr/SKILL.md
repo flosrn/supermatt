@@ -37,7 +37,9 @@ Use this step to open the PR, and to push local work that belongs to it.
 
 ## 3. Watch
 
-Each tick runs `STATE snapshot --state FILE` and acts on its report. A non-null `outcome` ends the loop: go to step 4. Otherwise do only the first entry of `next`, then take a new snapshot: anything you push moves the head, and checks read before the push describe a dead commit. `head_moved` and `invalidated` say what the helper dropped because the head moved.
+Each tick runs `STATE snapshot --state FILE` and acts on its report. A non-null `outcome` ends the loop: go to step 4. Otherwise do only the first entry of `next`, then take a new snapshot: anything you push moves the head, and checks read before the push describe a dead commit. `head_moved` says the head changed since the last snapshot, and `invalidated` names what the helper dropped because of it.
+
+Before any step that edits or pushes, the local branch must sit at `pr.head`: someone else may have pushed to the PR. Run `git fetch origin <branch>`; when `HEAD` is an ancestor of `pr.head`, fast-forward with `git merge --ff-only origin/<branch>`. When the two have diverged, stop as `blocked` and say so: never overwrite, rebase, or merge over someone else's push.
 
 **`feedback`** comes first, even while CI runs or is red. Each item is a review thread (`path`, `line`, its `comments`), a top-level comment, or a review body, with an `id` and a `fingerprint`.
 

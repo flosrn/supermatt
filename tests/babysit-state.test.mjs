@@ -189,7 +189,8 @@ test("head movement invalidates CI results and the ready candidate", async (t) =
 
   Object.assign(live, { headRefOid: "ccc", checks: [checkRun("test", "FAILURE", 2)] });
   const moved = look();
-  assert.deepEqual(moved.invalidated, ["ci results"]);
+  assert.deepEqual([moved.head_moved, moved.invalidated], [true, ["ci results"]]);
+  assert.equal(look().head_moved, false);
   assert.equal(moved.outcome, null);
   assert.deepEqual(moved.next, ["ci"]);
 
