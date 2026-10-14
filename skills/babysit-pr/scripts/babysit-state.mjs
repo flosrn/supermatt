@@ -3,7 +3,7 @@
 // the CI recovery counters, handled feedback, and evidence tied to the current head.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -28,11 +28,41 @@ function save(file, state) {
   renameSync(temp, file);
 }
 
+const LOCK_WAIT_MS = 10_000;
+const LOCK_STALE_MS = 60_000;
+
+// Two sessions on one PR must not lose each other's writes: every read-modify-write holds
+// an exclusive lock file. A lock older than a minute belongs to a crashed process.
+function locked(file, work) {
+  const lock = `${file}.lock`;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      closeSync(openSync(lock, "wx"));
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      let age = 0;
+      try { age = Date.now() - statSync(lock).mtimeMs; } catch { continue; }
+      if (age > LOCK_STALE_MS) { rmSync(lock, { force: true }); continue; }
+      if (Date.now() > deadline) throw new Error(`state is locked by another session: ${lock}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+  try {
+    return work();
+  } finally {
+    rmSync(lock, { force: true });
+  }
+}
+
 function update(file, change) {
-  const state = load(file);
-  const result = change(state);
-  save(file, state);
-  return result;
+  return locked(file, () => {
+    const state = load(file);
+    const result = change(state);
+    save(file, state);
+    return result;
+  });
 }
 
 const LIMITS = { repair: 2, rerun: 1 };
@@ -79,22 +109,24 @@ export function open({ dir, gh = realGh, repo, branch, pr = null, duration = DEF
   if (pr != null) branch = viewPr(gh, repo, pr).headRefName;
   mkdirSync(dir, { recursive: true });
   const stateFile = fileFor(dir, repo, branch);
-  let state = existsSync(stateFile) ? load(stateFile) : null;
-  const resumed = state != null && (pr == null || state.pr == null || state.pr === pr);
-  if (!resumed) state = fresh({ repo, branch, now, duration });
-  if (pr != null) state.pr = pr;
+  return locked(stateFile, () => {
+    let state = existsSync(stateFile) ? load(stateFile) : null;
+    const resumed = state != null && (pr == null || state.pr == null || state.pr === pr);
+    if (!resumed) state = fresh({ repo, branch, now, duration });
+    if (pr != null) state.pr = pr;
 
-  let action;
-  if (state.pr != null) {
-    action = viewPr(gh, repo, state.pr).state === "OPEN" ? "reuse" : "closed";
-  } else {
-    const openPrs = JSON.parse(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "number,url,state,headRefName"]));
-    if (openPrs.length > 1) throw new Error(`several open PRs for ${branch}: ${openPrs.map((p) => p.number).join(", ")}`);
-    if (openPrs.length === 1) state.pr = openPrs[0].number;
-    action = openPrs.length === 1 ? "reuse" : "create";
-  }
-  save(stateFile, state);
-  return { action, pr: state.pr, stateFile, resumed, budgets: budgets(state, now) };
+    let action;
+    if (state.pr != null) {
+      action = viewPr(gh, repo, state.pr).state === "OPEN" ? "reuse" : "closed";
+    } else {
+      const openPrs = JSON.parse(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "number,url,state,headRefName"]));
+      if (openPrs.length > 1) throw new Error(`several open PRs for ${branch}: ${openPrs.map((p) => p.number).join(", ")}`);
+      if (openPrs.length === 1) state.pr = openPrs[0].number;
+      action = openPrs.length === 1 ? "reuse" : "create";
+    }
+    save(stateFile, state);
+    return { action, pr: state.pr, stateFile, resumed, budgets: budgets(state, now) };
+  });
 }
 
 export class BudgetExhausted extends Error {}
@@ -323,12 +355,13 @@ export function evaluate(state, seen, now) {
   };
 }
 
+// GitHub is read before the state transaction, so a slow read never holds the lock and
+// never saves state older than a write another session made meanwhile.
 export function snapshot({ file, gh = realGh, now = Date.now() }) {
-  return update(file, (state) => {
-    if (state.pr == null) throw new Error("no PR bound yet: create it, then run bind");
-    const report = evaluate(state, observe(gh, state.repo, state.pr), now);
-    return { ...report, budgets: budgets(state, now), state_file: file };
-  });
+  const { repo, pr } = load(file);
+  if (pr == null) throw new Error("no PR bound yet: create it, then run bind");
+  const seen = observe(gh, repo, pr);
+  return update(file, (state) => ({ ...evaluate(state, seen, now), budgets: budgets(state, now), state_file: file }));
 }
 
 const DISPOSITIONS = ["fixed", "answered", "declined", "no-action", "needs-human"];

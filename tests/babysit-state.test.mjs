@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
@@ -232,6 +232,25 @@ test("a needs-human thread blocks until someone resolves it", async (t) => {
   live.threads[0].isResolved = true;
   const after = look(NOW + 60_000);
   assert.deepEqual([after.outcome, after.blockers], [null, ["settling before ready"]]);
+});
+
+test("a spend recorded by another session while a snapshot reads GitHub survives the snapshot", async (t) => {
+  const { h, stateFile } = babysat(t);
+  const gh = (args) => {
+    if (args[1] === "graphql" && args.some((a) => a.startsWith("query=") && a.includes("viewer"))) spend(stateFile, "repair");
+    return h.gh(args);
+  };
+  const after = snapshot({ file: stateFile, gh, now: NOW });
+  assert.equal(after.budgets.repair_cycles_left, 1);
+  assert.equal(open(base(dirname(stateFile), h.gh)).budgets.repair_cycles_left, 1);
+});
+
+test("a lock left by a crashed session expires instead of wedging the state", async (t) => {
+  const { stateFile } = babysat(t);
+  writeFileSync(`${stateFile}.lock`, "");
+  const old = new Date(Date.now() - 120_000);
+  utimesSync(`${stateFile}.lock`, old, old);
+  assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
 });
 
 test("an edited comment or a new reply is pending again; the babysitter's own replies are not", async (t) => {
