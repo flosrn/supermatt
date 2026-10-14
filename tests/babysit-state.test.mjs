@@ -250,6 +250,36 @@ test("a needs-human follow-up raised in a thread that was already resolved stays
   assert.deepEqual([later.outcome, later.blockers], ["blocked", ["needs-human: https://github.com/acme/app/pull/4#TC1"]]);
 });
 
+test("a reopen seen after the babysitter's snapshot is kept when it records the park", async (t) => {
+  const { live, stateFile, look } = babysat(t, { threads: [thread("T1", comment("TC1", "Rename this."))] });
+  const [first] = look(NOW).feedback;
+  handled(stateFile, { id: first.id, fingerprint: first.fingerprint, disposition: "fixed" });
+  live.threads[0].isResolved = true;
+  live.threads[0].comments.nodes.push(comment("TC2", "Should the old name stay as an alias?"));
+  const [seenResolved] = look(NOW).feedback;
+  live.threads[0].isResolved = false;
+  look(NOW);
+  handled(stateFile, { id: seenResolved.id, fingerprint: seenResolved.fingerprint, disposition: "needs-human" });
+  live.threads[0].isResolved = true;
+  const after = look(NOW + 60_000);
+  assert.deepEqual([after.outcome, after.blockers], [null, ["settling before ready"]]);
+});
+
+test("a park in a thread reopened before the babysitter looked counts only later reopens", async (t) => {
+  const { live, stateFile, look } = babysat(t, { threads: [thread("T1", comment("TC1", "Rename this."))] });
+  const [first] = look(NOW).feedback;
+  handled(stateFile, { id: first.id, fingerprint: first.fingerprint, disposition: "fixed" });
+  live.threads[0].isResolved = true;
+  look(NOW);
+  live.threads[0].isResolved = false;
+  look(NOW);
+  live.threads[0].isResolved = true;
+  live.threads[0].comments.nodes.push(comment("TC2", "Should the old name stay as an alias?"));
+  const [followUp] = look(NOW).feedback;
+  handled(stateFile, { id: followUp.id, fingerprint: followUp.fingerprint, disposition: "needs-human" });
+  assert.equal(look(NOW + 600_000).outcome, "blocked");
+});
+
 test("a park records the resolution the babysitter saw, not one a later snapshot saw", async (t) => {
   const { live, stateFile, look } = babysat(t, { threads: [thread("T1", comment("TC1", "Should this ship behind a flag?"))] });
   const [seenOpen] = look(NOW).feedback;
@@ -359,6 +389,26 @@ test("a GitHub read that hangs is cut off, and the lock is released", async (t) 
   assert.notEqual(code, 0);
   assert.ok(Date.now() - started < 8_000, `cut off in time: ${stderr}`);
   assert.equal(existsSync(`${stateFile}.lock`), false);
+});
+
+// Runs `spend` in a separate CLI process with the given environment; returns its exit and stderr.
+async function spendInChild(stateFile, env) {
+  const cli = fileURLToPath(new URL("../skills/babysit-pr/scripts/babysit-state.mjs", import.meta.url));
+  const child = spawn(process.execPath, [cli, "spend", "--state", stateFile, "repair"], { env: { SUPERMATT_LOCK_WAIT_MS: "300", ...env }, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (d) => { stderr += d; });
+  const [code] = await once(child, "exit");
+  return { code, stderr };
+}
+
+test("a contender that reads start times differently, or cannot read them, keeps a live owner's lock", async (t) => {
+  const { stateFile } = babysat(t);
+  const owner = liveProcess(t);
+  writeFileSync(`${stateFile}.lock`, `${owner.pid} ${processStart(owner.pid)}`);
+  for (const env of [{ PATH: "/usr/bin:/bin", TZ: "Pacific/Kiritimati", LC_ALL: "fr_FR.UTF-8" }, { PATH: "/nonexistent" }]) {
+    const { code, stderr } = await spendInChild(stateFile, env);
+    assert.deepEqual([code, /locked by another session/.test(stderr)], [1, true], `${JSON.stringify(env)}: ${stderr}`);
+  }
 });
 
 test("a lock names its owner by pid and start time: the same pid with another start time is a reused pid", async (t) => {

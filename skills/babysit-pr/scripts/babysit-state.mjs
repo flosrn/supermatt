@@ -36,10 +36,11 @@ function save(file, state) {
 const lockWaitMs = () => Number(process.env.SUPERMATT_LOCK_WAIT_MS ?? 120_000);
 
 // When a process started, as ps prints it: with the pid, it names one process across pid
-// reuse. Empty where ps cannot tell (no such process, or no ps).
+// reuse. Read in UTC and the C locale, so every session renders the same process alike.
+// Empty where ps cannot tell (no such process, or no ps).
 export function processStart(pid) {
   try {
-    return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().replace(/\s+/g, " ");
+    return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, TZ: "UTC", LC_ALL: "C" } }).trim().replace(/\s+/g, " ");
   } catch {
     return "";
   }
@@ -74,7 +75,10 @@ const abandoned = (path) => {
   const owner = ownerOf(path);
   if (owner === undefined) return false;
   if (owner === null || !alive(owner.pid)) return true;
-  return owner.start !== "" && processStart(owner.pid) !== owner.start;
+  // A start time this session cannot read proves nothing: only a readable, different one
+  // marks a reused pid.
+  const start = owner.start === "" ? "" : processStart(owner.pid);
+  return start !== "" && start !== owner.start;
 };
 
 function claim(path) {
@@ -234,7 +238,9 @@ export function extend(file, duration, { now = Date.now() } = {}) {
 export const MARKER = "<!-- supermatt:babysit-pr -->";
 const SETTLE_SECONDS = 300;
 const MISSING_CHECK_GRACE_SECONDS = 600;
-const RESOLVED = ".resolved";
+// A thread's handed-out fingerprint carries what the babysitter saw: ".resolved" or ".open",
+// and how many reopens had been seen ("<hash>.resolved.2").
+const THREAD_SEEN = /^(.*)\.(resolved|open)\.(\d+)$/;
 
 const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 const ours = (comment, viewer) => comment.author?.login === viewer && (comment.body ?? "").includes(MARKER);
@@ -367,12 +373,23 @@ export function evaluate(state, seen, now) {
   // A resolved thread is feedback only when this babysitter handled it and it changed since:
   // a reply or edit after the resolve. Threads others resolved stay closed.
   const pending = seen.feedback.filter((f) => state.handled[f.id]?.fingerprint !== f.fingerprint && (!f.resolved || state.handled[f.id]));
-  // A needs-human item stays parked until its thread is resolved after it was parked. A
-  // reopen seen meanwhile resets that baseline, so a later resolve releases the park.
+  // Count each reopen of a thread, so a park can tell a resolve that followed it.
+  state.threads ??= {};
+  for (const f of seen.feedback.filter((x) => x.kind === "thread")) {
+    const known = state.threads[f.id];
+    if (!known) state.threads[f.id] = { resolved: f.resolved, reopens: 0 };
+    else {
+      if (known.resolved && !f.resolved) known.reopens++;
+      known.resolved = f.resolved;
+    }
+  }
+  // A needs-human item stays parked until its thread is resolved after it was parked: it was
+  // open when parked, or it was reopened since.
   const parked = seen.feedback.filter((f) => {
     const h = state.handled[f.id];
-    if (h?.resolved && !f.resolved) h.resolved = false;
-    return h?.disposition === "needs-human" && h.fingerprint === f.fingerprint && !(f.resolved && !h.resolved);
+    if (h?.disposition !== "needs-human" || h.fingerprint !== f.fingerprint) return false;
+    const releasedByResolve = f.resolved && (!h.resolved || state.threads[f.id].reopens > (h.reopens ?? 0));
+    return !releasedByResolve;
   });
 
   const names = new Set(seen.checks.map((c) => c.name));
@@ -424,9 +441,9 @@ export function evaluate(state, seen, now) {
   return {
     outcome, next, head_moved: headMoved, invalidated,
     pr: { number: seen.number, url: seen.url, state: seen.state, draft: seen.draft, head: seen.head, base_ref: seen.base_ref, base: seen.base },
-    // A resolved thread's fingerprint carries ".resolved", so handled records the resolution
-    // the babysitter saw, whatever a later snapshot saw.
-    feedback: pending.map((f) => (f.resolved ? { ...f, fingerprint: `${f.fingerprint}${RESOLVED}` } : f)),
+    // A thread's fingerprint carries its resolution and reopen count as the babysitter saw
+    // them, so handled records that view, whatever a later snapshot saw.
+    feedback: pending.map((f) => (f.kind === "thread" ? { ...f, fingerprint: `${f.fingerprint}.${f.resolved ? "resolved" : "open"}.${state.threads[f.id].reopens}` } : f)),
     checks: { failing, running, missing, passing: seen.checks.filter((c) => c.status === "pass").length, total: seen.checks.length, required: seen.required },
     branch: { merge_state: seen.merge_state, mergeable: seen.mergeable, review_decision: seen.review_decision },
     blockers: [...human, ...waiting],
@@ -452,8 +469,10 @@ export function handled(file, { id, fingerprint: seen, disposition, now = Date.n
   if (!id || !seen) throw new Error("handled needs --id and --fingerprint from the snapshot");
   update(file, (state) => {
     state.handled ??= {};
-    const resolved = seen.endsWith(RESOLVED);
-    state.handled[id] = { fingerprint: resolved ? seen.slice(0, -RESOLVED.length) : seen, disposition, resolved, at: new Date(now).toISOString() };
+    const thread = THREAD_SEEN.exec(seen);
+    state.handled[id] = thread
+      ? { fingerprint: thread[1], disposition, resolved: thread[2] === "resolved", reopens: Number(thread[3]), at: new Date(now).toISOString() }
+      : { fingerprint: seen, disposition, resolved: false, at: new Date(now).toISOString() };
   });
 }
 
