@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
@@ -234,22 +236,64 @@ test("a needs-human thread blocks until someone resolves it", async (t) => {
   assert.deepEqual([after.outcome, after.blockers], [null, ["settling before ready"]]);
 });
 
-test("a spend recorded by another session while a snapshot reads GitHub survives the snapshot", async (t) => {
-  const { h, stateFile } = babysat(t);
-  const gh = (args) => {
-    if (args[1] === "graphql" && args.some((a) => a.startsWith("query=") && a.includes("viewer"))) spend(stateFile, "repair");
-    return h.gh(args);
-  };
-  const after = snapshot({ file: stateFile, gh, now: NOW });
-  assert.equal(after.budgets.repair_cycles_left, 1);
-  assert.equal(open(base(dirname(stateFile), h.gh)).budgets.repair_cycles_left, 1);
+test("a needs-human follow-up raised in a thread that was already resolved stays a blocker", async (t) => {
+  const { live, stateFile, look } = babysat(t, { threads: [thread("T1", comment("TC1", "Rename this."))] });
+  const [first] = look(NOW).feedback;
+  handled(stateFile, { id: first.id, fingerprint: first.fingerprint, disposition: "fixed" });
+  live.threads[0].isResolved = true;
+  live.threads[0].comments.nodes.push(comment("TC2", "Should the old name stay as an alias for v1 users?"));
+  const [followUp] = look(NOW).feedback;
+  assert.equal(followUp.resolved, true);
+  handled(stateFile, { id: followUp.id, fingerprint: followUp.fingerprint, disposition: "needs-human" });
+  const later = look(NOW + 600_000);
+  assert.deepEqual([later.outcome, later.blockers], ["blocked", ["needs-human: https://github.com/acme/app/pull/4#TC1"]]);
 });
 
-test("a lock left by a crashed session expires instead of wedging the state", async (t) => {
+// A held lock makes a contender wait; tests keep that wait short.
+process.env.SUPERMATT_LOCK_WAIT_MS = "300";
+
+function liveProcess(t) {
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+  t.after(() => child.kill());
+  return child;
+}
+
+async function deadPid() {
+  const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await once(child, "exit");
+  return child.pid;
+}
+
+test("a write waits while another live session holds the lock, then proceeds once that session is gone", async (t) => {
   const { stateFile } = babysat(t);
-  writeFileSync(`${stateFile}.lock`, "");
-  const old = new Date(Date.now() - 120_000);
+  const owner = liveProcess(t);
+  writeFileSync(`${stateFile}.lock`, String(owner.pid));
+  const old = new Date(Date.now() - 7200_000);
   utimesSync(`${stateFile}.lock`, old, old);
+  assert.throws(() => spend(stateFile, "repair"), /locked by another session/);
+
+  owner.kill();
+  await once(owner, "exit");
+  assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
+});
+
+test("a lock left by a crashed session is reclaimed", async (t) => {
+  const { stateFile } = babysat(t);
+  writeFileSync(`${stateFile}.lock`, String(await deadPid()));
+  assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
+});
+
+test("a snapshot holds the lock across its GitHub reads, so no write lands inside it", async (t) => {
+  const { h, stateFile } = babysat(t);
+  let inside = null;
+  const gh = (args) => {
+    if (inside === null && args[1] === "graphql") {
+      try { spend(stateFile, "repair"); inside = "ran"; } catch (error) { inside = error.message; }
+    }
+    return h.gh(args);
+  };
+  snapshot({ file: stateFile, gh, now: NOW });
+  assert.match(inside, /locked by another session/);
   assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
 });
 

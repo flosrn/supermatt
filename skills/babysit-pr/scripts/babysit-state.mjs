@@ -3,7 +3,7 @@
 // the CI recovery counters, handled feedback, and evidence tied to the current head.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -28,31 +28,59 @@ function save(file, state) {
   renameSync(temp, file);
 }
 
-const LOCK_WAIT_MS = 10_000;
-const LOCK_STALE_MS = 60_000;
+// Two sessions on one PR must not lose each other's writes: every read-modify-write,
+// GitHub reads included, holds a lock file naming its process. A contender waits while
+// that process lives and reclaims the lock only from a process that is gone.
+const lockWaitMs = () => Number(process.env.SUPERMATT_LOCK_WAIT_MS ?? 120_000);
 
-// Two sessions on one PR must not lose each other's writes: every read-modify-write holds
-// an exclusive lock file. A lock older than a minute belongs to a crashed process.
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+// The pid in a lock file; null while its owner is still writing it.
+function ownerOf(path) {
+  let text;
+  try { text = readFileSync(path, "utf8").trim(); } catch { return null; }
+  const pid = Number(text);
+  return text && Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+// Moves a dead owner's lock aside, and puts it back when it turns out to be a live one.
+function reclaim(lock, dead) {
+  const grave = `${lock}.${process.pid}.reclaim`;
+  try { renameSync(lock, grave); } catch { return; }
+  if (ownerOf(grave) !== dead) {
+    try { linkSync(grave, lock); } catch { /* a newer lock already took its place */ }
+  }
+  rmSync(grave, { force: true });
+}
+
 function locked(file, work) {
   const lock = `${file}.lock`;
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + lockWaitMs();
   for (;;) {
     try {
-      closeSync(openSync(lock, "wx"));
+      const fd = openSync(lock, "wx");
+      writeFileSync(fd, String(process.pid));
+      closeSync(fd);
       break;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      let age = 0;
-      try { age = Date.now() - statSync(lock).mtimeMs; } catch { continue; }
-      if (age > LOCK_STALE_MS) { rmSync(lock, { force: true }); continue; }
-      if (Date.now() > deadline) throw new Error(`state is locked by another session: ${lock}`);
+      const owner = ownerOf(lock);
+      if (owner !== null && !alive(owner)) { reclaim(lock, owner); continue; }
+      if (Date.now() > deadline) throw new Error(`state is locked by another session (pid ${owner}): ${lock}`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
     }
   }
   try {
     return work();
   } finally {
-    rmSync(lock, { force: true });
+    if (ownerOf(lock) === process.pid) rmSync(lock, { force: true });
   }
 }
 
@@ -294,10 +322,15 @@ export function evaluate(state, seen, now) {
     state.ready_candidate = null;
   }
   state.handled ??= {};
+  state.resolved_now = seen.feedback.filter((f) => f.resolved).map((f) => f.id);
   // A resolved thread is feedback only when this babysitter handled it and it changed since:
   // a reply or edit after the resolve. Threads others resolved stay closed.
   const pending = seen.feedback.filter((f) => state.handled[f.id]?.fingerprint !== f.fingerprint && (!f.resolved || state.handled[f.id]));
-  const parked = seen.feedback.filter((f) => !f.resolved && state.handled[f.id]?.fingerprint === f.fingerprint && state.handled[f.id].disposition === "needs-human");
+  // A needs-human item stays parked until its thread is resolved after it was parked.
+  const parked = seen.feedback.filter((f) => {
+    const h = state.handled[f.id];
+    return h?.disposition === "needs-human" && h.fingerprint === f.fingerprint && !(f.resolved && !h.resolved);
+  });
 
   const names = new Set(seen.checks.map((c) => c.name));
   const missing = seen.required.filter((n) => !names.has(n));
@@ -355,13 +388,14 @@ export function evaluate(state, seen, now) {
   };
 }
 
-// GitHub is read before the state transaction, so a slow read never holds the lock and
-// never saves state older than a write another session made meanwhile.
+// The GitHub read happens inside the state transaction: an observation is never applied to
+// state another session advanced after it was taken.
 export function snapshot({ file, gh = realGh, now = Date.now() }) {
-  const { repo, pr } = load(file);
-  if (pr == null) throw new Error("no PR bound yet: create it, then run bind");
-  const seen = observe(gh, repo, pr);
-  return update(file, (state) => ({ ...evaluate(state, seen, now), budgets: budgets(state, now), state_file: file }));
+  return update(file, (state) => {
+    if (state.pr == null) throw new Error("no PR bound yet: create it, then run bind");
+    const report = evaluate(state, observe(gh, state.repo, state.pr), now);
+    return { ...report, budgets: budgets(state, now), state_file: file };
+  });
 }
 
 const DISPOSITIONS = ["fixed", "answered", "declined", "no-action", "needs-human"];
@@ -373,7 +407,8 @@ export function handled(file, { id, fingerprint: seen, disposition, now = Date.n
   if (!id || !seen) throw new Error("handled needs --id and --fingerprint from the snapshot");
   update(file, (state) => {
     state.handled ??= {};
-    state.handled[id] = { fingerprint: seen, disposition, at: new Date(now).toISOString() };
+    const resolved = (state.resolved_now ?? []).includes(id);
+    state.handled[id] = { fingerprint: seen, disposition, resolved, at: new Date(now).toISOString() };
   });
 }
 
