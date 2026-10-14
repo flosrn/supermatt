@@ -230,8 +230,8 @@ export function observe(gh, repo, number) {
   const feedback = [];
   for (const t of all(gh, repo, number, "reviewThreads")) {
     const comments = threadComments(gh, t).filter((c) => !ours(c, viewer.login));
-    if (t.isResolved || !comments.length) continue;
-    feedback.push({ id: t.id, kind: "thread", path: t.path, line: t.line, outdated: t.isOutdated, url: comments[0].url,
+    if (!comments.length) continue;
+    feedback.push({ id: t.id, kind: "thread", resolved: t.isResolved, path: t.path, line: t.line, outdated: t.isOutdated, url: comments[0].url,
       comments: comments.map((c) => ({ author: c.author?.login ?? null, body: c.body })), fingerprint: fingerprint(comments.map((c) => [c.id, c.body])) });
   }
   for (const [kind, connection] of [["comment", "comments"], ["review", "reviews"]]) {
@@ -262,8 +262,10 @@ export function evaluate(state, seen, now) {
     state.ready_candidate = null;
   }
   state.handled ??= {};
-  const pending = seen.feedback.filter((f) => state.handled[f.id]?.fingerprint !== f.fingerprint);
-  const parked = seen.feedback.filter((f) => state.handled[f.id]?.fingerprint === f.fingerprint && state.handled[f.id].disposition === "needs-human");
+  // A resolved thread is feedback only when this babysitter handled it and it changed since:
+  // a reply or edit after the resolve. Threads others resolved stay closed.
+  const pending = seen.feedback.filter((f) => state.handled[f.id]?.fingerprint !== f.fingerprint && (!f.resolved || state.handled[f.id]));
+  const parked = seen.feedback.filter((f) => !f.resolved && state.handled[f.id]?.fingerprint === f.fingerprint && state.handled[f.id].disposition === "needs-human");
 
   const names = new Set(seen.checks.map((c) => c.name));
   const missing = seen.required.filter((n) => !names.has(n));

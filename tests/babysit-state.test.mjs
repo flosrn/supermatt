@@ -211,6 +211,29 @@ test("reads every comment of a long review thread, so a late reply reopens it", 
   assert.deepEqual(look().feedback.map((f) => f.id), ["T1"]);
 });
 
+test("a reply in a thread the babysitter resolved comes back; a thread resolved before it looked does not", async (t) => {
+  const othersResolved = { ...thread("T0", comment("TC0", "Old nit.")), isResolved: true };
+  const { live, stateFile, look } = babysat(t, { threads: [othersResolved, thread("T1", comment("TC1", "Rename this."))] });
+  const [item] = look().feedback;
+  handled(stateFile, { id: item.id, fingerprint: item.fingerprint, disposition: "fixed" });
+  live.threads[1].isResolved = true;
+  assert.deepEqual(look().feedback, []);
+
+  live.threads[1].comments.nodes.push(comment("TC2", "The rename broke the export."));
+  live.threads[0].comments.nodes.push(comment("TC9", "Unrelated follow-up."));
+  assert.deepEqual(look().feedback.map((f) => [f.id, f.resolved]), [["T1", true]]);
+});
+
+test("a needs-human thread blocks until someone resolves it", async (t) => {
+  const { live, stateFile, look } = babysat(t, { threads: [thread("T1", comment("TC1", "Should this ship behind a flag?"))] });
+  const [item] = look(NOW).feedback;
+  handled(stateFile, { id: item.id, fingerprint: item.fingerprint, disposition: "needs-human" });
+  assert.equal(look(NOW).outcome, "blocked");
+  live.threads[0].isResolved = true;
+  const after = look(NOW + 60_000);
+  assert.deepEqual([after.outcome, after.blockers], [null, ["settling before ready"]]);
+});
+
 test("an edited comment or a new reply is pending again; the babysitter's own replies are not", async (t) => {
   const { live, stateFile, look } = babysat(t, {
     comments: [comment("C1", "Typo in the README.")],
