@@ -249,6 +249,16 @@ test("a needs-human follow-up raised in a thread that was already resolved stays
   assert.deepEqual([later.outcome, later.blockers], ["blocked", ["needs-human: https://github.com/acme/app/pull/4#TC1"]]);
 });
 
+test("a park records the resolution the babysitter saw, not one a later snapshot saw", async (t) => {
+  const { live, stateFile, look } = babysat(t, { threads: [thread("T1", comment("TC1", "Should this ship behind a flag?"))] });
+  const [seenOpen] = look(NOW).feedback;
+  live.threads[0].isResolved = true;
+  look(NOW);
+  handled(stateFile, { id: seenOpen.id, fingerprint: seenOpen.fingerprint, disposition: "needs-human" });
+  const after = look(NOW + 60_000);
+  assert.deepEqual([after.outcome, after.blockers], [null, ["settling before ready"]]);
+});
+
 test("a park raised in a resolved thread is released when someone reopens and then resolves it", async (t) => {
   const { live, stateFile, look } = babysat(t, { threads: [thread("T1", comment("TC1", "Rename this."))] });
   const [first] = look(NOW).feedback;

@@ -214,6 +214,7 @@ export function extend(file, duration, { now = Date.now() } = {}) {
 export const MARKER = "<!-- supermatt:babysit-pr -->";
 const SETTLE_SECONDS = 300;
 const MISSING_CHECK_GRACE_SECONDS = 600;
+const RESOLVED = ".resolved";
 
 const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 const ours = (comment, viewer) => comment.author?.login === viewer && (comment.body ?? "").includes(MARKER);
@@ -343,7 +344,6 @@ export function evaluate(state, seen, now) {
     state.ready_candidate = null;
   }
   state.handled ??= {};
-  state.resolved_now = seen.feedback.filter((f) => f.resolved).map((f) => f.id);
   // A resolved thread is feedback only when this babysitter handled it and it changed since:
   // a reply or edit after the resolve. Threads others resolved stay closed.
   const pending = seen.feedback.filter((f) => state.handled[f.id]?.fingerprint !== f.fingerprint && (!f.resolved || state.handled[f.id]));
@@ -404,7 +404,9 @@ export function evaluate(state, seen, now) {
   return {
     outcome, next, head_moved: headMoved, invalidated,
     pr: { number: seen.number, url: seen.url, state: seen.state, draft: seen.draft, head: seen.head, base_ref: seen.base_ref, base: seen.base },
-    feedback: pending,
+    // A resolved thread's fingerprint carries ".resolved", so handled records the resolution
+    // the babysitter saw, whatever a later snapshot saw.
+    feedback: pending.map((f) => (f.resolved ? { ...f, fingerprint: `${f.fingerprint}${RESOLVED}` } : f)),
     checks: { failing, running, missing, passing: seen.checks.filter((c) => c.status === "pass").length, total: seen.checks.length, required: seen.required },
     branch: { merge_state: seen.merge_state, mergeable: seen.mergeable, review_decision: seen.review_decision },
     blockers: [...human, ...waiting],
@@ -430,8 +432,8 @@ export function handled(file, { id, fingerprint: seen, disposition, now = Date.n
   if (!id || !seen) throw new Error("handled needs --id and --fingerprint from the snapshot");
   update(file, (state) => {
     state.handled ??= {};
-    const resolved = (state.resolved_now ?? []).includes(id);
-    state.handled[id] = { fingerprint: seen, disposition, resolved, at: new Date(now).toISOString() };
+    const resolved = seen.endsWith(RESOLVED);
+    state.handled[id] = { fingerprint: resolved ? seen.slice(0, -RESOLVED.length) : seen, disposition, resolved, at: new Date(now).toISOString() };
   });
 }
 
