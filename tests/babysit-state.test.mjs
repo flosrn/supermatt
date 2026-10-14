@@ -253,6 +253,40 @@ test("a lock left by a crashed session expires instead of wedging the state", as
   assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
 });
 
+test("the branch is updated only when GitHub reports it behind or conflicting, after feedback", async (t) => {
+  for (const [mergeStateStatus, expected] of [["BEHIND", ["update-branch"]], ["DIRTY", ["update-branch"]], ["CLEAN", ["wait"]]]) {
+    const { live, look } = babysat(t, { mergeStateStatus, baseOid: "moved-base" });
+    assert.deepEqual(look().next, expected, mergeStateStatus);
+    live.comments.push(comment("C1", "One more thing."));
+    assert.equal(look().next[0], "feedback", mergeStateStatus);
+  }
+});
+
+test("human-owned blockers end the run blocked once nothing else is running, and name themselves", async (t) => {
+  for (const [over, reason] of [
+    [{ isDraft: true }, "draft"],
+    [{ reviewDecision: "REVIEW_REQUIRED", mergeStateStatus: "BLOCKED" }, "review required"],
+    [{ reviewDecision: "CHANGES_REQUESTED", mergeStateStatus: "CLEAN" }, "changes requested"],
+  ]) {
+    const { live, look } = babysat(t, { ...over, checks: [checkRun("test", null, 1)] });
+    assert.equal(look().outcome, null, reason);
+    live.checks = [checkRun("test", "SUCCESS", 1)];
+    const done = look();
+    assert.deepEqual([done.outcome, done.blockers], ["blocked", [reason]], reason);
+  }
+});
+
+test("recover-ci outcomes: a rerun waits for its result, an exhausted budget ends the run", async (t) => {
+  const rerun = babysat(t, { checks: [checkRun("test", "FAILURE", 1)], mergeStateStatus: "UNSTABLE" });
+  ciResult(rerun.stateFile, { key: rerun.look().checks.failing[0].key, outcome: "rerun" });
+  const waiting = rerun.look();
+  assert.deepEqual([waiting.outcome, waiting.next, waiting.blockers], [null, ["wait"], ["rerun requested: test"]]);
+
+  const spent = babysat(t, { checks: [checkRun("test", "FAILURE", 1)], mergeStateStatus: "UNSTABLE" });
+  ciResult(spent.stateFile, { key: spent.look().checks.failing[0].key, outcome: "budget-exhausted" });
+  assert.equal(spent.look().outcome, "budget-exhausted");
+});
+
 test("an edited comment or a new reply is pending again; the babysitter's own replies are not", async (t) => {
   const { live, stateFile, look } = babysat(t, {
     comments: [comment("C1", "Typo in the README.")],
