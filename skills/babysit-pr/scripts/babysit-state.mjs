@@ -10,7 +10,13 @@ import { parseArgs } from "node:util";
 
 const realGh = (args) => execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 
-const fileFor = (dir, repo, branch) => join(dir, `${repo}#${branch}`.replace(/[^A-Za-z0-9._-]+/g, "-") + ".json");
+// A readable slug for people, plus a hash of the exact repo and branch: two branches whose
+// names slug alike ("feat/x", "feat-x") must never share state.
+const fileFor = (dir, repo, branch) => {
+  const slug = `${repo}#${branch}`.replace(/[^A-Za-z0-9._-]+/g, "-");
+  const exact = createHash("sha256").update(`${repo}\0${branch}`).digest("hex").slice(0, 12);
+  return join(dir, `${slug}-${exact}.json`);
+};
 
 function load(file) {
   return JSON.parse(readFileSync(file, "utf8"));

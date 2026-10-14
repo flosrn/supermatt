@@ -119,6 +119,16 @@ test("a PR named by number is bound to its own head branch", async (t) => {
   assert.deepEqual([resumed.action, resumed.pr, resumed.stateFile], ["reuse", 30, named.stateFile]);
 });
 
+test("branches whose names differ only in punctuation keep separate state", async (t) => {
+  const dir = stateDir(t);
+  const h = host({ prs: [{ number: 3, url: "https://github.com/acme/app/pull/3", state: "OPEN", headRefName: "feat/x" }] });
+  const slash = open(base(dir, h.gh, { duration: "1h" }));
+  spend(slash.stateFile, "repair");
+  const dash = open(base(dir, h.gh, { branch: "feat-x", duration: "8h" }));
+  assert.notEqual(dash.stateFile, slash.stateFile);
+  assert.deepEqual([dash.action, dash.pr, dash.resumed, dash.budgets.repair_cycles_left], ["create", null, false, 2]);
+});
+
 test("a resume keeps the monitoring deadline and the recovery budget", async (t) => {
   const dir = stateDir(t);
   const h = host({ prs: [{ number: 4, url: "https://github.com/acme/app/pull/4", state: "OPEN", headRefName: "feat/x" }] });
