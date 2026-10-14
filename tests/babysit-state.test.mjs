@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
+import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 
@@ -296,6 +296,32 @@ test("a lock left by a crashed session is reclaimed", async (t) => {
   const { stateFile } = babysat(t);
   writeFileSync(`${stateFile}.lock`, String(await deadPid()));
   assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
+});
+
+test("an empty lock file, left by a crash before it named its owner, is reclaimed", async (t) => {
+  const { stateFile } = babysat(t);
+  writeFileSync(`${stateFile}.lock`, "");
+  assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
+});
+
+test("reclaiming a dead owner's lock waits for a live reclaimer, so two sessions never enter together", async (t) => {
+  const { stateFile } = babysat(t);
+  writeFileSync(`${stateFile}.lock`, String(await deadPid()));
+  const reclaimer = liveProcess(t);
+  writeFileSync(`${stateFile}.lock.reclaim`, String(reclaimer.pid));
+  assert.throws(() => spend(stateFile, "repair"), /locked by another session/);
+
+  reclaimer.kill();
+  await once(reclaimer, "exit");
+  assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
+});
+
+test("a reclaimer that finds a live owner in place, after seeing a dead one, leaves the lock alone", async (t) => {
+  const { stateFile } = babysat(t);
+  const owner = liveProcess(t);
+  writeFileSync(`${stateFile}.lock`, String(owner.pid));
+  assert.equal(reclaim(`${stateFile}.lock`), false);
+  assert.equal(readFileSync(`${stateFile}.lock`, "utf8"), String(owner.pid));
 });
 
 test("a snapshot holds the lock across its GitHub reads, so no write lands inside it", async (t) => {

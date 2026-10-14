@@ -3,7 +3,7 @@
 // the CI recovery counters, handled feedback, and evidence tied to the current head.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -42,40 +42,59 @@ function alive(pid) {
   }
 }
 
-// The pid in a lock file; null while its owner is still writing it.
+// The pid a lock file names: undefined when there is no file, null when it names no one.
 function ownerOf(path) {
   let text;
-  try { text = readFileSync(path, "utf8").trim(); } catch { return null; }
+  try { text = readFileSync(path, "utf8").trim(); } catch { return undefined; }
   const pid = Number(text);
   return text && Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-// Moves a dead owner's lock aside, and puts it back when it turns out to be a live one.
-function reclaim(lock, dead) {
-  const grave = `${lock}.${process.pid}.reclaim`;
-  try { renameSync(lock, grave); } catch { return; }
-  if (ownerOf(grave) !== dead) {
-    try { linkSync(grave, lock); } catch { /* a newer lock already took its place */ }
+// A lock file is written complete, then linked into place: it is never seen half written,
+// so one that names no live process is debris.
+const abandoned = (path) => {
+  const owner = ownerOf(path);
+  return owner === null || (owner !== undefined && !alive(owner));
+};
+
+function claim(path) {
+  const draft = `${path}.${process.pid}.draft`;
+  writeFileSync(draft, String(process.pid));
+  try {
+    linkSync(draft, path);
+    return true;
+  } catch (error) {
+    if (error.code === "EEXIST") return false;
+    throw error;
+  } finally {
+    rmSync(draft, { force: true });
   }
-  rmSync(grave, { force: true });
+}
+
+// One reclaimer at a time, rechecking under its guard, so a lock a live session took
+// meanwhile is never removed.
+export function reclaim(lock) {
+  const guard = `${lock}.reclaim`;
+  if (!claim(guard)) {
+    if (abandoned(guard)) rmSync(guard, { force: true });
+    return false;
+  }
+  try {
+    if (!abandoned(lock)) return false;
+    rmSync(lock, { force: true });
+    return true;
+  } finally {
+    rmSync(guard, { force: true });
+  }
 }
 
 function locked(file, work) {
   const lock = `${file}.lock`;
   const deadline = Date.now() + lockWaitMs();
-  for (;;) {
-    try {
-      const fd = openSync(lock, "wx");
-      writeFileSync(fd, String(process.pid));
-      closeSync(fd);
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      const owner = ownerOf(lock);
-      if (owner !== null && !alive(owner)) { reclaim(lock, owner); continue; }
-      if (Date.now() > deadline) throw new Error(`state is locked by another session (pid ${owner}): ${lock}`);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-    }
+  while (!claim(lock)) {
+    if (abandoned(lock) && reclaim(lock)) continue;
+    if (Date.now() > deadline) throw new Error(`state is locked by another session (pid ${ownerOf(lock)}): ${lock}`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   }
   try {
     return work();
