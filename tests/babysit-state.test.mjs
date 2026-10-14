@@ -249,6 +249,21 @@ test("a needs-human follow-up raised in a thread that was already resolved stays
   assert.deepEqual([later.outcome, later.blockers], ["blocked", ["needs-human: https://github.com/acme/app/pull/4#TC1"]]);
 });
 
+test("a park raised in a resolved thread is released when someone reopens and then resolves it", async (t) => {
+  const { live, stateFile, look } = babysat(t, { threads: [thread("T1", comment("TC1", "Rename this."))] });
+  const [first] = look(NOW).feedback;
+  handled(stateFile, { id: first.id, fingerprint: first.fingerprint, disposition: "fixed" });
+  live.threads[0].isResolved = true;
+  live.threads[0].comments.nodes.push(comment("TC2", "Should the old name stay as an alias for v1 users?"));
+  const [followUp] = look(NOW).feedback;
+  handled(stateFile, { id: followUp.id, fingerprint: followUp.fingerprint, disposition: "needs-human" });
+  live.threads[0].isResolved = false;
+  assert.equal(look(NOW).outcome, "blocked");
+  live.threads[0].isResolved = true;
+  const released = look(NOW + 60_000);
+  assert.deepEqual([released.outcome, released.blockers], [null, ["settling before ready"]]);
+});
+
 // A held lock makes a contender wait; tests keep that wait short.
 process.env.SUPERMATT_LOCK_WAIT_MS = "300";
 

@@ -326,9 +326,11 @@ export function evaluate(state, seen, now) {
   // A resolved thread is feedback only when this babysitter handled it and it changed since:
   // a reply or edit after the resolve. Threads others resolved stay closed.
   const pending = seen.feedback.filter((f) => state.handled[f.id]?.fingerprint !== f.fingerprint && (!f.resolved || state.handled[f.id]));
-  // A needs-human item stays parked until its thread is resolved after it was parked.
+  // A needs-human item stays parked until its thread is resolved after it was parked. A
+  // reopen seen meanwhile resets that baseline, so a later resolve releases the park.
   const parked = seen.feedback.filter((f) => {
     const h = state.handled[f.id];
+    if (h?.resolved && !f.resolved) h.resolved = false;
     return h?.disposition === "needs-human" && h.fingerprint === f.fingerprint && !(f.resolved && !h.resolved);
   });
 
