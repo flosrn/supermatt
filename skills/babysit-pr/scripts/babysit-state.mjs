@@ -72,11 +72,13 @@ function claim(path) {
 }
 
 // One reclaimer at a time, rechecking under its guard, so a lock a live session took
-// meanwhile is never removed.
+// meanwhile is never removed. Only its owner removes a guard: any other removal could hit a
+// live guard published after the check. A guard exists for microseconds, so a dead one means
+// a crash inside that window, and a person deletes it.
 export function reclaim(lock) {
   const guard = `${lock}.reclaim`;
   if (!claim(guard)) {
-    if (abandoned(guard)) rmSync(guard, { force: true });
+    if (abandoned(guard)) throw new Error(`reclaim guard left by a crashed session: delete ${guard} once no babysit-pr run is active`);
     return false;
   }
   try {

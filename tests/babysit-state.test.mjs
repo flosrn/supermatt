@@ -304,7 +304,7 @@ test("an empty lock file, left by a crash before it named its owner, is reclaime
   assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
 });
 
-test("reclaiming a dead owner's lock waits for a live reclaimer, so two sessions never enter together", async (t) => {
+test("a reclaim guard is removed only by its owner: a dead one stops the run with the path to delete", async (t) => {
   const { stateFile } = babysat(t);
   writeFileSync(`${stateFile}.lock`, String(await deadPid()));
   const reclaimer = liveProcess(t);
@@ -313,6 +313,10 @@ test("reclaiming a dead owner's lock waits for a live reclaimer, so two sessions
 
   reclaimer.kill();
   await once(reclaimer, "exit");
+  assert.throws(() => spend(stateFile, "repair"), new RegExp(`left by a crashed session: delete ${stateFile}\\.lock\\.reclaim`));
+  assert.equal(readFileSync(`${stateFile}.lock.reclaim`, "utf8"), String(reclaimer.pid));
+
+  rmSync(`${stateFile}.lock.reclaim`);
   assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
 });
 
