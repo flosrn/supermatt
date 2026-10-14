@@ -138,7 +138,7 @@ const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)
 const ours = (comment, viewer) => comment.author?.login === viewer && (comment.body ?? "").includes(MARKER);
 
 const CHECKS = `contexts(first: 100) { pageInfo { hasNextPage endCursor } nodes { __typename
-  ... on CheckRun { databaseId name status conclusion detailsUrl checkSuite { workflowRun { databaseId } } }
+  ... on CheckRun { databaseId name status conclusion detailsUrl checkSuite { app { databaseId } workflowRun { databaseId workflow { databaseId } } } }
   ... on StatusContext { context state targetUrl createdAt } } }`;
 const CORE = `query($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) {
   number url state isDraft headRefName headRefOid baseRefName mergeable mergeStateStatus reviewDecision
@@ -175,17 +175,24 @@ function all(gh, repo, number, name) {
   return nodes;
 }
 
+// A check is identified by its producer, not its display name: a status and a check run,
+// or jobs of two workflows, can share a name and must each pass. Within one producer the
+// newest run (a rerun) replaces older ones.
 function check(node) {
   if (node.__typename === "CheckRun") {
     const status = node.status !== "COMPLETED" ? "pending" : ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(node.conclusion) ? "pass" : "fail";
-    return { name: node.name, key: `check-run:${node.databaseId}`, status, conclusion: node.conclusion, url: node.detailsUrl, run_id: node.checkSuite?.workflowRun?.databaseId ?? null };
+    const suite = node.checkSuite ?? {};
+    const producer = suite.workflowRun?.workflow?.databaseId != null ? `workflow:${suite.workflowRun.workflow.databaseId}` : `app:${suite.app?.databaseId}`;
+    return { name: node.name, identity: `check-run:${producer}:${node.name}`, order: node.databaseId, key: `check-run:${node.databaseId}`,
+      status, conclusion: node.conclusion, url: node.detailsUrl, run_id: suite.workflowRun?.databaseId ?? null };
   }
   const status = node.state === "SUCCESS" ? "pass" : ["PENDING", "EXPECTED"].includes(node.state) ? "pending" : "fail";
-  return { name: node.context, key: `status:${node.context}:${node.createdAt}`, status, conclusion: node.state, url: node.targetUrl, run_id: null };
+  return { name: node.context, identity: `status:${node.context}`, order: Date.parse(node.createdAt), key: `status:${node.context}:${node.createdAt}`,
+    status, conclusion: node.state, url: node.targetUrl, run_id: null };
 }
 
 // One read of the PR as the babysitter sees it: head, base, merge state, checks on the
-// head (latest run per name), required check names, and the feedback still on the PR.
+// head (latest run per producer), required check names, and the feedback still on the PR.
 export function observe(gh, repo, number) {
   const [owner, name] = repo.split("/");
   const { viewer, repository: { pullRequest: pr } } = graphql(gh, CORE, { owner, name, number });
@@ -193,8 +200,7 @@ export function observe(gh, repo, number) {
   if (contexts.pageInfo.hasNextPage) throw new Error("more than 100 checks on the head; read them with gh pr checks");
   const latest = new Map();
   for (const c of contexts.nodes.map(check)) {
-    const seen = latest.get(c.name);
-    if (!seen || c.key.localeCompare(seen.key, undefined, { numeric: true }) > 0) latest.set(c.name, c);
+    if (!(latest.get(c.identity)?.order >= c.order)) latest.set(c.identity, c);
   }
   const rules = JSON.parse(gh(["api", `repos/${repo}/rules/branches/${encodeURIComponent(pr.baseRefName)}`]));
   const required = new Set(pr.baseRef?.refUpdateRule?.requiredStatusCheckContexts ?? []);

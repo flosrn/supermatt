@@ -13,10 +13,12 @@ function stateDir(t) {
   return dir;
 }
 
-const checkRun = (name, conclusion, databaseId, runId = databaseId * 10) => ({
+const checkRun = (name, conclusion, databaseId, runId = databaseId * 10, workflow = 1) => ({
   __typename: "CheckRun", databaseId, name, status: conclusion ? "COMPLETED" : "IN_PROGRESS", conclusion,
-  detailsUrl: `https://github.com/acme/app/actions/runs/${runId}/job/${databaseId}`, checkSuite: { workflowRun: { databaseId: runId } },
+  detailsUrl: `https://github.com/acme/app/actions/runs/${runId}/job/${databaseId}`,
+  checkSuite: { app: { databaseId: 15368 }, workflowRun: { databaseId: runId, workflow: { databaseId: workflow } } },
 });
+const statusContext = (context, state, createdAt) => ({ __typename: "StatusContext", context, state, targetUrl: `https://ci.example/${context}`, createdAt });
 const comment = (id, body, login = "reviewer") => ({ id, author: { login }, body, url: `https://github.com/acme/app/pull/4#${id}` });
 const thread = (id, ...comments) => ({ id, isResolved: false, isOutdated: false, path: "src/app.js", line: 3, comments: { nodes: comments } });
 
@@ -165,6 +167,31 @@ test("feedback that arrives while CI is red is handled before CI", async (t) => 
 
   handled(stateFile, { id: "C1", fingerprint: withFeedback.feedback[0].fingerprint, disposition: "fixed" });
   assert.deepEqual(look().next, ["ci"]);
+});
+
+test("a check counts per producer: a passing status cannot hide a failing check run of the same name", async (t) => {
+  const { look } = babysat(t, { checks: [checkRun("test", "FAILURE", 1), statusContext("test", "SUCCESS", "2026-10-14T12:00:00Z")] });
+  const seen = look(NOW);
+  assert.deepEqual(seen.checks.failing.map((c) => c.name), ["test"]);
+  assert.notEqual(look(NOW + 400_000).outcome, "ready");
+});
+
+test("two workflows with a job of the same name are two checks; a rerun replaces only its own", async (t) => {
+  for (const order of [[0, 1, 2], [2, 1, 0]]) {
+    const runs = [checkRun("test", "FAILURE", 1, 10, 1), checkRun("test", "SUCCESS", 2, 20, 1), checkRun("test", "FAILURE", 3, 30, 2)];
+    const { look } = babysat(t, { checks: order.map((i) => runs[i]) });
+    const seen = look();
+    assert.deepEqual([seen.checks.passing, seen.checks.failing.map((c) => c.run_id)], [1, [30]]);
+  }
+});
+
+test("an external status follows its latest state", async (t) => {
+  const { live, look } = babysat(t, { checks: [statusContext("ci/ext", "PENDING", "2026-10-14T12:00:00Z")] });
+  assert.deepEqual(look().checks.running, ["ci/ext"]);
+  live.checks.push(statusContext("ci/ext", "FAILURE", "2026-10-14T12:01:00Z"));
+  assert.deepEqual(look().checks.failing.map((c) => c.name), ["ci/ext"]);
+  live.checks.push(statusContext("ci/ext", "SUCCESS", "2026-10-14T12:02:00Z"));
+  assert.deepEqual([look().checks.failing, look().checks.passing], [[], 1]);
 });
 
 test("an edited comment or a new reply is pending again; the babysitter's own replies are not", async (t) => {
