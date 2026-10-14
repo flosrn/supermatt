@@ -8,7 +8,9 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-const realGh = (args) => execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+// A gh call that hangs (network, credential prompt) would hold the state lock: cut it off.
+const ghTimeoutMs = () => Number(process.env.SUPERMATT_GH_TIMEOUT_MS ?? 120_000);
+const realGh = (args) => execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: ghTimeoutMs(), killSignal: "SIGKILL" });
 
 // A readable slug for people, plus a hash of the exact repo and branch: two branches whose
 // names slug alike ("feat/x", "feat-x") must never share state.
@@ -33,6 +35,16 @@ function save(file, state) {
 // that process lives and reclaims the lock only from a process that is gone.
 const lockWaitMs = () => Number(process.env.SUPERMATT_LOCK_WAIT_MS ?? 120_000);
 
+// When a process started, as ps prints it: with the pid, it names one process across pid
+// reuse. Empty where ps cannot tell (no such process, or no ps).
+export function processStart(pid) {
+  try {
+    return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().replace(/\s+/g, " ");
+  } catch {
+    return "";
+  }
+}
+
 function alive(pid) {
   try {
     process.kill(pid, 0);
@@ -42,24 +54,32 @@ function alive(pid) {
   }
 }
 
-// The pid a lock file names: undefined when there is no file, null when it names no one.
+// Who a lock file names, as { pid, start }: undefined when there is no file, null when it
+// names no one. `start` is empty when the writer could not read its own start time.
 function ownerOf(path) {
   let text;
   try { text = readFileSync(path, "utf8").trim(); } catch { return undefined; }
-  const pid = Number(text);
-  return text && Number.isInteger(pid) && pid > 0 ? pid : null;
+  const [first, ...rest] = text.split(" ");
+  const pid = Number(first);
+  return first && Number.isInteger(pid) && pid > 0 ? { pid, start: rest.join(" ") } : null;
 }
 
+let ownStart;
+const me = () => `${process.pid} ${(ownStart ??= processStart(process.pid))}`;
+
 // A lock file is written complete, then linked into place: it is never seen half written,
-// so one that names no live process is debris.
+// so one that names no live process is debris. A live pid with another start time is a
+// reused pid, not the owner.
 const abandoned = (path) => {
   const owner = ownerOf(path);
-  return owner === null || (owner !== undefined && !alive(owner));
+  if (owner === undefined) return false;
+  if (owner === null || !alive(owner.pid)) return true;
+  return owner.start !== "" && processStart(owner.pid) !== owner.start;
 };
 
 function claim(path) {
   const draft = `${path}.${process.pid}.draft`;
-  writeFileSync(draft, String(process.pid));
+  writeFileSync(draft, me());
   try {
     linkSync(draft, path);
     return true;
@@ -95,13 +115,13 @@ function locked(file, work) {
   const deadline = Date.now() + lockWaitMs();
   while (!claim(lock)) {
     if (abandoned(lock) && reclaim(lock)) continue;
-    if (Date.now() > deadline) throw new Error(`state is locked by another session (pid ${ownerOf(lock)}): ${lock}`);
+    if (Date.now() > deadline) throw new Error(`state is locked by another session (pid ${ownerOf(lock)?.pid}): ${lock}`);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   }
   try {
     return work();
   } finally {
-    if (ownerOf(lock) === process.pid) rmSync(lock, { force: true });
+    if (ownerOf(lock)?.pid === process.pid) rmSync(lock, { force: true });
   }
 }
 

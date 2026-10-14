@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
+import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, processStart, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 
@@ -336,6 +337,37 @@ test("a reclaimer that finds a live owner in place, after seeing a dead one, lea
   writeFileSync(`${stateFile}.lock`, String(owner.pid));
   assert.equal(reclaim(`${stateFile}.lock`), false);
   assert.equal(readFileSync(`${stateFile}.lock`, "utf8"), String(owner.pid));
+});
+
+test("a GitHub read that hangs is cut off, and the lock is released", async (t) => {
+  const { stateFile } = babysat(t);
+  const bin = mkdtempSync(join(tmpdir(), "babysit-stub-gh-"));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const marker = join(bin, "called");
+  writeFileSync(join(bin, "gh"), `#!/bin/sh\n: > "${marker}"\nexec sleep 30\n`, { mode: 0o755 });
+  const cli = fileURLToPath(new URL("../skills/babysit-pr/scripts/babysit-state.mjs", import.meta.url));
+  const started = Date.now();
+  const child = spawn(process.execPath, [cli, "snapshot", "--state", stateFile], {
+    env: { PATH: `${bin}:/usr/bin:/bin`, SUPERMATT_GH_TIMEOUT_MS: "2000" }, stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (d) => { stderr += d; });
+  const killer = setTimeout(() => child.kill(), 10_000);
+  const [code] = await once(child, "exit");
+  clearTimeout(killer);
+  assert.ok(existsSync(marker), `the stub gh was reached: ${stderr}`);
+  assert.notEqual(code, 0);
+  assert.ok(Date.now() - started < 8_000, `cut off in time: ${stderr}`);
+  assert.equal(existsSync(`${stateFile}.lock`), false);
+});
+
+test("a lock names its owner by pid and start time: the same pid with another start time is a reused pid", async (t) => {
+  const { stateFile } = babysat(t);
+  const owner = liveProcess(t);
+  writeFileSync(`${stateFile}.lock`, `${owner.pid} ${processStart(owner.pid)}`);
+  assert.throws(() => spend(stateFile, "repair"), /locked by another session/);
+  writeFileSync(`${stateFile}.lock`, `${owner.pid} Thu Jan  1 00:00:00 1970`);
+  assert.equal(spend(stateFile, "repair").repair_cycles_left, 1);
 });
 
 test("a snapshot holds the lock across its GitHub reads, so no write lands inside it", async (t) => {
