@@ -1,0 +1,5 @@
+interface:
+  display_name: "SuperMatt: Babysit PR"
+  short_description: "Watch a PR to merge-ready: feedback, CI, never merges"
+policy:
+  allow_implicit_invocation: false

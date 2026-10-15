@@ -10,6 +10,7 @@ Your agent handles your conversation and code under the terms of its own provide
 - **`jury`** gives one seat to the `codex` CLI (OpenAI) when it is installed. That model receives the brief (the question, options, and facts) and can read the repository without changing it.
 - **`to-spec`, `to-tickets`, `triage`, `wayfinder`, `implement`, `code-review`, and `orchestrate`** read or write issues on the issue tracker you choose in `setup-supermatt-skills`: GitHub through the `gh` CLI, GitLab through the `glab` CLI, or local Markdown files.
 - **`ship-pr`** pushes the branch, opens a pull request, and merges it on GitHub through the `gh` CLI.
+- **`babysit-pr`** pushes the branch, opens a pull request, reads its review threads, comments and checks, replies to and resolves review threads, and updates the branch on GitHub through the `gh` CLI. It never merges. **`recover-ci`** reads CI logs and reruns failed jobs on GitHub through `gh` for the skill that calls it.
 - **`orchestrate`** drives worker Claude Code sessions through `herdr`, creates git worktrees for them under the repo's `.claude/worktrees/`, reads their transcripts under `~/.claude/projects`, closes and comments on GitHub issues through `gh`, and shows a macOS notification when it stops.
 - **`research`** reads public web pages and documentation to answer your question.
 
@@ -17,7 +18,7 @@ Each of those services handles the data under its own privacy policy.
 
 ## What SuperMatt writes locally
 
-Skills write files into your working directory when you use them: specs, tickets in a local tracker, `GLOSSARY.md`, ADRs, handoff documents, research notes, reports, and prototypes. They stay on your machine unless you commit and push them.
+Skills write files into your working directory when you use them: specs, tickets in a local tracker, `GLOSSARY.md`, ADRs, handoff documents, research notes, reports, and prototypes. They stay on your machine unless you commit and push them. `babysit-pr` keeps its state for each pull request under the repository's `.git/supermatt/babysit-pr/` directory, which git never commits or pushes.
 
 ## Contact
 

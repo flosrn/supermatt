@@ -97,7 +97,7 @@ flowchart LR
 2. `to-spec` turns the conversation into a spec on your issue tracker.
 3. `to-tickets` splits the spec into tickets. Skip it when the work fits in one session.
 4. Use `implement` for each ticket, or `implement-spec` for the whole spec on one integration branch. Both build through `tdd`, check the running program with `qa`, and finish with `code-review`; `implement-spec` checks the combined result across tickets.
-5. `refactor` cleans up the branch without changing behavior, and `ship-pr` repairs CI within bounded attempts, merges only on green checks, and verifies post-merge workflows. Failed post-merge workflows use follow-up repair PRs.
+5. `refactor` cleans up the branch without changing behavior, and `ship-pr` repairs CI within bounded attempts through `recover-ci`, merges only on green checks, and verifies post-merge workflows. Failed post-merge workflows use follow-up repair PRs. To stop short of the merge, `babysit-pr` opens the PR when needed, handles review feedback and CI, and leaves a ready PR for you to merge.
 
 Run `retro` before clearing the session, or provide the session log later. After a bug fix, use it to identify what would have prevented the bug; use `improve-architecture` when the finding is a missing test seam.
 
@@ -125,6 +125,7 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 - Test seams agreed in `to-spec` or `triage` travel through `to-tickets` into `implement` and `tdd`, so no skill asks about them twice.
 - Each planning skill ends by pointing to the next step: `ideate` to `/grill-with-docs`, `improve-architecture` to `/to-spec` or `/implement`, and `wayfinder` to `/to-spec`.
 - `orchestrate`, new in SuperMatt, chains `triage`, `implement`, `fix-findings`, `refactor`, `ship-pr`, and a report-only `retro` across fresh worker sessions, and verifies each spec with `qa` and `code-review` once its tickets close. It reports retrospective candidates without applying or shipping them.
+- `ship-pr` and `babysit-pr` share one CI recovery, `recover-ci`, with the same budget of two repair cycles and one transient rerun. `babysit-pr` keeps that budget, its monitoring window, and the feedback it handled across resumes.
 - `ask-supermatt` routes across all of these flows and is kept in sync with every skill change.
 
 ### Refactors keep behavior
@@ -150,7 +151,7 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 |---|---|
 | **Kept** | The engineering and productivity skills, including `retro` and `pr` taken from upstream's in-progress set, and `implement-spec` adapted from v1.3.1. |
 | **Dropped** | Upstream's `misc` skills and the rest of its in-progress set. |
-| **Added** | `ideate`, `qa`, `orchestrate`, `refactor`, `improve-tests`, `improve-file-structure`, `commit`, `ship-pr`, `fix-findings`, `what-would-you-do`, `jury`, and `dependency-vetting`. |
+| **Added** | `ideate`, `qa`, `orchestrate`, `refactor`, `improve-tests`, `improve-file-structure`, `commit`, `ship-pr`, `babysit-pr`, `recover-ci`, `fix-findings`, `what-would-you-do`, `jury`, and `dependency-vetting`. |
 | **Renamed** | `ask-matt` is `ask-supermatt`, `improve-codebase-architecture` is `improve-architecture`, `setup-matt-pocock-skills` is `setup-supermatt-skills`, and `CONTEXT.md` is `GLOSSARY.md`. |
 
 ### Borrowed ideas
@@ -159,7 +160,7 @@ Some of the checks above are adapted from other skill sets:
 
 | Source | Skills |
 |---|---|
-| [Every's compound-engineering plugin](https://github.com/EveryInc/compound-engineering-plugin) | `code-review`, `diagnosing-bugs`, `to-spec`, `ideate` |
+| [Every's compound-engineering plugin](https://github.com/EveryInc/compound-engineering-plugin) | `code-review`, `diagnosing-bugs`, `to-spec`, `ideate`, `babysit-pr`. See [attribution](./THIRD-PARTY-NOTICES.md). |
 | [Superpowers](https://github.com/obra/superpowers) | `tdd`, `diagnosing-bugs` |
 | Luke Ramsden's [software-design](https://github.com/lukeramsden/software-design-agent-skill) | `codebase-design` |
 | Dex Horthy's [show-me](https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md) | `pr` |
@@ -186,6 +187,7 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 | **[orchestrate](./skills/orchestrate/SKILL.md)** | Work through GitHub issues or local Markdown tickets unattended in parallel lanes, with workers in Herdr panes and git worktrees. |
 | **[commit](./skills/commit/SKILL.md)** | Commit all changes on the current branch, main included, after a scan for secrets. |
 | **[ship-pr](./skills/ship-pr/SKILL.md)** | Commit, push, open a pull request, repair CI within bounded attempts, then squash merge and verify post-merge workflows. |
+| **[babysit-pr](./skills/babysit-pr/SKILL.md)** | Watch a pull request until it is ready to merge: open it when the branch has none, handle review feedback before CI, recover CI within a bounded budget, keep the branch current, and stop without merging. |
 | **[fix-findings](./skills/fix-findings/SKILL.md)** | Apply every finding from the most recent review, audit, verification, or check, at the root cause and without widening scope. |
 | **[setup-supermatt-skills](./skills/setup-supermatt-skills/SKILL.md)** | Configure this repo for the engineering skills (issue tracker, triage labels, domain doc layout). Run once per repo. |
 | **[to-spec](./skills/to-spec/SKILL.md)** | Turn the current conversation into a spec and publish it to the issue tracker. |
@@ -210,6 +212,7 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 | **[pr](./skills/pr/SKILL.md)** | The shape of a pull request body: a summary diagram or diff sketch, before/after evidence, and the merge danger (one-way or two-way door, blast radius). |
 | **[dependency-vetting](./skills/dependency-vetting/SKILL.md)** | Verify a package or tool is authentic before installing, adding, upgrading, or recommending it, by following the link from the upstream project to its install command. |
 | **[resolving-merge-conflicts](./skills/resolving-merge-conflicts/SKILL.md)** | Work through an in-progress git merge or rebase conflict hunk by hunk, resolving by intent traced to each side's primary source, run the project's checks, then finish the operation, never `--abort`. |
+| **[recover-ci](./skills/recover-ci/SKILL.md)** | Diagnose and recover a failed CI check or post-merge workflow within two repair cycles and one transient rerun, with counters the caller holds. Used by `ship-pr` and `babysit-pr`; never merges. |
 
 ## Productivity
 
