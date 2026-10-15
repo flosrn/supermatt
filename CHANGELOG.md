@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- `ship-pr`: the merge command carries `--match-head-commit <checked-head>`, so a commit pushed after the CI gate is never merged unchecked. The pin was required in a later sentence but missing from the command an agent runs.
+
 ## [0.20.1] - 2026-10-14
 
 ### Fixed
