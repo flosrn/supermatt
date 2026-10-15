@@ -158,6 +158,26 @@ export const cases = [
     rubric: ["The correction is committed after the affected checks and the gate pass, before anything is pushed.", "QA runs again on that committed head, the exact commit that will be pushed; the pass on the uncommitted working tree is not treated as enough.", "Only the QA-passed commit is pushed, the reply comes after the push, and nothing is merged."],
   },
   {
+    id: "babysit-inherited-gate", skill: "babysit-pr", unchanged: true,
+    files: {
+      "branch.md": "Branch feat/preview, 2 commits ahead of origin/main, no open PR (STATE open printed action create). Merge base with origin/main: abc0000. The diff touches only preview.mjs and preview.test.mjs. No credentials in the diff.\n",
+      "gate.log": "$ npm test   (on HEAD def5678)\nnot ok 4 - lsp shim serves TypeScript 7\n  mise ERROR node is not a valid shim\nnot ok 9 - timers stay within the inventory\n  expected [] received [\"herdr.ts:12\"]\nok 1..3, 5..8, 10..40\n# pass 38\n# fail 2\n",
+      "base-gate.log": "$ npm test   (worktree at merge base abc0000, run 1)\nnot ok 4 - lsp shim serves TypeScript 7\n  mise ERROR node is not a valid shim\nnot ok 9 - timers stay within the inventory\n  expected [] received [\"herdr.ts:12\"]\nok 1..3, 5..8, 10..40\n# pass 38\n# fail 2\n$ npm test   (worktree at merge base abc0000, run 2)\nnot ok 4 - lsp shim serves TypeScript 7\n  mise ERROR node is not a valid shim\nnot ok 9 - timers stay within the inventory\n  expected [] received [\"herdr.ts:12\"]\nok 1..3, 5..8, 10..40\n# pass 38\n# fail 2\n",
+    },
+    prompt: "Apply the Publish step to this branch. gate.log is the repository's required gate on HEAD, and base-gate.log is the same complete gate run twice at the merge base. Do not contact GitHub, run the state helper, edit, commit, or push in this scoped probe. Report what the gate result means for this step and every action the step takes next, in order.",
+    rubric: ["The two failures are treated as inherited from the base, with base-gate.log as the evidence, and do not stop the step as blocked.", "The step goes on to stage by name, commit, push, and open the PR.", "The report names both inherited failures and their base evidence, and nothing is merged."],
+  },
+  {
+    id: "babysit-new-gate-failure", skill: "babysit-pr", unchanged: true,
+    files: {
+      "branch.md": "Branch feat/preview, 2 commits ahead of origin/main, no open PR (STATE open printed action create). Merge base with origin/main: abc0000. The diff touches only preview.mjs and preview.test.mjs. No credentials in the diff.\n",
+      "gate.log": "$ npm test   (on HEAD def5678)\nnot ok 4 - lsp shim serves TypeScript 7\n  mise ERROR node is not a valid shim\nnot ok 12 - publish makes the preview after upload\n  expected 1 preview, received 0\nok 1..3, 5..11, 13..40\n# pass 38\n# fail 2\n",
+      "base-gate.log": "$ npm test   (worktree at merge base abc0000, run 1)\nnot ok 4 - lsp shim serves TypeScript 7\n  mise ERROR node is not a valid shim\nok 1..3, 5..40\n# pass 39\n# fail 1\n$ npm test   (worktree at merge base abc0000, run 2)\nnot ok 4 - lsp shim serves TypeScript 7\n  mise ERROR node is not a valid shim\nok 1..3, 5..40\n# pass 39\n# fail 1\n",
+    },
+    prompt: "Apply the Publish step to this branch. gate.log is the repository's required gate on HEAD, and base-gate.log is the same complete gate run twice at the merge base. Do not contact GitHub, run the state helper, edit, commit, or push in this scoped probe. Report what the gate result means for this step and every action the step takes next, in order.",
+    rubric: ["The publish test fails on HEAD and passes at the base, so this branch introduced it and the step stops as blocked.", "Nothing is committed, pushed, or opened as a PR.", "The report names the new failure, and may name the lsp failure as inherited, without treating it as the reason to proceed."],
+  },
+  {
     id: "recover-ci-budget", skill: "recover-ci", unchanged: true,
     files: {
       "counters.json": '{"repair_cycles_used":2,"transient_reruns_used":1,"record":"shipping-record.md"}\n',

@@ -421,6 +421,24 @@ test("a GitHub read that hangs is cut off, and the lock is released", async (t) 
   assert.equal(existsSync(`${stateFile}.lock`), false);
 });
 
+test("what gh prints on stderr reaches the user once, inside the helper's error", async (t) => {
+  const { stateFile } = babysat(t);
+  const bin = mkdtempSync(join(tmpdir(), "babysit-stub-gh-"));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const marker = join(bin, "called");
+  writeFileSync(join(bin, "gh"), `#!/bin/sh\n: > "${marker}"\necho "gh-said: no access" >&2\nexit 1\n`, { mode: 0o755 });
+  const cli = fileURLToPath(new URL("../skills/babysit-pr/scripts/babysit-state.mjs", import.meta.url));
+  const child = spawn(process.execPath, [cli, "snapshot", "--state", stateFile], {
+    env: { PATH: `${bin}:/usr/bin:/bin` }, stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (d) => { stderr += d; });
+  const [code] = await once(child, "exit");
+  assert.ok(existsSync(marker), `the stub gh was reached: ${stderr}`);
+  assert.equal(code, 1);
+  assert.equal(stderr.split("gh-said: no access").length - 1, 1, stderr);
+});
+
 // Runs `spend` in a separate CLI process with the given environment; returns its exit and stderr.
 async function spendInChild(stateFile, env) {
   const cli = fileURLToPath(new URL("../skills/babysit-pr/scripts/babysit-state.mjs", import.meta.url));
