@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-## [0.21.0] - 2026-10-14
+## [0.21.0] - 2026-10-15
 
 ### Added
 
@@ -16,6 +16,12 @@ All notable changes to this project are documented here. The format follows [Kee
 - `ship-pr`: recovers failed PR checks and post-merge runs through `recover-ci` with the counters from its shipping record. `CI.md` keeps only the post-merge repair: the repair branch, the merge hold, and the follow-up PR.
 - `orchestrate`: points its ship phase at `recover-ci` and the post-merge repair.
 - `ask-supermatt`: routes shipping without a merge to `babysit-pr`, and names `recover-ci` as the CI recovery both shipping skills share.
+
+## [0.20.2] - 2026-10-15
+
+### Fixed
+
+- `research`: makes the caller save missing cited reports from completed research, read them back, and return the saved path before declaring completion.
 
 ## [0.20.1] - 2026-10-14
 
@@ -623,7 +629,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Claude Code and Codex marketplaces for the plugin and its 25 engineering and productivity skills.
 
 [unreleased]: https://github.com/svyatov/supermatt/compare/v0.21.0...HEAD
-[0.21.0]: https://github.com/svyatov/supermatt/compare/v0.20.1...v0.21.0
+[0.21.0]: https://github.com/svyatov/supermatt/compare/v0.20.2...v0.21.0
+[0.20.2]: https://github.com/svyatov/supermatt/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/svyatov/supermatt/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/svyatov/supermatt/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/svyatov/supermatt/compare/v0.19.0...v0.19.1

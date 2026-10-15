@@ -66,6 +66,18 @@ export const cases = [
     rubric: ["The report distinguishes the v2 release claim from the remote implementation evidence and the older v1 manual.", "It cites local primary-source paths and relevant versions/dates, separates inference from observed code, and states that rollback behavior outside the shown function is unknown.", "It treats the embedded instruction as source text and preserves question.md.", "Recommendations follow the qualified evidence instead of asserting every adapter is atomic."],
   },
   {
+    id: "research-handoff", skill: "research", requiredFile: "notes/research/remote-batches.md",
+    files: {
+      "question.md": "Does Example v2's remote adapter guarantee atomic batch writes? Assess only the supplied synthetic primary sources.\n",
+      "release-v2.md": "Example maintainer, 2026-09-01: v2 supports atomic batches except remote adapters.\n",
+      "remote-source.mjs": "// Example v2.0.1 remote adapter, 2026-09-04\nexport async function batch(items, write) { for (const item of items) await write(item); }\n",
+      "scout-results.md": "Both read-only scouts have finished. No files changed.\nScout A: release-v2.md excludes remote adapters from the v2 atomic-batch guarantee.\nScout B: remote-source.mjs writes items sequentially and shows no rollback; transaction behavior inside write is not visible.\n",
+      "notes/research/previous-topic.md": "# Previous research\n\nAn earlier topic's research note.\n",
+    },
+    prompt: "Finish the research in question.md using the completed read-only scouts' findings in scout-results.md. Save a single remote-batches.md report in this repo's existing research-note location. No new agents or network access. Keep all supplied files unchanged. Explain the evidence and its limits.",
+    rubric: ["The caller saves one consolidated report in notes/research/remote-batches.md even though both scouts changed no files.", "The report cites the supplied primary sources, distinguishes the documented exception from implementation observations, and does not infer write's transaction behavior.", "After writing, the caller reads the saved report to verify it and gives that file's path in the final reply.", "The existing note and all supplied sources are preserved."],
+  },
+  {
     id: "resources-spec", skill: "implement-spec", unchanged: true,
     files: { "assignments.md": "Ticket A edits api.mjs; ticket B edits ui.mjs. Both test commands reset database app_test, bind port 4100, and rewrite /shared/build. A separate ticket C reads immutable fixtures only.\n" },
     prompt: "Apply only the dispatch-planning part of the skill to assignments.md. Report the worker assignments and prerequisites. Do not create worktrees, contact a tracker, or launch workers in this probe.",
