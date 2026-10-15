@@ -198,7 +198,11 @@ export function open({ dir, gh = realGh, repo, branch, pr = null, duration = DEF
     if (state.pr != null) {
       action = viewPr(gh, repo, state.pr).state === "OPEN" ? "reuse" : "closed";
     } else {
-      const openPrs = JSON.parse(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "number,url,state,headRefName"]));
+      // `--head` matches the branch name only, so a fork's PR with the same name would match.
+      // This branch's PR is pushed by the repository's owner or by the viewer, from a fork.
+      const owners = new Set([repo.split("/")[0], gh(["api", "user", "--jq", ".login"]).trim()]);
+      const openPrs = JSON.parse(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "number,url,state,headRefName,headRepositoryOwner"]))
+        .filter((p) => owners.has(p.headRepositoryOwner?.login));
       if (openPrs.length > 1) throw new Error(`several open PRs for ${branch}: ${openPrs.map((p) => p.number).join(", ")}`);
       if (openPrs.length === 1) state.pr = openPrs[0].number;
       action = openPrs.length === 1 ? "reuse" : "create";
@@ -465,6 +469,9 @@ export function evaluate(state, seen, now) {
     checks: { failing, running, missing, passing: seen.checks.filter((c) => c.status === "pass").length, total: seen.checks.length, required: seen.required },
     branch: { merge_state: seen.merge_state, mergeable: seen.mergeable, review_decision: seen.review_decision },
     blockers: [...human, ...waiting],
+    // A parked comment or review body has no resolve to release it: when a later comment
+    // answers it, the babysitter records it again, with this fingerprint.
+    parked: parked.filter((f) => f.kind !== "thread").map((f) => ({ id: f.id, kind: f.kind, url: f.url, fingerprint: f.fingerprint })),
   };
 }
 

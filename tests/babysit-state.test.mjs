@@ -49,7 +49,7 @@ function host({ prs = [], live = null } = {}) {
     const [group, verb] = args;
     if (group === "pr" && verb === "list") {
       const head = args[args.indexOf("--head") + 1];
-      return JSON.stringify(prs.filter((p) => p.headRefName === head && p.state === "OPEN"));
+      return JSON.stringify(prs.filter((p) => p.headRefName === head && p.state === "OPEN").map((p) => ({ headRepositoryOwner: { login: "acme" }, ...p })));
     }
     if (group === "pr" && verb === "view") {
       const pr = prs.find((p) => p.number === Number(args[2]));
@@ -78,6 +78,7 @@ function host({ prs = [], live = null } = {}) {
       };
       return JSON.stringify({ data: { viewer: { login: "me" }, repository: { pullRequest } } });
     }
+    if (group === "api" && verb === "user") return "me\n";
     if (group === "api" && verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}`) {
       if (live.rules instanceof Error) throw live.rules;
       return JSON.stringify(live.rules);
@@ -110,6 +111,15 @@ test("a branch with no open PR asks for one, and a resume after bind reuses it",
   const resumed = await open(base(dir, h.gh));
   assert.equal(resumed.action, "reuse");
   assert.equal(resumed.pr, 7);
+});
+
+test("an open PR from a fork with the same branch name is never bound", async (t) => {
+  const h = host({ prs: [{ number: 9, url: "https://github.com/acme/app/pull/9", state: "OPEN", headRefName: "feat/x", headRepositoryOwner: { login: "stranger" } }] });
+  assert.equal(open(base(stateDir(t), h.gh)).action, "create");
+  for (const login of ["acme", "me"]) {
+    const own = host({ prs: [{ number: 7, url: "https://github.com/acme/app/pull/7", state: "OPEN", headRefName: "feat/x", headRepositoryOwner: { login } }] });
+    assert.equal(open(base(stateDir(t), own.gh)).pr, 7, login);
+  }
 });
 
 test("several resumes reuse the existing PR, and a closed bound PR is never replaced", async (t) => {
@@ -238,6 +248,23 @@ test("a needs-human thread blocks until someone resolves it", async (t) => {
   live.threads[0].isResolved = true;
   const after = look(NOW + 60_000);
   assert.deepEqual([after.outcome, after.blockers], [null, ["settling before ready"]]);
+});
+
+test("a needs-human comment is listed as parked and released once recorded again with the answer", async (t) => {
+  const { live, stateFile, look } = babysat(t, { comments: [comment("C1", "Should this ship behind a flag?")] });
+  const [question] = look(NOW).feedback;
+  handled(stateFile, { id: question.id, fingerprint: question.fingerprint, disposition: "needs-human" });
+  const parkedLook = look(NOW);
+  assert.equal(parkedLook.outcome, "blocked");
+  assert.deepEqual(parkedLook.parked, [{ id: "C1", kind: "comment", url: question.url, fingerprint: question.fingerprint }]);
+
+  live.comments.push(comment("C2", "No flag, ship it.", "owner"));
+  const [answer] = look(NOW + 60_000).feedback;
+  handled(stateFile, { id: answer.id, fingerprint: answer.fingerprint, disposition: "no-action" });
+  const [still] = look(NOW + 60_000).parked;
+  handled(stateFile, { id: still.id, fingerprint: still.fingerprint, disposition: "answered" });
+  const after = look(NOW + 120_000);
+  assert.deepEqual([after.outcome, after.blockers, after.parked], [null, ["settling before ready"], []]);
 });
 
 test("a needs-human follow-up raised in a thread that was already resolved stays a blocker", async (t) => {
