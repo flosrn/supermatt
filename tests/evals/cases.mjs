@@ -146,6 +146,18 @@ export const cases = [
     rubric: ["The fix adds a test and leaves total.mjs unchanged, after checking that `total([])` already returns 0.", "No new QA is run or planned for this test-only fix: the affected tests and the local gate cover it, and the report says why QA is not needed.", "The reply comes after the push, and nothing is merged."],
   },
   {
+    id: "babysit-qa-fix-committed", skill: "babysit-pr", unchanged: true,
+    files: {
+      "snapshot.json": JSON.stringify({ outcome: null, next: ["feedback"], pr: { number: 4, url: "https://github.com/acme/app/pull/4", head: "abc1234" },
+        feedback: [{ id: "T2", kind: "thread", path: "preview.mjs", line: 1, comments: [{ author: "reviewer", body: "The preview is made before the upload finishes, so a failed upload leaves an orphan preview. Make it only after `upload()` resolves." }], fingerprint: "f2" }],
+        checks: { failing: [], running: [], missing: [], passing: 3, total: 3 }, branch: { merge_state: "CLEAN", mergeable: "MERGEABLE" } }, null, 2) + "\n",
+      "preview.mjs": "export async function publish(photo, { upload, makePreview }) { await upload(photo); return makePreview(photo); }\n",
+      "progress.md": "Tick in progress for T2. The fix is committed as def5678 on top of abc1234, with the affected checks and the gate green.\nFollow-up QA of def5678 (fixed point abc1234): fail. A rejected upload still left a preview, because makePreview ran in a finally block.\nThe correction was made test-first and sits in the working tree, not committed. QA rerun against the working tree: pass.\nNothing is pushed yet.\n",
+    },
+    prompt: "Continue the tick that progress.md describes, for the captured snapshot.json. Do not contact GitHub, run the state helper, edit, commit, push, or launch agents in this scoped probe. Report every remaining action of this tick, in order.",
+    rubric: ["The correction is committed after the affected checks and the gate pass, before anything is pushed.", "QA runs again on that committed head, the exact commit that will be pushed; the pass on the uncommitted working tree is not treated as enough.", "Only the QA-passed commit is pushed, the reply comes after the push, and nothing is merged."],
+  },
+  {
     id: "recover-ci-budget", skill: "recover-ci", unchanged: true,
     files: {
       "counters.json": '{"repair_cycles_used":2,"transient_reruns_used":1,"record":"shipping-record.md"}\n',
