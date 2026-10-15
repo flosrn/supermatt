@@ -23,7 +23,7 @@ The duration counts only when `resumed` is false. A resume keeps the original de
 
 - `closed`: report it (step 4) and stop. A bound PR that closed is never replaced by a new one.
 - `create`: the branch has no open PR. Publish (step 2), then watch.
-- `reuse`: the worktree must be on the PR's head branch. On another branch, run `gh pr checkout <number>` when the worktree is clean, and stop and say why when it is dirty. Local commits or changes on the PR branch go through step 2 before the first tick. When they change runtime code or configuration, they first get the follow-up QA of step 3: an interrupted or blocked tick can leave a fix that QA never passed. Its fixed point is the PR's remote head: run `git fetch origin <branch>` and use `origin/<branch>`, and when `HEAD` does not descend from it, stop as `blocked` and say so.
+- `reuse`: the worktree must be on the PR's head branch. On another branch, run `gh pr checkout <number>` when the worktree is clean, and stop and say why when it is dirty. Local commits or changes on the PR branch go through step 2 before the first tick. When they change runtime code or configuration, they first get the follow-up QA of step 3: an interrupted or blocked tick can leave a fix that QA never passed. Its fixed point is the PR's remote head: run `git fetch origin <branch>` and keep `git rev-parse FETCH_HEAD` as that commit, since a clone that fetches only some branches has no `origin/<branch>`. When `HEAD` does not descend from it, stop as `blocked` and say so.
 
 ## 2. Publish
 
@@ -39,7 +39,7 @@ Use this step to open the PR, and to push local work that belongs to it.
 
 Each tick runs `STATE snapshot --state FILE` and acts on its report. A non-null `outcome` ends the loop: go to step 4. Otherwise do only the first entry of `next`, then take a new snapshot: anything you push moves the head, and checks read before the push describe a dead commit. `head_moved` says the head changed since the last snapshot, and `invalidated` names what the helper dropped because of it.
 
-Before you start an edit, bring the local branch to `pr.head`: someone else may have pushed to the PR. Run `git fetch origin <branch>`; when `HEAD` is an ancestor of `pr.head`, fast-forward with `git merge --ff-only origin/<branch>`. When the two have diverged, stop as `blocked` and say so. Push with a plain `git push`: when it is rejected because the PR head moved meanwhile, take a new snapshot. Never force-push, rebase, or merge over someone else's push.
+Before you start an edit, bring the local branch to `pr.head`: someone else may have pushed to the PR. Run `git fetch origin <branch>`; when `HEAD` is an ancestor of `pr.head`, fast-forward with `git merge --ff-only <pr.head>`. When the two have diverged, stop as `blocked` and say so. Push with a plain `git push`: when it is rejected because the PR head moved meanwhile, take a new snapshot. Never force-push, rebase, or merge over someone else's push.
 
 **`feedback`** comes first, even while CI runs or is red. Each item is a review thread (`path`, `line`, its `comments`), a top-level comment, or a review body, with an `id` and a `fingerprint`. A thread with `resolved: true` is one you resolved earlier that got a reply or an edit since: read the new comment like any other item.
 
