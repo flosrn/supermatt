@@ -78,7 +78,10 @@ function host({ prs = [], live = null } = {}) {
       };
       return JSON.stringify({ data: { viewer: { login: "me" }, repository: { pullRequest } } });
     }
-    if (group === "api" && verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}`) return JSON.stringify(live.rules);
+    if (group === "api" && verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}`) {
+      if (live.rules instanceof Error) throw live.rules;
+      return JSON.stringify(live.rules);
+    }
     throw new Error(`unexpected gh ${args.join(" ")}`);
   };
   return { gh, calls, prs };
@@ -590,4 +593,17 @@ test("only an explicit extend moves the monitoring deadline", async (t) => {
   const { stateFile } = open(base(dir, h.gh, { duration: "1h" }));
   extend(stateFile, "30m");
   assert.equal(open(base(dir, h.gh, { duration: "8h" })).budgets.deadline_at, "2026-10-14T13:30:00.000Z");
+});
+
+// The wording gh prints for a private repository on a plan without rulesets, captured on flosrn/omp.
+const planError = () => new Error("Command failed: gh api repos/acme/app/rules/branches/main\ngh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)\n");
+
+test("a private repository whose plan has no rulesets has no ruleset checks; other rule errors still fail", (t) => {
+  const { look } = babysat(t, { rules: planError(), required: ["build"], checks: [checkRun("build", "SUCCESS", 1)] });
+  const report = look();
+  assert.deepEqual(report.checks.required, ["build"]);
+  assert.deepEqual(report.checks.missing, []);
+
+  const denied = babysat(t, { rules: new Error("Command failed: gh api repos/acme/app/rules/branches/main\ngh: Not Found (HTTP 404)\n") });
+  assert.throws(() => denied.look(), /HTTP 404/);
 });

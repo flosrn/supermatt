@@ -324,6 +324,18 @@ function check(node) {
     status, conclusion: node.state, url: node.targetUrl, run_id: null };
 }
 
+// Rulesets on a private repository need a paid plan; without one GitHub answers 403 with
+// this wording, and no ruleset can apply to the branch. Any other failure is a failed read.
+const PLAN_WITHOUT_RULESETS = /Upgrade to GitHub Pro or make this repository public/;
+function branchRules(gh, repo, branch) {
+  try {
+    return JSON.parse(gh(["api", `repos/${repo}/rules/branches/${encodeURIComponent(branch)}`]));
+  } catch (err) {
+    if (PLAN_WITHOUT_RULESETS.test(String(err?.stderr ?? "") + String(err?.message ?? ""))) return [];
+    throw err;
+  }
+}
+
 // One read of the PR as the babysitter sees it: head, base, merge state, checks on the
 // head (latest run per producer), required check names, and the feedback still on the PR.
 export function observe(gh, repo, number) {
@@ -337,7 +349,7 @@ export function observe(gh, repo, number) {
   for (const c of contexts.nodes.map(check)) {
     if (!(latest.get(c.identity)?.order >= c.order)) latest.set(c.identity, c);
   }
-  const rules = JSON.parse(gh(["api", `repos/${repo}/rules/branches/${encodeURIComponent(pr.baseRefName)}`]));
+  const rules = branchRules(gh, repo, pr.baseRefName);
   const required = new Set(pr.baseRef?.refUpdateRule?.requiredStatusCheckContexts ?? []);
   for (const rule of rules) if (rule.type === "required_status_checks") for (const c of rule.parameters.required_status_checks) required.add(c.context);
 
