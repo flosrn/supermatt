@@ -10,7 +10,9 @@ import { parseArgs } from "node:util";
 
 // A gh call that hangs (network, credential prompt) would hold the state lock: cut it off.
 const ghTimeoutMs = () => Number(process.env.SUPERMATT_GH_TIMEOUT_MS ?? 120_000);
-const realGh = (args) => execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: ghTimeoutMs(), killSignal: "SIGKILL" });
+// An explicit `stdio` keeps gh's stderr in the thrown error only: by default execFileSync also
+// echoes it, and an expected refusal (rulesets on a free private repository) read as a failure.
+const realGh = (args) => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024, timeout: ghTimeoutMs(), killSignal: "SIGKILL" });
 
 // A readable slug for people, plus a hash of the exact repo and branch: two branches whose
 // names slug alike ("feat/x", "feat-x") must never share state.
