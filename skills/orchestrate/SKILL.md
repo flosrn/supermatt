@@ -68,7 +68,7 @@ Claude Code sessions use these models and efforts:
 | B | refactor, ship | `opus` | `high` |
 | C | retro | `opus` | `high` |
 
-Codex and OMP sessions share these models and efforts (Codex reasoning effort, OMP thinking):
+Codex sessions use these models and efforts (Codex reasoning effort):
 
 | Session | Phases | Model | Effort |
 |---|---|---|---|
@@ -79,7 +79,20 @@ Codex and OMP sessions share these models and efforts (Codex reasoning effort, O
 | B | refactor, ship | `gpt-6-astra` | `high` |
 | C | retro | `gpt-6-astra` | `high` |
 
-Select the row for the phase being started on every launch and restart. In Codex and OMP, defer the review inside `/implement` to the fresh review worker in step 3, so it runs on Astra. If findings reach step 4 from a Sol worker, restart on the fix row before prompting `/fix-findings`; include each finding's full text, prior reports and their checked commits, and the issue reference, since the fresh session has no record of them.
+OMP sessions use these models and efforts (OMP thinking), every one through the OmniRoute gateway. Code written on Sol is reviewed on Claude, so the review reads it from another model family:
+
+| Session | Phases | Model | Effort |
+|---|---|---|---|
+| V | verify | `omniroute/opus-5.5` | `high` |
+| T | triage | `omniroute/opus-5.5` | `high` |
+| A | implement, QA restart in step 3 | `omniroute-oai/sol-6.1` | `medium` |
+| A | review restart in step 3, fix | `omniroute/opus-5.5` | `high` |
+| B | refactor, ship | `omniroute-oai/sol-6.1` | `high` |
+| C | retro | `omniroute/opus-5.5` | `high` |
+
+Select the row for the phase being started on every launch and restart. In Codex and OMP, defer the review inside `/implement` to the fresh review worker in step 3, so it runs on the review row's model. If findings reach step 4 from a Sol worker, restart on the fix row before prompting `/fix-findings`; include each finding's full text, prior reports and their checked commits, and the issue reference, since the fresh session has no record of them.
+
+For OMP, pass each row's handle as MODEL exactly as written, never a bare model name or the native `openai-codex` provider: native `openai-codex` rotates every ChatGPT account logged into OMP, including the one reserved for GitHub PR reviews, while the gateway serves Codex from the workers' account only. A bare `--model gpt-6.1-sol` resolves to the native provider. If the gateway handle does not resolve or answer, the launch failed: park the lane rather than fall back to another model.
 
 For OMP, resolve OMP_WORKER_CONFIG to the absolute path of [omp-worker.yml](omp-worker.yml) beside this skill, not relative to WT. This read-only launch overlay disables configured auto-resume without changing user/project settings. A missing or invalid overlay is a launch failure: park the lane. `--no-prewalk` prevents an automatic model handoff from overriding the phase model. Retain normal skill/extension discovery and permission controls; add no auto-approval flags or resume/continue options. OMP's `-c` means continue, not Codex configuration.
 
