@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - `ship-pr`: the merge command carries `--match-head-commit <checked-head>`, so a commit pushed after the CI gate is never merged unchecked. The pin was required in a later sentence but missing from the command an agent runs. Reads required checks through plan-independent branch metadata and treats the rulesets plan-upgrade 403 as established configuration without retrying gated endpoints, while keeping missing expected checks and other configuration failures blocked.
+- `qa`: runs a same-family CLI fallback in an isolated disposable copy when a fresh subagent cannot start, with no tracker access and Codex writes excluded from `/tmp` and the inherited `TMPDIR`. Protects copied source files and checks them and the real tree after the reader finishes, reporting any change as a failure of the QA run.
 
 ## [0.20.2] - 2026-10-15
 
