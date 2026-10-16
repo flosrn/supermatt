@@ -173,7 +173,7 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
 ## Operator
 
 - **Pause**: the operator can type into your pane while you work. A request to pause or stop means every busy lane finishes its current issue through Report and no lane picks a new one; then stop. A request to stop now means stop at once.
-- **Friction log**: keep a running list across issues, each entry with its lane and issue: each dialog and question you answered (phase, what you chose), each `--wait` that returned `timeout` or `agent_prompt_stalled`, each restart of the worker outside Refactor and Retro, each rebase conflict, each parked lane and its reason, each reported retro candidate, each triage outcome other than READY, and each issue filed during the run. Print it when you stop; it is the operator's input for tuning this skill.
+- **Friction log**: keep a running list across issues, each entry with its lane and issue: each dialog and question you answered (phase, what you chose), each `--wait` that returned `timeout` or `agent_prompt_stalled`, each restart of the worker outside Refactor and Retro, each rebase conflict, each history edit you made in a lane and its check result, each parked lane and its reason, each reported retro candidate, each triage outcome other than READY, and each issue filed during the run. Print it when you stop; it is the operator's input for tuning this skill.
 - **On stop**: send one macOS notification, then print the reason and the friction log, including reported retrospective candidates. The operator is notified only here and when a lane parks: when the run is finished, or when it needs them.
   - No lane is parked: title `PROJECT done`, body `<count> issues merged, <count> filed`.
   - A lane is parked, or Setup failed: title `PROJECT needs you`, body the reason, or each parked lane with its issue and reason.
@@ -190,6 +190,7 @@ Stop the run when every lane is idle or parked (including lanes retained at the 
 
 - One issue per lane, so at most LANES in flight. A lane starts its next issue after its issue is merged and its retrospective candidates are reported.
 - One lane at a time holds the ship slot.
+- When you move a lane's commits yourself outside Sync (cherry-pick, reset, revert, or another history edit, including splitting work into another issue), the resulting HEAD is code that no check has run on. Before the next phase, run the repository's typecheck and tests in WT, using the commands named in its AGENTS.md, CONTRIBUTING.md, or CI configuration. If either fails, send the worker the failure as a finding through `/fix-findings` with the failing output, and hold QA and review until the finding is fixed and the checks pass. You move commits and verify the result; the worker makes all code changes. Sync keeps its own handling.
 - Never remove a worktree the run did not create.
 - Run unattended. Never hand a question or dialog to the user; answer it as above.
 - If a `--wait` returns `timeout` or `agent_prompt_stalled`, read the pane before you do anything, since the prompt may have landed.

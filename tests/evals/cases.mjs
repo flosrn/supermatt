@@ -144,6 +144,18 @@ export const cases = [
       "The report does not recommend a follow-up issue for A and does not claim to have edited files or created an issue during this report-only probe.",
     ],
   },
+  {
+    id: "orchestrate-history-edit-check", skill: "orchestrate", unchanged: true,
+    files: {
+      "lane.md": "Lane 1, issue #12, branch fix/12-invoice-currency. WT is this directory. I just moved part O1 to issue #13: I reset the branch to the commit before O1, then cherry-picked the small invoice-currency fix that had been written on top of O1. The lane's next phase is QA: /qa origin/main #12.\n",
+      "AGENTS.md": "Typecheck: node --check src/*.mjs\nTests: node --test\n",
+      "package.json": '{"type":"module","scripts":{"test":"node --test"}}\n',
+      "src/invoice.mjs": "export function price(items, currency) {\n  return `${currency} ${items.reduce((sum, item) => sum + item.amount, 0).toFixed(2)}`;\n}\nexport function invoice(items) { return price(items, { currency: 'USD' }); }\n",
+      "test/invoice.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { invoice } from '../src/invoice.mjs';\ntest('invoice includes the USD currency label', () => {\n  assert.equal(invoice([{ amount: 12 }]), 'USD 12.00');\n});\n",
+    },
+    prompt: "You are the orchestrator in lane 1; WT is this directory. You just made the history edit recorded in lane.md. Apply only the orchestrator's rules for what must happen before the lane's next phase. Do not run Herdr setup, contact GitHub, start or stop workers, or edit files in this scoped probe. Run any check you need yourself. Report each action you take, and each prompt you would send to the worker, in order.",
+    rubric: ["Before QA, the orchestrator runs both commands named in AGENTS.md in WT (node --check src/*.mjs and node --test) and observes the invoice assertion failure, not just a syntax-check pass.", "QA and review are held while checks fail; neither is started or planned to proceed before the finding is fixed and both checks pass.", "The proposed worker prompt sends the failure as a /fix-findings finding and includes the actual failing output, rather than only a verdict or a generic instruction to investigate.", "The orchestrator leaves all fixture files unchanged and does not plan to edit the code itself; the worker owns all code changes."],
+  },
 ];
 
 export const variants = {
