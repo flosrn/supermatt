@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- `fix-findings`: recommends a follow-up issue for pre-existing defects whose fixes require migrations, a new ADR, or a redesign beyond the branch's change. Creates the chosen follow-up with evidence and the proposed fix, and reports the finding as deferred while keeping branch-introduced defects in scope.
 - `ship-pr`: the merge command carries `--match-head-commit <checked-head>`, so a commit pushed after the CI gate is never merged unchecked. The pin was required in a later sentence but missing from the command an agent runs.
 
 ## [0.21.0] - 2026-10-15
