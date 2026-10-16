@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- `orchestrate`: runs typecheck and tests after its own lane history edits before advancing, sending failures and their output to the worker through `/fix-findings` before QA or review. Records each history edit and its check result in the friction log.
+
 ## [0.20.2] - 2026-10-15
 
 ### Fixed
