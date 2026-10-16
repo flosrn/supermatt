@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- `orchestrate`: runs typecheck and tests after its own lane history edits before advancing, sending failures and their output to the worker through `/fix-findings` before QA or review. Records each history edit and its check result in the friction log.
 - `qa`: runs a same-family CLI fallback in an isolated disposable copy when a fresh subagent cannot start, with no tracker access. Checks the real tree before and after and reports any write as a failure of the QA run.
 - `fix-findings`: recommends a follow-up issue for pre-existing defects whose fixes require migrations, a new ADR, or a redesign beyond the branch's change. Creates the chosen follow-up with evidence and the proposed fix, and reports the finding as deferred while keeping branch-introduced defects in scope.
 - `ship-pr`: the merge command carries `--match-head-commit <checked-head>`, so a commit pushed after the CI gate is never merged unchecked. The pin was required in a later sentence but missing from the command an agent runs.
