@@ -4,12 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-10-16
+
 ### Fixed
 
-- `ship-pr`: the merge command carries `--match-head-commit <checked-head>`, so a commit pushed after the CI gate is never merged unchecked. The pin was required in a later sentence but missing from the command an agent runs. Reads required checks through plan-independent branch metadata and treats the rulesets plan-upgrade 403 as established configuration without retrying gated endpoints, while keeping missing expected checks and other configuration failures blocked.
-- `qa`: runs a same-family CLI fallback in an isolated disposable copy when a fresh subagent cannot start, with no tracker access and Codex writes excluded from `/tmp` and the inherited `TMPDIR`. Protects copied source files and checks them and the real tree after the reader finishes, reporting any change as a failure of the QA run.
 - `fix-findings`: recommends a follow-up issue for pre-existing defects whose fixes require migrations, a new ADR, or a redesign beyond the branch's change. Creates the chosen follow-up with evidence and the proposed fix, and reports the finding as deferred while keeping branch-introduced defects in scope.
 - `orchestrate`: runs typecheck and tests after its own lane history edits before advancing, sending failures and their output to the worker through `/fix-findings` before QA or review. Records each history edit and its check result in the friction log.
+- `qa`: runs a same-family CLI fallback in an isolated disposable copy when a fresh subagent cannot start, with no tracker access and Codex writes excluded from `/tmp` and the inherited `TMPDIR`. Protects copied source files and checks them and the real tree after the reader finishes, reporting any change as a failure of the QA run.
+- `ship-pr`: the merge command carries `--match-head-commit <checked-head>`, so a commit pushed after the CI gate is never merged unchecked; the pin was required in a later sentence but missing from the command an agent runs. Reads required checks from the branch endpoint, which answers on every plan, and treats the 403 that rules return on a private repository without a paid plan as no rulesets applying, instead of retrying the protection and rulesets endpoints.
 
 ## [0.20.2] - 2026-10-15
 
@@ -622,7 +624,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Claude Code and Codex marketplaces for the plugin and its 25 engineering and productivity skills.
 
-[unreleased]: https://github.com/svyatov/supermatt/compare/v0.20.2...HEAD
+[unreleased]: https://github.com/svyatov/supermatt/compare/v0.20.3...HEAD
+[0.20.3]: https://github.com/svyatov/supermatt/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/svyatov/supermatt/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/svyatov/supermatt/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/svyatov/supermatt/compare/v0.19.1...v0.20.0
