@@ -640,7 +640,7 @@ test("only an explicit extend moves the monitoring deadline", async (t) => {
   assert.equal(open(base(dir, h.gh, { duration: "8h" })).budgets.deadline_at, "2026-10-14T13:30:00.000Z");
 });
 
-// The wording gh prints for a private repository on a plan without rulesets, captured on flosrn/omp.
+// The wording gh prints for a private repository on a plan without rulesets, captured from a real repository.
 const planError = () => new Error("Command failed: gh api repos/acme/app/rules/branches/main\ngh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)\n");
 
 test("a private repository whose plan has no rulesets has no ruleset checks; other rule errors still fail", (t) => {

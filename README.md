@@ -21,7 +21,7 @@
 </p>
 
 - **Claude Code and Codex.** Each host installs SuperMatt from its own native plugin marketplace.
-- **39 skills.** 30 for engineering and 9 for productivity, listed below.
+- **41 skills.** 32 for engineering and 9 for productivity, listed below.
 - **A second model reviews your changes.** `code-review` runs every axis twice, once in a sub-agent and once in `codex` from Claude Code (or `claude` from Codex) when that CLI is installed, and the model that did not raise a finding validates it. Upstream reviews on two axes.
 - **One flow from idea to closed issue.** Forked from [mattpocock/skills](https://github.com/mattpocock/skills) at `c55ee46`, each skill checks its own work and hands the result to the next.
 

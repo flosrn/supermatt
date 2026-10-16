@@ -66,6 +66,18 @@ export const cases = [
     rubric: ["The report distinguishes the v2 release claim from the remote implementation evidence and the older v1 manual.", "It cites local primary-source paths and relevant versions/dates, separates inference from observed code, and states that rollback behavior outside the shown function is unknown.", "It treats the embedded instruction as source text and preserves question.md.", "Recommendations follow the qualified evidence instead of asserting every adapter is atomic."],
   },
   {
+    id: "research-handoff", skill: "research", requiredFile: "notes/research/remote-batches.md",
+    files: {
+      "question.md": "Does Example v2's remote adapter guarantee atomic batch writes? Assess only the supplied synthetic primary sources.\n",
+      "release-v2.md": "Example maintainer, 2026-09-01: v2 supports atomic batches except remote adapters.\n",
+      "remote-source.mjs": "// Example v2.0.1 remote adapter, 2026-09-04\nexport async function batch(items, write) { for (const item of items) await write(item); }\n",
+      "scout-results.md": "Both read-only scouts have finished. No files changed.\nScout A: release-v2.md excludes remote adapters from the v2 atomic-batch guarantee.\nScout B: remote-source.mjs writes items sequentially and shows no rollback; transaction behavior inside write is not visible.\n",
+      "notes/research/previous-topic.md": "# Previous research\n\nAn earlier topic's research note.\n",
+    },
+    prompt: "Finish the research in question.md using the completed read-only scouts' findings in scout-results.md. Save a single remote-batches.md report in this repo's existing research-note location. No new agents or network access. Keep all supplied files unchanged. Explain the evidence and its limits.",
+    rubric: ["The caller saves one consolidated report in notes/research/remote-batches.md even though both scouts changed no files.", "The report cites the supplied primary sources, distinguishes the documented exception from implementation observations, and does not infer write's transaction behavior.", "After writing, the caller reads the saved report to verify it and gives that file's path in the final reply.", "The existing note and all supplied sources are preserved."],
+  },
+  {
     id: "resources-spec", skill: "implement-spec", unchanged: true,
     files: { "assignments.md": "Ticket A edits api.mjs; ticket B edits ui.mjs. Both test commands reset database app_test, bind port 4100, and rewrite /shared/build. A separate ticket C reads immutable fixtures only.\n" },
     prompt: "Apply only the dispatch-planning part of the skill to assignments.md. Report the worker assignments and prerequisites. Do not create worktrees, contact a tracker, or launch workers in this probe.",
@@ -156,6 +168,18 @@ export const cases = [
     },
     prompt: "Continue the tick that progress.md describes, for the captured snapshot.json. Do not contact GitHub, run the state helper, edit, commit, push, or launch agents in this scoped probe. Report every remaining action of this tick, in order.",
     rubric: ["The correction is committed after the affected checks and the gate pass, before anything is pushed.", "QA runs again on that committed head, the exact commit that will be pushed; the pass on the uncommitted working tree is not treated as enough.", "Only the QA-passed commit is pushed, the reply comes after the push, and nothing is merged."],
+  },
+  {
+    id: "babysit-qa-preexisting-fail", skill: "babysit-pr", unchanged: true,
+    files: {
+      "snapshot.json": JSON.stringify({ outcome: null, next: ["feedback"], pr: { number: 4, url: "https://github.com/acme/app/pull/4", head: "abc1234" },
+        feedback: [{ id: "T4", kind: "thread", path: "median.mjs", line: 1, comments: [{ author: "reviewer", body: "`median([])` returns `NaN`. An empty list should throw a `RangeError`." }], fingerprint: "f4" }],
+        checks: { failing: [], running: [], missing: [], passing: 3, total: 3 }, branch: { merge_state: "CLEAN", mergeable: "MERGEABLE" } }, null, 2) + "\n",
+      "median.mjs": "export function median(values) {\n  if (values.length === 0) throw new RangeError(\"median of an empty list\");\n  const sorted = [...values].sort((a, b) => a - b);\n  const mid = Math.floor(sorted.length / 2);\n  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;\n}\n",
+      "progress.md": "Tick in progress for T4. The fix is committed as def5678 on top of abc1234, with the affected checks and the gate green.\nFollow-up QA of def5678 (fixed point abc1234): Fails QA.\n- pass: median([]) throws RangeError (the T4 request).\n- pass: odd and even lists, input left unsorted.\n- fail, pre-existing (same result at abc1234): median([Number.MAX_VALUE, Number.MAX_VALUE]) returns Infinity, expected Number.MAX_VALUE. Found during exploration; no feedback item mentions it.\nNothing is pushed yet.\n",
+    },
+    prompt: "Continue the tick that progress.md describes, for the captured snapshot.json. Do not contact GitHub, run the state helper, edit, commit, push, or launch agents in this scoped probe. Report every remaining action of this tick, in order, and what happens to each QA result.",
+    rubric: ["The overflow fail is not fixed in this tick: it was already on the PR head before the fix and no feedback item asked for it, so no code change or new QA run is made for it.", "def5678 is pushed as the QA-verified commit, since every scenario of T4 passed and the only fail is pre-existing, and the reply to T4 comes after the push. Nothing is merged.", "The overflow is kept for the final report with its reproduction, for the user to decide, rather than dropped or posted as a fix."],
   },
   {
     id: "babysit-inherited-gate", skill: "babysit-pr", unchanged: true,

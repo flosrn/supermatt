@@ -8,11 +8,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - `ship-pr`: the merge command carries `--match-head-commit <checked-head>`, so a commit pushed after the CI gate is never merged unchecked. The pin was required in a later sentence but missing from the command an agent runs.
 
-## [0.21.0] - 2026-10-14
+## [0.21.0] - 2026-10-15
 
 ### Added
 
-- `babysit-pr`: watches one pull request until a human can merge it. It opens the PR when the branch has none and reuses the same PR on every resume, handles review feedback before CI and publishes a fix before replying to its thread, runs follow-up QA before pushing a fix that changes runtime behavior, recovers CI through `recover-ci`, updates the branch only when GitHub reports it behind or conflicting, and never merges. A gate failure the base already has is reported as inherited, with the base run as evidence, instead of blocking. A state helper under `.git/supermatt/babysit-pr/` keeps the monitoring window, the recovery budget, and the handled feedback across resumes, reopens edited comments, drops evidence when the head moves, and treats a missing required check as not green. It reads required checks from branch protection and rulesets, and on a private repository whose plan has no rulesets, from branch protection alone. It ends on `ready`, `blocked`, `budget-exhausted`, or `closed`.
+- `babysit-pr`: watches one pull request until a human can merge it. It opens the PR when the branch has none and reuses the same PR on every resume, handles review feedback before CI and publishes a fix before replying to its thread, runs follow-up QA before pushing a fix that changes runtime behavior, recovers CI through `recover-ci`, updates the branch only when GitHub reports it behind or conflicting, and never merges. Follow-up QA fixes only fails the fix owns: a pre-existing fail outside the feedback is reported for you to decide, not fixed. A gate failure the base already has is reported as inherited, with the base run as evidence, instead of blocking. A state helper under `.git/supermatt/babysit-pr/` keeps the monitoring window, the recovery budget, and the handled feedback across resumes, reopens edited comments, drops evidence when the head moves, and treats a missing required check as not green. It reads required checks from branch protection and rulesets, and on a private repository whose plan has no rulesets, from branch protection alone. It ends on `ready`, `blocked`, `budget-exhausted`, or `closed`.
 - `recover-ci`: diagnoses a failed PR check or post-merge workflow, reruns a supported transient failure, and repairs a repository defect within two repair cycles and one transient rerun, with counters its caller holds. It returns its evidence and one outcome and has no merge authority.
 
 ### Changed
@@ -20,6 +20,12 @@ All notable changes to this project are documented here. The format follows [Kee
 - `ship-pr`: recovers failed PR checks and post-merge runs through `recover-ci` with the counters from its shipping record. `CI.md` keeps only the post-merge repair: the repair branch, the merge hold, and the follow-up PR.
 - `orchestrate`: points its ship phase at `recover-ci` and the post-merge repair.
 - `ask-supermatt`: routes shipping without a merge to `babysit-pr`, and names `recover-ci` as the CI recovery both shipping skills share.
+
+## [0.20.2] - 2026-10-15
+
+### Fixed
+
+- `research`: makes the caller save missing cited reports from completed research, read them back, and return the saved path before declaring completion.
 
 ## [0.20.1] - 2026-10-14
 
@@ -627,7 +633,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Claude Code and Codex marketplaces for the plugin and its 25 engineering and productivity skills.
 
 [unreleased]: https://github.com/svyatov/supermatt/compare/v0.21.0...HEAD
-[0.21.0]: https://github.com/svyatov/supermatt/compare/v0.20.1...v0.21.0
+[0.21.0]: https://github.com/svyatov/supermatt/compare/v0.20.2...v0.21.0
+[0.20.2]: https://github.com/svyatov/supermatt/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/svyatov/supermatt/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/svyatov/supermatt/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/svyatov/supermatt/compare/v0.19.0...v0.19.1
