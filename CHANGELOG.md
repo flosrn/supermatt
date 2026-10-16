@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- `ship-pr`: reads required checks through plan-independent branch metadata and treats the rulesets plan-upgrade 403 as established configuration without retrying gated endpoints, while keeping missing expected checks and other configuration failures blocked.
+
 ## [0.20.2] - 2026-10-15
 
 ### Fixed
