@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
-- `qa`: runs a same-family CLI fallback in an isolated disposable copy when a fresh subagent cannot start, with no tracker access. Checks the real tree before and after and reports any write as a failure of the QA run.
+- `qa`: runs a same-family CLI fallback in an isolated disposable copy when a fresh subagent cannot start, with no tracker access and Codex writes excluded from `/tmp` and the inherited `TMPDIR`. Protects copied source files and checks them and the real tree after the reader finishes, reporting any change as a failure of the QA run.
 
 ## [0.20.2] - 2026-10-15
 
