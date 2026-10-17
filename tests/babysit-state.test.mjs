@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, processStart, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
@@ -730,4 +730,119 @@ test("a private repository whose plan has no rulesets has no ruleset checks; oth
 
   const denied = babysat(t, { rules: new Error("Command failed: gh api repos/acme/app/rules/branches/main\ngh: Not Found (HTTP 404)\n") });
   assert.throws(() => denied.look(), /HTTP 404/);
+});
+
+// A refused CLI call exits 1, writes nothing, and its error names the problem.
+const CLI = fileURLToPath(new URL("../skills/babysit-pr/scripts/babysit-state.mjs", import.meta.url));
+
+// A stub gh on PATH: the open PRs come from prs.json beside it, any PR it is asked to view
+// is PR 40, and any other call fails.
+function stubGh(t) {
+  const bin = mkdtempSync(join(tmpdir(), "babysit-stub-gh-"));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const setPrs = (numbers) => writeFileSync(join(bin, "prs.json"), JSON.stringify(numbers.map((number) => (
+    { number, url: `https://github.com/acme/app/pull/${number}`, state: "OPEN", headRefName: "feat/x", headRepositoryOwner: { login: "acme" } }))));
+  setPrs([]);
+  writeFileSync(join(bin, "gh"), `#!/bin/sh
+case "$1 $2" in
+  "api user") echo me ;;
+  "pr list") cat "${join(bin, "prs.json")}" ;;
+  "pr view") echo '{"number":40,"url":"https://github.com/acme/app/pull/40","state":"OPEN","headRefName":"feat/x"}' ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+`, { mode: 0o755 });
+  return { bin, setPrs };
+}
+
+// A checkout on branch feat/x, whose babysit-pr state lives under .git.
+function checkout(t) {
+  const repo = mkdtempSync(join(tmpdir(), "babysit-checkout-"));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: repo, encoding: "utf8" });
+  git("init", "-q", "-b", "feat/x");
+  return { repo, git, states: join(repo, ".git", "supermatt") };
+}
+
+const cli = (bin, args, cwd) => spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+
+// Every state file under dir, with its bytes.
+const tree = (dir) => !existsSync(dir) ? {} : Object.fromEntries(readdirSync(dir, { recursive: true }).map(String).sort()
+  .filter((path) => statSync(join(dir, path)).isFile()).map((path) => [path, readFileSync(join(dir, path), "utf8")]));
+
+test("CLI open refuses a branch with several open PRs and binds none of them", (t) => {
+  const { bin, setPrs } = stubGh(t);
+  const { repo, states } = checkout(t);
+  assert.equal(cli(bin, ["open", "--repo", "acme/app"], repo).status, 0);
+  setPrs([40, 41]);
+  const before = tree(states);
+  const refused = cli(bin, ["open", "--repo", "acme/app"], repo);
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /\b40\b.*\b41\b/);
+  assert.deepEqual(tree(states), before);
+});
+
+// Runs one refused CLI call against a state file and checks nothing under its directory changed.
+function refuses(t, stateFile, args, problem) {
+  const { bin } = stubGh(t);
+  const before = tree(dirname(stateFile));
+  const refused = cli(bin, [...args.slice(0, 1), "--state", stateFile, ...args.slice(1)], dirname(stateFile));
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, problem);
+  assert.deepEqual(tree(dirname(stateFile)), before);
+}
+
+test("CLI ci-result refuses an outcome outside the allowed set before any write", (t) => {
+  const { stateFile, look } = babysat(t, { checks: [checkRun("test", "FAILURE", 1)] });
+  look();
+  refuses(t, stateFile, ["ci-result", "--key", "check-run:1", "--outcome", "Rerun"], /outcome/);
+});
+
+test("CLI handled refuses a disposition outside the allowed set before any write", (t) => {
+  const { stateFile } = babysat(t, { comments: [comment("C1", "Rename x.")] });
+  refuses(t, stateFile, ["handled", "--id", "C1", "--fingerprint", "abc", "--disposition", "done"], /disposition/);
+});
+
+test("CLI handled refuses a call without --fingerprint before any write", (t) => {
+  const { stateFile } = babysat(t, { comments: [comment("C1", "Rename x.")] });
+  refuses(t, stateFile, ["handled", "--id", "C1", "--disposition", "fixed"], /fingerprint/);
+});
+
+test("CLI ci-result refuses a result before any snapshot has seen a head", (t) => {
+  const { stateFile } = babysat(t, { checks: [checkRun("test", "FAILURE", 1)] });
+  refuses(t, stateFile, ["ci-result", "--key", "check-run:1", "--outcome", "rerun"], /snapshot/);
+});
+
+test("CLI bind refuses a call with no PR number and leaves the branch unbound", (t) => {
+  const { stateFile } = open(base(stateDir(t), host().gh));
+  refuses(t, stateFile, ["bind"], /--pr/);
+});
+
+test("CLI open refuses a --pr that is not a number and creates no state", (t) => {
+  const { bin } = stubGh(t);
+  const { repo, states } = checkout(t);
+  const refused = cli(bin, ["open", "--repo", "acme/app", "--pr", "abc"], repo);
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /abc/);
+  assert.deepEqual(tree(states), {});
+});
+
+test("CLI open refuses a detached HEAD without --pr and creates no state", (t) => {
+  const { bin } = stubGh(t);
+  const { repo, git, states } = checkout(t);
+  git("commit", "-q", "--allow-empty", "-m", "start");
+  git("checkout", "-q", "--detach");
+  const refused = cli(bin, ["open", "--repo", "acme/app"], repo);
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /detached/);
+  assert.deepEqual(tree(states), {});
+});
+
+test("CLI spend refuses an unknown kind before it spends anything", (t) => {
+  const { stateFile } = babysat(t);
+  refuses(t, stateFile, ["spend", "retry"], /retry/);
+});
+
+test("CLI snapshot refuses a branch with no bound PR and asks for a bind", (t) => {
+  const { stateFile } = open(base(stateDir(t), host().gh));
+  refuses(t, stateFile, ["snapshot"], /bind/);
 });
