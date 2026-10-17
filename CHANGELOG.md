@@ -19,7 +19,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
-- Skill evaluation: checks the selected cases against both frozen snapshots before any model call, stops when the candidate lacks a selected skill, and records the baseline rows of a skill the baseline lacks as `absent` instead of failing the comparison.
+- Skill evaluation: checks the selected cases against both frozen snapshots before any model call, stops when the candidate lacks a selected skill, and records the baseline rows of a skill the baseline lacks as `absent` instead of failing the comparison. A dry run now plans against a baseline older than the Cursor manifest: only the candidate must pass the package manifest checks.
 
 ## [0.22.0] - 2026-10-17
 
