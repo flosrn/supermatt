@@ -219,3 +219,39 @@ test("CLI dry run stops, naming the skill, when the candidate lacks a selected s
   assert.match(result.stderr, /babysit-pr/);
   assert.equal(result.stdout, "", "no plan is printed");
 });
+
+// A comparison of one existing case ("old") and one new skill's case ("new"), one variant, one run.
+const pairedReport = results => ({ plannedRuns: 3, absentRuns: 1, completedRuns: 4, results });
+
+test("a comparison whose plan expects an absent baseline row it does not have is blocked", () => {
+  const report = pairedReport([{ id: "baseline-old-neutral-1", status: "pass" }, { id: "baseline-new-neutral-1", status: "pass" },
+    { id: "candidate-old-neutral-1", status: "pass" }, { id: "candidate-new-neutral-1", status: "pass" }]);
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("an absent row in the candidate arm blocks the comparison even when a candidate run failed", () => {
+  const report = pairedReport([{ id: "baseline-old-neutral-1", status: "pass" }, { id: "baseline-new-neutral-1", status: "pass" },
+    { id: "candidate-old-neutral-1", status: "fail" }, absentResult("candidate-new-neutral-1")]);
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("a blocked baseline run blocks the comparison even when the candidate failed", () => {
+  const report = { plannedRuns: 2, completedRuns: 2, results: [{ id: "baseline-one", status: "blocked" }, { id: "candidate-one", status: "fail" }] };
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("rows that belong to neither arm block the comparison instead of standing in for a run", () => {
+  const report = { plannedRuns: 4, completedRuns: 4, results: [{ id: "baseline-one", status: "pass" }, { id: "candidate-one", status: "pass" },
+    { id: "other-one", status: "pass" }, { id: "other-two", status: "pass" }] };
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("a baseline run with an unknown status blocks the comparison", () => {
+  const report = { plannedRuns: 2, completedRuns: 2, results: [{ id: "baseline-one", status: "crashed" }, { id: "candidate-one", status: "pass" }] };
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("a baseline run that needs review keeps a passing candidate's comparison at needs review", () => {
+  const report = { plannedRuns: 2, completedRuns: 2, results: [{ id: "baseline-one", status: "needs review" }, { id: "candidate-one", status: "pass" }] };
+  assert.equal(comparisonStatus(report), "needs review");
+});
