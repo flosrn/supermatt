@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-## [0.20.3] - 2026-10-16
+## [0.22.1] - 2026-10-17
 
 ### Fixed
 
@@ -12,6 +12,54 @@ All notable changes to this project are documented here. The format follows [Kee
 - `orchestrate`: runs typecheck and tests after its own lane history edits before advancing, sending failures and their output to the worker through `/fix-findings` before QA or review. Records each history edit and its check result in the friction log.
 - `qa`: runs a same-family CLI fallback in an isolated disposable copy when a fresh subagent cannot start, with no tracker access and Codex writes excluded from `/tmp` and the inherited `TMPDIR`. Protects copied source files and checks them and the real tree after the reader finishes, reporting any change as a failure of the QA run.
 - `ship-pr`: the merge command carries `--match-head-commit <checked-head>`, so a commit pushed after the CI gate is never merged unchecked; the pin was required in a later sentence but missing from the command an agent runs. Reads required checks from the branch endpoint, which answers on every plan, and treats the 403 that rules return on a private repository without a paid plan as no rulesets applying, instead of retrying the protection and rulesets endpoints.
+
+## [0.22.0] - 2026-10-17
+
+### Added
+
+- `setup-supermatt-skills`: writes and documents `docs/agents/cross-model.json`, preserving valid rerun settings and collecting only the selected adapters' supported model and effort values.
+
+### Changed
+
+- Harness contract: validates repository peer settings, keeps `auto` on hardened Claude and Codex adapters, requires runtime confirmation for explicit Cursor and OMP calls, and defines capability-aware fallback and reporting.
+- `code-review`: applies the repository peer policy to readers and validators, supports four explicit adapters with their actual isolation limits, keeps process output streams separate, prepares the external validator's complete evidence bundle, and makes `host-only` avoid every external peer subprocess.
+- `jury`: applies the same repository peer policy to vote and review seats, keeps process output streams separate, uses host seats on fallback, and reports configured adapter details and exact failures.
+- `ask-supermatt`: routes setup, review, and jury through the repository peer policy.
+
+### Fixed
+
+- `codebase-design`: loads both references required for alternative-interface design directly from the main skill.
+- `refactor`: replaces the missing *Out of the Tar Pit* reference with a working PDF.
+- `retro`: resolves OMP XDG session roots and persisted active-leaf markers using OMP's current layout and replay semantics.
+
+## [0.21.0] - 2026-10-15
+
+### Added
+
+- Plugin packaging: ships a versionless Cursor manifest beside the Claude Code and Codex adapters, keeps the canonical flat 39-skill tree, and retains it in release projections.
+- Harness contract: defines human invocation, model-side composition, capability fallbacks, explicit-only limits, and active-model family resolution for Claude Code, Codex, Cursor, and OMP.
+
+### Changed
+
+- `ask-supermatt`: routes all user-reachable flows with Claude Code, Codex, Cursor, and OMP invocation forms and four-host orchestration guidance.
+- `code-review`: selects an installed Claude or Codex peer from authoritative active-model family metadata instead of the harness name, and makes no cross-family claim for unknown metadata.
+- `jury`: uses the shared active-model resolver and labels an unverified external seat without claiming model-family independence.
+- `orchestrate`: adds Cursor workers, keeps Cursor and OMP model IDs provider-safe, uses native skill notation, and preserves authoritative Herdr session references.
+- `grilling`: adapts to each host's live question capability and uses chat when none is available.
+- `ideate`: uses host question capabilities and fresh read-only exploration contexts without assuming a named subagent type.
+- `prototype`: uses host question capabilities and reports when fresh independent context is unavailable.
+- `setup-supermatt-skills`: uses native host questions or the same choices in chat.
+- `improve-architecture`: uses host question capabilities and fresh read-only exploration contexts.
+- `improve-tests`: removes the Claude-only limitation, uses native multi-select and plan approval when available, and requires explicit chat approval otherwise.
+- `refactor`: uses native plan approval when available and explicit chat approval otherwise.
+- `to-tickets`: requests fresh read-only exploration without assuming a named subagent type.
+- `writing-for-agents`: points skill dependencies and invocation policy to the shared four-host contract.
+- `codebase-design`, `commit`, `diagnosing-bugs`, `fix-findings`, `grill-me`, `grill-with-docs`, `handoff`, `implement-spec`, `implement`, `improve-file-structure`, `ship-pr`, `tdd`, `to-spec`, `triage`, `wayfinder`, and `what-would-you-do`: replace literal Skill-tool and two-host command assumptions with the host skill mechanism and applicable four-host invocation forms.
+
+### Fixed
+
+- `retro`: normalizes failed tool results and verified Claude Code, Codex, Cursor, and OMP session evidence, preserves distinct failed retries with identical output, follows only the active OMP branch, includes verified child and compaction records, validates every parent and child transcript against the requested workspace, and fails closed on malformed or mismatched transcripts.
+- Plugin validation: checks matching Claude Code, Codex, and Cursor package names, the single version authority, canonical skill discovery, and directory projection coverage.
 
 ## [0.20.2] - 2026-10-15
 
@@ -624,8 +672,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Claude Code and Codex marketplaces for the plugin and its 25 engineering and productivity skills.
 
-[unreleased]: https://github.com/svyatov/supermatt/compare/v0.20.3...HEAD
-[0.20.3]: https://github.com/svyatov/supermatt/compare/v0.20.2...v0.20.3
+[unreleased]: https://github.com/svyatov/supermatt/compare/v0.22.1...HEAD
+[0.22.1]: https://github.com/svyatov/supermatt/compare/v0.22.0...v0.22.1
+[0.22.0]: https://github.com/svyatov/supermatt/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/svyatov/supermatt/compare/v0.20.2...v0.21.0
 [0.20.2]: https://github.com/svyatov/supermatt/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/svyatov/supermatt/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/svyatov/supermatt/compare/v0.19.1...v0.20.0

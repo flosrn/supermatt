@@ -9,6 +9,8 @@
   <a href="https://github.com/svyatov/supermatt/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/svyatov/supermatt"></a>
   <a href="#install"><img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude_Code-plugin-D97757"></a>
   <a href="#install"><img alt="Codex plugin" src="https://img.shields.io/badge/Codex-plugin-412991"></a>
+  <a href="#install"><img alt="Cursor plugin" src="https://img.shields.io/badge/Cursor-plugin-5C6AC4"></a>
+  <a href="#install"><img alt="OMP plugin" src="https://img.shields.io/badge/OMP-plugin-2D8C3C"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/svyatov/supermatt"></a>
 </p>
 
@@ -20,9 +22,9 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-- **Claude Code and Codex.** Each host installs SuperMatt from its own native plugin marketplace.
+- **Claude Code, Codex, Cursor, and OMP.** Each host loads the same canonical 39-skill tree through a package adapter or documented compatibility fallback.
 - **39 skills.** 30 for engineering and 9 for productivity, listed below.
-- **A second model reviews your changes.** `code-review` runs every axis twice, once in a sub-agent and once in `codex` from Claude Code (or `claude` from Codex) when that CLI is installed, and the model that did not raise a finding validates it. Upstream reviews on two axes.
+- **Peer review is repository-controlled.** `docs/agents/cross-model.json` can keep `code-review` and `jury` entirely on current-host readers, automatically select a hardened Claude or Codex peer, or explicitly select Claude, Codex, Cursor Agent, or OMP with supported model and effort values.
 - **One flow from idea to closed issue.** Forked from [mattpocock/skills](https://github.com/mattpocock/skills) at `c55ee46`, each skill checks its own work and hands the result to the next.
 
 ## Install
@@ -41,20 +43,42 @@ codex plugin marketplace add svyatov/supermatt
 codex plugin add supermatt@supermatt
 ```
 
-Then, in the repository you work in, type this in Claude Code (`$setup-supermatt-skills` in Codex):
+In Cursor, install SuperMatt from **Customize > Marketplace** once the listing is available. To load a local checkout during development, run:
 
-```text
-/supermatt:setup-supermatt-skills
+```bash
+agent --plugin-dir .
 ```
 
-It asks where you track issues (GitHub, GitLab, or local Markdown files) and which triage labels to use, then writes:
+In OMP, run:
+
+```text
+omp plugin marketplace add svyatov/supermatt
+omp plugin install supermatt@supermatt
+```
+
+Run `/reload-plugins` in an existing OMP TUI after installation.
+
+Then invoke setup once in each repository:
+
+| Host | Command |
+|---|---|
+| Claude Code plugin | `/supermatt:setup-supermatt-skills` |
+| Claude Code linked skill | `/setup-supermatt-skills` |
+| Codex | `$setup-supermatt-skills` |
+| Cursor | `/setup-supermatt-skills` |
+| OMP | `/skill:setup-supermatt-skills` |
+
+It asks where you track issues (GitHub, GitLab, or local Markdown files), which triage labels to use, and whether reviews and juries may call an external peer. It then writes:
 
 ```text
 CLAUDE.md or AGENTS.md          "## Agent skills" section
 docs/agents/issue-tracker.md    where issues live
 docs/agents/triage-labels.md    label names for the triage roles
 docs/agents/domain.md           where GLOSSARY.md and ADRs live
+docs/agents/cross-model.json    external peer mode, model, and effort settings
 ```
+
+`host-only` prevents every supported external peer subprocess while preserving current-host readers. `auto` keeps the hardened Claude or Codex family selection. Cursor and OMP require explicit selection and runtime confirmation because their inherited configuration cannot provide the same isolation boundary. You can edit `docs/agents/cross-model.json` directly after setup.
 
 <details>
 <summary>Claude Code's bundled <code>/code-review</code></summary>
@@ -70,13 +94,13 @@ Claude Code has a bundled `/code-review` skill with the same name as this plugin
 <details>
 <summary>Linking skills for maintainers</summary>
 
-Maintainers working on this repo can instead link every skill into `~/.claude/skills` and `~/.agents/skills` with `scripts/link-skills.sh`. Linked skills are not namespaced, so in Claude Code a linked `code-review` replaces the bundled `/code-review`.
+Maintainers working on this repo can instead link every skill into `~/.claude/skills` and `~/.agents/skills` with `scripts/link-skills.sh`. Claude Code reads the first destination; Codex, Cursor, and OMP can discover the second where supported. Linked skills are not namespaced, so in Claude Code a linked `code-review` replaces the bundled `/code-review`.
 
 </details>
 
 ## Where to start
 
-Run `/supermatt:setup-supermatt-skills` once per repository, as above. After that, when you are not sure which skill fits, describe your situation to `/supermatt:ask-supermatt` and it names the skill or flow. In Codex, type `$name` for any skill below.
+Run the setup command for your host once per repository, as above. After that, invoke `ask-supermatt` and describe your situation when you are not sure which skill fits. Claude Code plugin commands use `/supermatt:name`, linked Claude Code and Cursor commands use `/name`, Codex uses `$name`, and OMP uses `/skill:name`.
 
 Most work follows the main flow:
 
@@ -99,9 +123,9 @@ flowchart LR
 4. Use `implement` for each ticket, or `implement-spec` for the whole spec on one integration branch. Both build through `tdd`, check the running program with `qa`, and finish with `code-review`; `implement-spec` checks the combined result across tickets.
 5. `refactor` cleans up the branch without changing behavior, and `ship-pr` repairs CI within bounded attempts, merges only on green checks, and verifies post-merge workflows. Failed post-merge workflows use follow-up repair PRs.
 
-Run `retro` before clearing the session, or provide the session log later. After a bug fix, use it to identify what would have prevented the bug; use `improve-architecture` when the finding is a missing test seam.
+Run `retro` before clearing the session, or provide a verified session ID or path later. It reads local Claude Code, Codex, Cursor, and OMP transcript evidence and reports gaps instead of guessing from the newest file. After a bug fix, use it to identify what would have prevented the bug; use `improve-architecture` when the finding is a missing test seam.
 
-With triaged GitHub issues or local Markdown tickets, `orchestrate` runs steps 4 and 5 unattended for each issue, several issues in parallel if you ask, in worker sessions inside herdr. Workers use the harness that started it: Claude Code, Codex, or OMP. Local tracker files stay in the main checkout; code changes ship through GitHub PRs.
+With triaged GitHub issues or local Markdown tickets, `orchestrate` runs steps 4 and 5 unattended for each issue, several issues in parallel if you ask, in worker sessions inside Herdr. Workers use the harness that started it: Claude Code, Codex, Cursor, or OMP. Cursor and OMP workers receive the authoritative active model ID when available, otherwise they keep the harness default. Local tracker files stay in the main checkout; code changes ship through GitHub PRs.
 
 ## How it differs from mattpocock/skills
 
@@ -109,7 +133,7 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 
 ### Skills check their own work
 
-- `code-review` adds a third axis, **Adversarial**: how does the change fail in production? Its brief also runs security, public contract, migration, reliability, and concurrency checks on the parts of the diff they apply to. Every axis has two readers, a sub-agent and a second model (`codex` from Claude Code, `claude` from Codex), and a finding both raise is marked `[both]`. Findings carry P0-P3 severities and quote the lines they cite. The model that did not raise a P0, P1, or P2 finding validates it before the review ends with a verdict, and the Standards axis also checks that tests exercise the changed behavior. Upstream reviews on two axes, Standards and Spec.
+- `code-review` adds a third axis, **Adversarial**: how does the change fail in production? Its brief also runs security, public contract, migration, reliability, and concurrency checks where they apply. `docs/agents/cross-model.json` selects current-host readers only, automatic hardened Claude or Codex peers, or an explicit adapter. Cursor and OMP disclose their weaker isolation and require runtime confirmation. Findings carry P0-P3 severities and quoted evidence, and the reader that did not raise a P0, P1, or P2 finding validates it before the verdict. Upstream reviews on two axes, Standards and Spec.
 - `to-spec` checks the draft spec in a fresh-context sub-agent before it publishes it.
 - `tdd` checks that each test goes red for the reason it names, runs affected-seam checks during cycles and the full required gate for completed work, ends with a mutation check, and flags change-detector tests.
 - `diagnosing-bugs` asks what you already tried, rules out the environment and uncommitted work, and fixes nothing until the causal chain has no gaps. It escalates to you after 2-3 dead hypotheses or 3 failed fixes.
@@ -123,8 +147,8 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 - `implement-spec`, adapted from upstream v1.3.1, builds a whole spec through native subagents in ticket worktrees and integrates it into one branch for a single PR. It runs QA and review on the combined spec, serializes merges, and keeps issues open until shipping. Use it for one feature reviewed together; use `orchestrate` to ship a queue of issues separately through Herdr.
 - `diagnosing-bugs` writes the regression test through `tdd` and reviews the fix with `code-review`, using the bug report as the spec.
 - Test seams agreed in `to-spec` or `triage` travel through `to-tickets` into `implement` and `tdd`, so no skill asks about them twice.
-- Each planning skill ends by pointing to the next step: `ideate` to `/grill-with-docs`, `improve-architecture` to `/to-spec` or `/implement`, and `wayfinder` to `/to-spec`.
-- `orchestrate`, new in SuperMatt, chains `triage`, `implement`, `fix-findings`, `refactor`, `ship-pr`, and a report-only `retro` across fresh worker sessions, and verifies each spec with `qa` and `code-review` once its tickets close. It reports retrospective candidates without applying or shipping them.
+- Each planning skill ends by pointing to the next step: `ideate` to `grill-with-docs`, `improve-architecture` to `to-spec` or `implement`, and `wayfinder` to `to-spec`, using the current host's invocation syntax.
+- `orchestrate`, new in SuperMatt, chains `triage`, `implement`, `fix-findings`, `refactor`, `ship-pr`, and a report-only `retro` across fresh Claude Code, Codex, Cursor, or OMP worker sessions, and verifies each spec with `qa` and `code-review` once its tickets close. It reports retrospective candidates without applying or shipping them.
 - `ask-supermatt` routes across all of these flows and is kept in sync with every skill change.
 
 ### Refactors keep behavior
@@ -135,14 +159,13 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 
 ### Smallest version first
 
-- `grilling` includes the smallest option and asks at most four questions a round, within the native question tool's limits, only ones that change what gets built. It uses native Codex and Claude Code question dialogs when available, with chat as the fallback.
-- `wayfinder` names the smallest version before it charts the work, has a sub-agent argue for the smallest answer, and counts a map as done when the first working version can be built.
+- `grilling` includes the smallest option and asks at most four questions a round, within the live host question capability's limits, only ones that change what gets built. It uses native dialogs when available and chat as the fallback.
 
-### Codex is a first-class host
+### Four first-class hosts
 
-- SuperMatt ships a native Codex plugin marketplace next to the Claude Code one. Upstream installs into Codex through `npx skills`, and lists a native Codex plugin on its roadmap.
-- Skills live in a flat `skills/` directory, because Codex rejects nested skills.
-- Wherever a skill tells you to run another user-invoked skill, it gives the Codex form (`$name`) next to the Claude Code form (`/name`).
+- SuperMatt ships native package adapters for Claude Code, Codex, and Cursor. OMP loads the Claude plugin metadata through its documented compatibility fallback.
+- All hosts use the flat canonical `skills/` directory. Package discovery is model-independent, but instruction adherence and tool capabilities still require representative model testing.
+- Human invocation, model-side composition, and repository peer selection follow [the harness contract](./references/harnesses.md). `auto` uses only hardened Claude or Codex adapters. Cursor and OMP are explicit choices with runtime confirmation and disclosed capability gaps.
 
 ### Scope and names
 
@@ -183,16 +206,16 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 | **[improve-file-structure](./skills/improve-file-structure/SKILL.md)** | Assess file organization and stop when it is healthy; otherwise design a clearer layout and a behavior-preserving migration plan for `/implement`, with TypeScript, Go, Python, and Ruby guidance. |
 | **[refactor](./skills/refactor/SKILL.md)** | Refactor code at method, file, or project scope without changing behavior. Assesses first and stops when the code is clean, and gates edits on test coverage. |
 | **[improve-tests](./skills/improve-tests/SKILL.md)** | Cut a test suite to the tests that catch real bugs and its run time to the minimum: measure first, delete or demote low-value tests, fix slow setup, and prove every cut keeps the checks that matter. |
-| **[orchestrate](./skills/orchestrate/SKILL.md)** | Work through GitHub issues or local Markdown tickets unattended in parallel lanes, with workers in Herdr panes and git worktrees. |
+| **[orchestrate](./skills/orchestrate/SKILL.md)** | Work through GitHub issues or local Markdown tickets unattended in parallel Claude Code, Codex, Cursor, or OMP lanes, with workers in Herdr panes and git worktrees. |
 | **[commit](./skills/commit/SKILL.md)** | Commit all changes on the current branch, main included, after a scan for secrets. |
 | **[ship-pr](./skills/ship-pr/SKILL.md)** | Commit, push, open a pull request, repair CI within bounded attempts, then squash merge and verify post-merge workflows. |
 | **[fix-findings](./skills/fix-findings/SKILL.md)** | Apply every finding from the most recent review, audit, verification, or check, at the root cause and without widening scope. |
-| **[setup-supermatt-skills](./skills/setup-supermatt-skills/SKILL.md)** | Configure this repo for the engineering skills (issue tracker, triage labels, domain doc layout). Run once per repo. |
+| **[setup-supermatt-skills](./skills/setup-supermatt-skills/SKILL.md)** | Configure this repo for the engineering skills: issue tracker, triage labels, domain doc layout, and external peer policy. Run once per repo. |
 | **[to-spec](./skills/to-spec/SKILL.md)** | Turn the current conversation into a spec and publish it to the issue tracker. |
 | **[to-tickets](./skills/to-tickets/SKILL.md)** | Break any plan, spec, or conversation into a set of tracer-bullet tickets, each declaring its blocking edges, as text in one file per ticket locally or as native blocking links on a real tracker. |
 | **[implement](./skills/implement/SKILL.md)** | Build the work described by a spec, tickets, or triaged issues, driving `/tdd` at pre-agreed seams, then committing, checking it with `/qa`, and closing out with `/code-review`. |
 | **[implement-spec](./skills/implement-spec/SKILL.md)** | Build a whole spec through native parallel subagents in ticket worktrees, integrate into one branch, and verify the combined result with `/qa` and `/code-review` before shipping. |
-| **[retro](./skills/retro/SKILL.md)** | Run a retrospective on a coding session and get ranked suggestions for the agent's environment: automated checks, context pointers, coding-standards rules, stale or contradictory instructions, and a leaner `AGENTS.md`. |
+| **[retro](./skills/retro/SKILL.md)** | Run a retrospective on verified Claude Code, Codex, Cursor, or OMP session evidence and get ranked suggestions for the agent's environment, with explicit gaps when full history is unavailable. |
 | **[wayfinder](./skills/wayfinder/SKILL.md)** | Plan a huge chunk of work (more than one agent session can hold) as a shared map of decision tickets on the issue tracker, resolved one at a time until the way to the destination is clear. |
 
 ### Model-invoked
@@ -206,7 +229,7 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 | **[domain-modeling](./skills/domain-modeling/SKILL.md)** | Actively build and sharpen a project's domain model by challenging terms, stress-testing with scenarios, and updating `GLOSSARY.md` and ADRs inline. |
 | **[codebase-design](./skills/codebase-design/SKILL.md)** | Shared discipline and vocabulary for designing deep modules: small interfaces, clean seams, testable through the interface. |
 | **[qa](./skills/qa/SKILL.md)** | QA a change in the running program before code review: write a scenario for every requested behavior, drive a terminal program through tmux or a web app through a browser, and report each scenario as pass, fail, or blocked with the evidence observed. |
-| **[code-review](./skills/code-review/SKILL.md)** | Three-axis review of the diff since a fixed point: **Standards** (does it follow the repo's coding standards, plus a Fowler smell baseline?), **Spec** (does it faithfully implement the originating issue/spec?), and **Adversarial** (how does it fail in production?), each read in parallel by a sub-agent and by a second model, closed with a verdict. When Claude Code runs the review, the second model is `codex` if it is installed; when Codex runs it, the second model is `claude`. The model that did not raise a finding validates it. |
+| **[code-review](./skills/code-review/SKILL.md)** | Three-axis review of the diff since a fixed point: **Standards**, **Spec**, and **Adversarial**. Repository settings can keep it on host readers, use automatic hardened Claude or Codex peers, or explicitly select a capability-limited adapter. |
 | **[pr](./skills/pr/SKILL.md)** | The shape of a pull request body: a summary diagram or diff sketch, before/after evidence, and the merge danger (one-way or two-way door, blast radius). |
 | **[dependency-vetting](./skills/dependency-vetting/SKILL.md)** | Verify a package or tool is authentic before installing, adding, upgrading, or recommending it, by following the link from the upstream project to its install command. |
 | **[resolving-merge-conflicts](./skills/resolving-merge-conflicts/SKILL.md)** | Work through an in-progress git merge or rebase conflict hunk by hunk, resolving by intent traced to each side's primary source, run the project's checks, then finish the operation, never `--abort`. |
@@ -222,7 +245,7 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 | **[teach](./skills/teach/SKILL.md)** | Teach the user a new skill or concept over multiple sessions, using the current directory as a stateful teaching workspace. |
 | **[to-questionnaire](./skills/to-questionnaire/SKILL.md)** | Turn a decision you can't answer alone into a Markdown questionnaire for the one person who can (filled in async, or together over a meeting). |
 | **[what-would-you-do](./skills/what-would-you-do/SKILL.md)** | Answer the agent's question with this one: it explains the problem, weighs each option, and recommends an answer. |
-| **[jury](./skills/jury/SKILL.md)** | Put a hard decision to a jury of 3 or 5 subagents: blind votes, one anonymous review round, and one committed verdict with the dissent and the first action. |
+| **[jury](./skills/jury/SKILL.md)** | Put a hard decision to a jury of 3 or 5 seats: blind votes, one anonymous review round, and one committed verdict. Its external seat follows the repository peer policy, including a host-only panel. |
 | **[wait-what](./skills/wait-what/SKILL.md)** | Fire this the moment a message doesn't land. The agent re-pitches it with the context you're missing, in plain English, using your `GLOSSARY.md` vocabulary. |
 
 ### Model-invoked

@@ -1,0 +1,2 @@
+{"role":"user","message":{"content":[{"type":"text","text":"Cursor verified user marker"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Cursor main answer"},{"type":"tool_result","content":"Cursor failed tool","is_error":true}]}}

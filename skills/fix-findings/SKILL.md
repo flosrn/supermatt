@@ -14,4 +14,4 @@ Apply the findings from the most recent review, audit, verification, lint run, t
 4. For every repository you edited, this one or another, read its `AGENTS.md`, `CLAUDE.md` and `CONTRIBUTING.md`. Run the checks they name, and make the other edits they require of a change (a version bump, a changelog entry). Done when each edited repository has its checks run, or is named in the report as having none after you read those files.
 5. Report one line per finding: `<code>: fixed`, `<code>: partly fixed, <what is left and why>`, `<code>: deferred to <issue>`, or `<code>: skipped, <why>`. Then one line per edited repository with the checks run. Say plainly when a finding was wrong.
 
-Do not commit. The user commits with `/commit` or `/ship-pr` (`$commit` or `$ship-pr` in Codex).
+Do not commit. The user commits with `/commit` or `/ship-pr` in Claude linked installs or Cursor, `/supermatt:commit` or `/supermatt:ship-pr` from the Claude plugin, `$commit` or `$ship-pr` in Codex, or `/skill:commit` or `/skill:ship-pr` in OMP.

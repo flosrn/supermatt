@@ -16,6 +16,9 @@ function fixture(t) {
   file("skills/example/agents/openai.yaml", "policy:\n  allow_implicit_invocation: false\n");
   file("skills/example/GUIDE.md", "Reference bytes\n");
   file("references/shared.md", "Shared bytes\n");
+  file(".claude-plugin/plugin.json", '{"name":"supermatt","version":"1.0.0"}');
+  file(".agents/plugins/marketplace.json", '{"name":"supermatt","plugins":[{"name":"supermatt"}]}');
+  file(".cursor-plugin/plugin.json", '{"name":"supermatt"}');
   return { root, file };
 }
 
@@ -27,6 +30,7 @@ function discovered(root) {
 test("discovery checks exact inventory, invocation policy and all resource bytes", t => {
   const { root, file } = fixture(t);
   const expected = manifest(root);
+  assert.deepEqual(expected.packages, { claude: "supermatt", codex: "supermatt", cursor: "supermatt" });
   assert.equal(verifyDiscovery(discovered(root), expected, root).skills, 1);
   const missing = discovered(root); missing.data[0].skills = [];
   assert.throws(() => verifyDiscovery(missing, expected, root), /inventory/);
@@ -47,12 +51,14 @@ test("packaging rejects metadata drift and escaping resources", t => {
   file("skills/example/agents/openai.yaml", "policy:\n  allow_implicit_invocation: false\n");
   symlinkSync("/etc/hosts", join(root, "skills/example/outside"));
   assert.throws(() => manifest(root), /symlink/);
+  rmSync(join(root, "skills/example/outside"));
+  file(".cursor-plugin/plugin.json", '{"name":"supermatt","version":"1.0.0"}');
+  assert.throws(() => manifest(root), /must use the Claude manifest version/);
 });
 
 test("release projection omits only dev directories and survives source removal", t => {
   const { root, file } = fixture(t);
   file("scripts/dev.mjs", "dev"); file("tests/test.mjs", "test"); file(".github/workflows/ci.yml", "ci");
-  file(".claude-plugin/plugin.json", '{"name":"supermatt"}');
   const destination = mkdtempSync(join(tmpdir(), "supermatt-projection-"));
   t.after(() => rmSync(destination, { recursive: true, force: true }));
   project(root, destination);

@@ -1,0 +1,13 @@
+{
+  "name": "supermatt",
+  "displayName": "SuperMatt",
+  "description": "The best of Matt Pocock's Skills, Superpowers, and Compound Engineering. One complete, simple, supercharged SDLC system for your coding agent.",
+  "author": {
+    "name": "Leonid Svyatov and Matt Pocock"
+  },
+  "license": "MIT",
+  "keywords": ["skills", "workflow", "tdd", "code-review", "planning", "debugging"],
+  "homepage": "https://github.com/svyatov/supermatt",
+  "repository": "https://github.com/svyatov/supermatt",
+  "logo": ".claude-plugin/icon.png"
+}

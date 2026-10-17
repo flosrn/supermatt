@@ -155,11 +155,11 @@ Write the regression test **before the fix**, but only if there is a **correct s
 
 A correct seam is one where the test exercises the **real bug pattern** as it occurs at the call site. If the only available seam is too shallow (single-caller test when the bug needs multiple callers, unit test that can't replicate the chain that triggered the bug), a regression test there gives false confidence.
 
-**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Report it to the user in Phase 6, and tell them to run `/improve-architecture` (`$improve-architecture` in Codex) to find where the seam should go.
+**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Report it to the user in Phase 6, and tell them to run `/improve-architecture` in Claude linked installs or Cursor, `/supermatt:improve-architecture` from the Claude plugin, `$improve-architecture` in Codex, or `/skill:improve-architecture` in OMP to find where the seam should go.
 
 If a correct seam exists:
 
-1. Call the Skill tool with "tdd" and turn the minimised repro into its failing test at that seam. The seam you found and showed the user here counts as pre-agreed.
+1. Load and follow the `tdd` skill through the host's skill mechanism, then turn the minimised repro into its failing test at that seam. The seam you found and showed the user here counts as pre-agreed.
 2. Apply the fix, and only the fix. A refactor bundled in hides which change turned the loop green.
 3. Re-run the Phase 1 feedback loop against the original (un-minimised) scenario.
 
@@ -171,7 +171,7 @@ After **2-3 dead hypotheses or 3 failed fixes**, the diagnosis is what is wrong.
 
 | Pattern | Diagnosis | Next move |
 | --- | --- | --- |
-| Hypotheses point at different subsystems | Design problem, not a local bug | Stop, present the findings, and suggest `/improve-architecture` (`$improve-architecture` in Codex) |
+| Hypotheses point at different subsystems | Design problem, not a local bug | Stop, present the findings, and suggest `/improve-architecture` in Claude linked installs or Cursor, `/supermatt:improve-architecture` from the Claude plugin, `$improve-architecture` in Codex, or `/skill:improve-architecture` in OMP |
 | Evidence contradicts itself | Wrong mental model of the code | Re-read the path from its entry point, assuming nothing |
 | Works locally, fails in CI/prod | Environment difference | Compare config, dependencies, data, timing |
 | Fix works but the prediction was wrong | Symptom fix; the cause is still active | Keep investigating |
@@ -186,5 +186,5 @@ Required before declaring done:
 - [ ] Throwaway debug harnesses deleted (or moved to a clearly-marked debug location)
 - [ ] The full test suite passes
 - [ ] The regression test and the fix are committed, and the commit message states the hypothesis that turned out correct, so the next debugger learns
-- [ ] The fix passes QA, unless an outer flow (such as `implement`) runs QA on this diff itself: write the bug report or captured symptom to a file in the OS temporary directory, then call the Skill tool with "qa", with the commit you recorded in Phase 5 as the fixed point and that file as the request. A fail is a symptom the fix left behind: take it back to Phase 3.
-- [ ] The fix is reviewed, unless an outer flow (such as `implement`) reviews this diff itself: call the Skill tool with "code-review", with the commit you recorded in Phase 5 as the fixed point and, as the spec, the bug report file (write it now if the QA step was skipped). Fix every verified finding, at every severity, in the same turn, and commit the fixes. When the aggregate carries one, send the aggregate together with the first fix's tool call: a message with no tool call ends the turn and leaves the fixes to the user.
+- [ ] The fix passes QA, unless an outer flow (such as `implement`) runs QA on this diff itself: write the bug report or captured symptom to a file in the OS temporary directory, then load and follow the `qa` skill through the host's skill mechanism, with the commit you recorded in Phase 5 as the fixed point and that file as the request. A fail is a symptom the fix left behind: take it back to Phase 3.
+- [ ] The fix is reviewed, unless an outer flow (such as `implement`) reviews this diff itself: load and follow the `code-review` skill through the host's skill mechanism, with the commit you recorded in Phase 5 as the fixed point and, as the spec, the bug report file (write it now if the QA step was skipped). Fix every verified finding, at every severity, in the same turn, and commit the fixes. When the aggregate carries one, send the aggregate together with the first fix's tool call: a message with no tool call ends the turn and leaves the fixes to the user.

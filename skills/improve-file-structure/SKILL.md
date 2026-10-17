@@ -10,7 +10,7 @@ license: MIT
 
 Find where file placement makes a project hard to navigate or change. Design the smallest useful reorganization, grounded in the project's language, framework, and existing conventions. End with a plan for `/implement`; this skill changes no project files. Present the plan in the conversation unless the user requests a saved artifact.
 
-**File placement is the scope.** Moves, descriptive path names, and the import/configuration updates they require belong here. Changes to responsibilities, interfaces, or dependency direction belong in `/improve-architecture` (`$improve-architecture` in Codex); code-level cleanup belongs in `/refactor` (`$refactor` in Codex). Identify those needs without adding them to a relocation plan.
+**File placement is the scope.** Moves, descriptive path names, and the import or configuration updates they require belong here. Changes to responsibilities, interfaces, or dependency direction belong in `/improve-architecture` in Claude linked installs or Cursor, `/supermatt:improve-architecture` from the Claude plugin, `$improve-architecture` in Codex, or `/skill:improve-architecture` in OMP. Code-level cleanup belongs in `/refactor`, `/supermatt:refactor`, `$refactor`, or `/skill:refactor`, respectively. Identify those needs without adding them to a relocation plan.
 
 ## Principles
 
@@ -86,4 +86,4 @@ Done when: every move has a destination, required reference updates, compatibili
 
 Hand off only when Step 4's completion criterion is met. Missing facts that determine a move, reference update, or verification method keep the plan provisional: inspect them or ask for unavailable information first. Known checks that cannot run in this environment remain explicit verification gaps, not invented results.
 
-For work that fits this session, tell the user to run `/implement` (`$implement` in Codex) with this plan. For multiple sessions, point to `/to-spec`, then `/to-tickets`, then `/implement` per ticket (`$to-spec`, `$to-tickets`, `$implement` in Codex). These are user-invoked skills: recommend the next command, do not invoke it or start moving files.
+For work that fits this session, tell the user to run `/implement` in Claude linked installs or Cursor, `/supermatt:implement` from the Claude plugin, `$implement` in Codex, or `/skill:implement` in OMP with this plan. For multiple sessions, point to `/to-spec`, `/to-tickets`, then `/implement`; `/supermatt:to-spec`, `/supermatt:to-tickets`, then `/supermatt:implement`; `$to-spec`, `$to-tickets`, then `$implement`; or `/skill:to-spec`, `/skill:to-tickets`, then `/skill:implement`, according to the host. These are user-invoked skills: recommend the next command, do not invoke it or start moving files.

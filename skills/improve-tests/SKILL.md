@@ -3,7 +3,6 @@ name: improve-tests
 description: "Cut a test suite to the tests that catch real bugs and its run time to the minimum: measure first, delete or demote low-value tests, fix slow setup, and prove every cut keeps the checks that matter."
 argument-hint: "[path or area of the test suite]"
 disable-model-invocation: true
-compatibility: Written for Claude Code (sub-agents, AskUserQuestion, plan mode). On another host, ask in plain text and present the plan before any edit.
 license: MIT
 ---
 
@@ -11,7 +10,7 @@ license: MIT
 
 Measure a test suite, find the tests that cost time and catch nothing, find the setup that wastes time, and cut both. The goal is the shortest run that still catches the bugs this project actually makes. Starts from a measured baseline and an assessment: if the suite is already lean, say so and stop.
 
-Test files are the target, so editing and deleting them is expected. Production code changes only where a test needs a seam (Step 7), and only as the approved plan names it. If a cheap test is impossible because module boundaries are wrong across several modules, that is architecture work: say so, and tell the user to run `/improve-architecture` (`$improve-architecture` in Codex).
+Test files are the target, so editing and deleting them is expected. Production code changes only where a test needs a seam (Step 7), and only as the approved plan names it. If a cheap test is impossible because module boundaries are wrong across several modules, that is architecture work: say so, and tell the user to run `/improve-architecture` in Claude linked installs or Cursor, `/supermatt:improve-architecture` from the Claude plugin, `$improve-architecture` in Codex, or `/skill:improve-architecture` in OMP.
 
 ## Principles
 
@@ -29,7 +28,7 @@ Every step applies these. Findings cite them by name.
 2. **Never remove the only guard of a claim we own.** Every deletion names where its claim stays covered, or why the claim is not ours (library behavior, trivial code).
 3. **Keep list.** These stay unless the user says otherwise: regression tests tied to a bug or incident, contract tests at a service boundary, tests of error text or formats that consumers rely on, property and invariant tests, tests on money, auth, and permission paths.
 4. **Speed never buys a weaker claim.** A lever that makes a test fast by removing what it proves (stubbing the database in a test whose claim is the query) is a deletion. Treat it as one, with the evidence a deletion needs.
-5. **No new dependencies without asking.** A profiler or mutation tool the project does not have gets proposed, not added. If the user agrees, call the Skill tool with "dependency-vetting" and vet it first.
+5. **No new dependencies without asking.** A profiler or mutation tool the project does not have gets proposed, not added. If the user agrees, load and follow the `dependency-vetting` skill through the host's skill mechanism and vet it first.
 
 ## Process
 
@@ -46,7 +45,7 @@ Done when: every suite has a baseline row taken from a real run.
 
 ### Step 2: Map the claims
 
-Dispatch subagents, one per area of the test tree (by directory or by test level), in one message. Each one reads its area's test files in full, edits nothing, and returns rows, not file contents. Each one also runs Step 3 on its own area, so brief it with Step 3's move list and the path to this skill's `RED-FLAGS.md`. One row per test file in scope:
+Dispatch independent subagents, one per area of the test tree (by directory or by test level), in one message. Each one reads its area's test files in full, edits nothing, and returns rows, not file contents. Each one also runs Step 3 on its own area, so brief it with Step 3's move list and the path to this skill's `RED-FLAGS.md`. If independent subagents are unavailable, use sequential fresh sessions where possible; otherwise perform the areas yourself and report the independence gap. One row per test file in scope:
 
 - **Level**: unit, integration (database, file system), request or controller, system or browser, e2e.
 - **Exercises**: the production code it runs.
@@ -99,18 +98,18 @@ Group findings into batches the user accepts or rejects whole: one lever, or one
 - **Stays covered by**: where each removed claim lives after the change.
 - **Risk**: what confidence the change could cost.
 
-Ask with `AskUserQuestion`, `multiSelect: true`, one option per batch, the label naming the batch and the description carrying the saving and the risk. Four batches fit one question; put the rest in further questions, highest saving first.
+Ask through the host's native multi-select capability when exposed, following its live schema. Use one option per batch, with the label naming the batch and the description carrying the saving and risk; preserve the highest-saving-first order and split across calls at the tool's live limit. If native multi-select is unavailable, show the same choices in chat and wait for the user's selections.
 
 ### Step 6: Plan
 
-Enter plan mode (`EnterPlanMode`). Per accepted batch, the plan lists the files to edit or delete, the replacement tests a demotion writes first, any production seam, and the command that verifies the batch. Order the batches:
+Use the host's native plan mode when exposed. Otherwise draft the same plan in chat. Per accepted batch, the plan lists the files to edit or delete, the replacement tests a demotion writes first, any production seam, and the command that verifies the batch. Order the batches:
 
 1. Levers that change no test (configuration, environment, parallelism).
 2. Demotions and rewrites, replacements first.
 3. Deletions, so each lands on a suite where its replacements already pass.
 4. Tiers and CI splits (`SPEED-LEVERS.md`, Tiers and CI), last, so a tier holds only tests that survived the cuts.
 
-Present the plan with `ExitPlanMode` and wait for approval. Step 7 edits files: do not start it before approval.
+Present the plan through the host's native approval mechanism when exposed. Otherwise present it in chat. Require explicit user approval before Step 7 edits files.
 
 ### Step 7: Apply
 

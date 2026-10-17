@@ -6,4 +6,4 @@ argument-hint: "[plan or design]"
 license: MIT
 ---
 
-Call the Skill tool twice, for "grilling" and "domain-modeling".
+Load and follow the `grilling` and `domain-modeling` skills, each through the host's skill mechanism.
