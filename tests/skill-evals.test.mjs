@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collectState, comparisonStatus } from "../scripts/lib/skill-evals.mjs";
+import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collectState, comparisonStatus, planComparison, absentResult } from "../scripts/lib/skill-evals.mjs";
 import { mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -113,6 +113,29 @@ test("candidate acceptance permits a measured baseline failure but not incomplet
   assert.equal(comparisonStatus({ ...report, plannedModelCalls: undefined }), "blocked");
   assert.equal(comparisonStatus({ ...report, results: [{ id: "candidate-one", status: "pass" }, { id: "candidate-one", status: "pass" }] }), "blocked");
   assert.equal(verdict([{ status: "unknown" }]), "blocked");
+});
+
+test("a case whose skill the baseline lacks is planned without baseline runs; one the candidate lacks stops before any run", () => {
+  const selected = [{ id: "old", skill: "qa" }, { id: "new", skill: "babysit-pr" }];
+  const skills = { baseline: new Set(["qa"]), candidate: new Set(["qa", "babysit-pr"]) };
+  const plan = planComparison(selected, skills, { conditions: ["neutral", "competing"], repetitions: 3 });
+  assert.deepEqual(plan, { absent: ["new"], plannedRuns: 18, absentRuns: 6 });
+  assert.throws(() => planComparison(selected, { ...skills, candidate: new Set(["qa"]) }, { conditions: ["neutral"], repetitions: 1 }), /candidate.*babysit-pr/);
+});
+
+test("absent baseline rows complete a comparison only in the baseline arm and as accounted", () => {
+  const report = { plannedRuns: 3, absentRuns: 1, completedRuns: 4, results: [
+    { id: "baseline-old-neutral-1", status: "fail" }, absentResult("baseline-new-neutral-1"),
+    { id: "candidate-old-neutral-1", status: "pass" }, { id: "candidate-new-neutral-1", status: "pass" },
+  ] };
+  assert.equal(comparisonStatus(report), "pass");
+  assert.equal(comparisonStatus({ ...report, absentRuns: 0 }), "blocked", "an absent row the plan did not account for");
+  const swapped = report.results.map(r => r.id === "baseline-new-neutral-1" ? { ...r, id: "baseline-old-neutral-2" } : r);
+  assert.equal(comparisonStatus({ ...report, results: swapped }), "blocked", "rows must pair across arms");
+  const candidateAbsent = report.results.map(r => r.id === "candidate-new-neutral-1" ? absentResult(r.id) : r);
+  assert.equal(comparisonStatus({ ...report, results: candidateAbsent }), "blocked", "the candidate arm is never absent");
+  const review = { id: "baseline-new-neutral-1", verdict: "pass", reviewer: "r", rationale: "r", evidence: ["x:1"] };
+  assert.throws(() => reviewResults(report.results, [review]), /Cannot override/, "an absent row has nothing to adjudicate");
 });
 
 test("CLI rejects a timeout above five minutes before launching a model", async () => {

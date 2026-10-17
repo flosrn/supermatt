@@ -8,7 +8,7 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { cases, variants } from "../tests/evals/cases.mjs";
 import { digest, installPlugin, listSkills, manifest, privateEnvironment, project, run, save, snapshot, verifyDiscovery } from "./lib/skill-evidence.mjs";
-import { collectState, comparisonStatus, grade, parseTrace, redact, reviewResults, selectCases } from "./lib/skill-evals.mjs";
+import { absentResult, collectState, comparisonStatus, grade, parseTrace, planComparison, redact, reviewResults, selectCases } from "./lib/skill-evals.mjs";
 
 const { values } = parseArgs({ options: {
   model: { type: "string" }, baseline: { type: "string" }, candidate: { type: "string", default: "working" },
@@ -83,6 +83,21 @@ async function initializeFixture(root, testCase, env) {
   if (testCase.id === "handoff") writeFileSync(join(root, "draft.txt"), "changed uncommitted user work\n");
 }
 
+// Freezes both arms, including an uncommitted candidate, into installable carriers under
+// `work`, and returns each arm's manifest.
+async function freeze(repo, work) {
+  const manifests = {};
+  for (const [arm, revision] of [["baseline", values.baseline], ["candidate", values.candidate]]) {
+    const source = join(work, `${arm}-source`), carrier = join(work, `${arm}-carrier`);
+    await snapshot(repo, revision, source); project(source, carrier);
+    manifests[arm] = manifest(carrier);
+    rmSync(source, { recursive: true });
+  }
+  return manifests;
+}
+
+const skillSets = manifests => Object.fromEntries(Object.entries(manifests).map(([arm, m]) => [arm, new Set(m.skills.map(s => s.name))]));
+
 async function main() {
   if (values.adjudicate) {
     assert.ok(values.reviews, "--reviews is required with --adjudicate");
@@ -126,15 +141,19 @@ async function main() {
   assert.ok(Number.isFinite(timeout) && timeout >= 1000 && timeout <= 300000, "--timeout must be 1..300 seconds");
   const selected = selectCases(cases, values.cases), conditions = values.variants.split(",");
   assert.ok(new Set(conditions).size === conditions.length && conditions.every(v => Object.hasOwn(variants, v)), "Unknown or duplicate variant");
-  const planned = selected.length * conditions.length * repetitions * 2;
   if (values["dry-run"]) {
-    console.log(JSON.stringify({ model: values.model, cases: selected.map(c => c.id), variants: conditions, repetitions, plannedRuns: planned,
-      maxSecondsPerRun: timeout / 1000, baseline: values.baseline, candidate: values.candidate, note: "Counts CLI runs, not provider requests. One run can make multiple requests. No price estimate; token use and provider pricing vary." }, null, 2));
+    const scratch = realpathSync(mkdtempSync(join(tmpdir(), "supermatt-evals-plan-")));
+    let plan;
+    try { plan = planComparison(selected, skillSets(await freeze(realpathSync(values.repo), scratch)), { conditions, repetitions }); }
+    finally { rmSync(scratch, { recursive: true, force: true }); }
+    console.log(JSON.stringify({ model: values.model, cases: selected.map(c => c.id), variants: conditions, repetitions, plannedRuns: plan.plannedRuns,
+      baselineAbsent: plan.absent, maxSecondsPerRun: timeout / 1000, baseline: values.baseline, candidate: values.candidate,
+      note: "Counts CLI runs, not provider requests. One run can make multiple requests. A case whose skill the baseline lacks runs only in the candidate. No price estimate; token use and provider pricing vary." }, null, 2));
     return;
   }
   const evidence = realpathSync(mkdtempSync(join(tmpdir(), "supermatt-evals-")));
   const work = join(evidence, "work"); mkdirSync(work);
-  const report = { status: "blocked", requestedModel: values.model, reportedModel: null, reasoningEffort: "medium", plannedRuns: planned,
+  const report = { status: "blocked", requestedModel: values.model, reportedModel: null, reasoningEffort: "medium", plannedRuns: null,
     startedRuns: 0, providerRequests: null, claude: "unavailable", corpusDigest: digest(JSON.stringify({ selected, variants })), results: [], snapshots: {} };
   const secrets = [];
   const safeSave = (path, value) => writeFileSync(path, redact(JSON.stringify(value, null, 2) + "\n", secrets), { mode: 0o600 });
@@ -159,13 +178,14 @@ async function main() {
     report.sourceStatus = await run("git", ["-C", repo, "status", "--porcelain"]);
     // Freeze both arms before the first model call, including an uncommitted
     // candidate. Editing the checkout during a long run cannot change its arm.
+    // The selected corpus is checked against both before any run starts.
+    const manifests = await freeze(repo, work);
     for (const [arm, revision] of [["baseline", values.baseline], ["candidate", values.candidate]]) {
-      const source = join(work, `${arm}-source`), carrier = join(work, `${arm}-carrier`);
-      await snapshot(repo, revision, source); project(source, carrier);
-      const expected = manifest(carrier); report.snapshots[arm] = { revision, digest: expected.digest };
-      safeSave(join(evidence, `${arm}-manifest.json`), expected);
-      rmSync(source, { recursive: true });
+      report.snapshots[arm] = { revision, digest: manifests[arm].digest };
+      safeSave(join(evidence, `${arm}-manifest.json`), manifests[arm]);
     }
+    const plan = planComparison(selected, skillSets(manifests), { conditions, repetitions });
+    Object.assign(report, { plannedRuns: plan.plannedRuns, absentRuns: plan.absentRuns, baselineAbsent: plan.absent });
     // Only the parent CLI can access the existing native auth link. No auth
     // bytes are placed in the fixture or granted to model tools.
     const auth = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json");
@@ -201,7 +221,15 @@ async function main() {
       else if (process.env.OPENAI_API_KEY) { env.OPENAI_API_KEY = process.env.OPENAI_API_KEY; secrets.push(env.OPENAI_API_KEY); }
       else throw new Error("Native Codex auth is unavailable; no model calls started");
       for (const c of selected) for (const condition of conditions) for (let repetition = 1; repetition <= repetitions; repetition++) {
-        const id = `${arm}-${c.id}-${condition}-${repetition}`, out = join(evidence, id); mkdirSync(out);
+        const id = `${arm}-${c.id}-${condition}-${repetition}`;
+        if (arm === "baseline" && plan.absent.includes(c.id)) {
+          report.results.push(absentResult(id));
+          report.completedRuns = report.results.length;
+          report.status = comparisonStatus(report); safeSave(join(evidence, "report.json"), report);
+          console.log(`${id}: absent`);
+          continue;
+        }
+        const out = join(evidence, id); mkdirSync(out);
         rmSync(cwd, { recursive: true }); await initializeFixture(cwd, c, env);
         rmSync(temp, { recursive: true }); mkdirSync(temp);
         const skill = { path: join(installed.root, "skills", c.skill, "SKILL.md") };

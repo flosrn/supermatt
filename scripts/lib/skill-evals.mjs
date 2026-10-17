@@ -120,23 +120,42 @@ export function verdict(results) {
   return "pass";
 }
 
+// Matches the selected cases against both frozen snapshots before any model call. The
+// candidate must have every selected skill. A skill the baseline lacks (a new skill) has
+// nothing to run there: its baseline rows are recorded as absent, with no CLI run.
+export function planComparison(selected, skills, { conditions, repetitions }) {
+  const missing = [...new Set(selected.filter(c => !skills.candidate.has(c.skill)).map(c => c.skill))];
+  assert.ok(!missing.length, `The candidate snapshot lacks selected skills: ${missing.join(", ")}`);
+  const absent = selected.filter(c => !skills.baseline.has(c.skill)).map(c => c.id);
+  const perCase = conditions.length * repetitions;
+  return { absent, plannedRuns: (selected.length * 2 - absent.length) * perCase, absentRuns: absent.length * perCase };
+}
+
+export const absentResult = id => ({ id, status: "absent", findings: ["The baseline snapshot has no such skill; nothing was run"] });
+
 export function comparisonStatus(report) {
   // Early development reports called CLI runs plannedModelCalls. They never
   // measured the number of individual provider requests within a run.
   const planned = report.plannedRuns ?? report.plannedModelCalls;
-  if (report.error || !Number.isSafeInteger(planned) || planned < 2 || planned % 2 !== 0
-    || report.completedRuns !== planned || report.results.length !== planned) return "blocked";
-  if (report.results.some(r => r.status === "blocked")) return "blocked";
+  const absent = report.absentRuns ?? 0;
+  const rows = planned + absent;
+  if (report.error || !Number.isSafeInteger(planned) || !Number.isSafeInteger(absent) || absent < 0 || rows < 2 || rows % 2 !== 0
+    || report.completedRuns !== rows || report.results.length !== rows) return "blocked";
+  // Absent rows stand in for baseline runs of a new skill; the candidate always runs.
+  const absentRows = report.results.filter(r => r.status === "absent");
+  if (absentRows.length !== absent || absentRows.some(r => !r.id.startsWith("baseline-"))) return "blocked";
+  const measured = report.results.filter(r => r.status !== "absent");
+  if (measured.some(r => r.status === "blocked")) return "blocked";
   // Baseline defects are measurements, not candidate acceptance failures.
   const candidate = report.results.filter(r => r.id.startsWith("candidate-"));
   const baseline = report.results.filter(r => r.id.startsWith("baseline-"));
-  const ids = rows => rows.map(r => r.id.slice(r.id.indexOf("-") + 1)).sort();
-  if (candidate.length !== planned / 2 || baseline.length !== planned / 2
-    || new Set(report.results.map(r => r.id)).size !== planned
+  const ids = list => list.map(r => r.id.slice(r.id.indexOf("-") + 1)).sort();
+  if (candidate.length !== rows / 2 || baseline.length !== rows / 2
+    || new Set(report.results.map(r => r.id)).size !== rows
     || JSON.stringify(ids(candidate)) !== JSON.stringify(ids(baseline))) return "blocked";
   if (candidate.some(r => r.status === "fail")) return "fail";
-  if (verdict(report.results) === "blocked") return "blocked";
-  if (report.results.some(r => r.status === "needs review")) return "needs review";
+  if (verdict(measured) === "blocked") return "blocked";
+  if (measured.some(r => r.status === "needs review")) return "needs review";
   return verdict(candidate);
 }
 
