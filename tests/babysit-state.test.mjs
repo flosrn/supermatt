@@ -80,9 +80,10 @@ function host({ prs = [], live = null } = {}) {
     }
     if (group === "api" && verb === "user") return "me\n";
     // The Actions jobs API: each job of a workflow run, every attempt, with its attempt number.
+    // A job whose attempt is null is one the API does not list.
     const jobs = /^repos\/acme\/app\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100$/.exec(verb);
     if (group === "api" && jobs) {
-      return live.checks.filter((c) => c.checkSuite?.workflowRun?.databaseId === Number(jobs[1])).map((c) => `${c.databaseId} ${c.attempt}\n`).join("");
+      return live.checks.filter((c) => c.checkSuite?.workflowRun?.databaseId === Number(jobs[1]) && c.attempt != null).map((c) => `${c.databaseId} ${c.attempt}\n`).join("");
     }
     if (group === "api" && verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}`) {
       if (live.rules instanceof Error) throw live.rules;
@@ -270,6 +271,20 @@ test("a rerun attempt of a workflow run replaces the attempt before it, by attem
   // Two same-name jobs failed and only one was rerun: which one is unknowable, so both failures stand.
   const partial = babysat(t, { checks: [checkRun("test", "FAILURE", 1, 10, 1, 1), checkRun("test", "FAILURE", 2, 10, 1, 1), checkRun("test", "SUCCESS", 3, 10, 1, 2)] });
   assert.deepEqual(partial.look().checks.failing.map((c) => c.key), ["check-run:1", "check-run:2"]);
+});
+
+test("a rerun of every same-name failed job replaces all of the earlier failures", async (t) => {
+  const { look } = babysat(t, { checks: [
+    checkRun("test", "FAILURE", 1, 10, 1, 1), checkRun("test", "FAILURE", 2, 10, 1, 1),
+    checkRun("test", "SUCCESS", 3, 10, 1, 2), checkRun("test", "SUCCESS", 4, 10, 1, 2),
+  ] });
+  const seen = look();
+  assert.deepEqual([seen.checks.passing, seen.checks.failing.map((c) => c.key)], [2, []]);
+});
+
+test("a failed job the jobs API does not list is never replaced by a newer same-name job of its run", async (t) => {
+  const { look } = babysat(t, { checks: [{ ...checkRun("test", "FAILURE", 1, 10, 1), attempt: null }, checkRun("test", "SUCCESS", 2, 10, 1, 2)] });
+  assert.deepEqual(look().checks.failing.map((c) => c.key), ["check-run:1"]);
 });
 
 test("an external status follows its latest state", async (t) => {
