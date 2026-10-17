@@ -419,8 +419,11 @@ export function observe(gh, repo, number) {
   if (contexts.pageInfo.hasNextPage) throw new Error("more than 100 checks on the head; read them with gh pr checks");
   const reported = contexts.nodes.map(check);
   const latest = new Map();
+  // The newest report stands. Two reports of the same moment cannot be ordered, so a failing
+  // one wins: a check is never green while one of its newest reports fails.
   for (const c of reported.filter((x) => !x.actions)) {
-    if (!(latest.get(c.identity)?.order >= c.order)) latest.set(c.identity, { ...c, attempt: null });
+    const held = latest.get(c.identity);
+    if (!held || c.order > held.order || (c.order === held.order && c.status === "fail")) latest.set(c.identity, { ...c, attempt: null });
   }
   const checks = [...latest.values(), ...actionsJobs(gh, repo, reported.filter((x) => x.actions))]
     .map(({ identity, order, actions, execution, ...c }) => c);

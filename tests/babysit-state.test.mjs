@@ -295,6 +295,13 @@ test("rerunning the one failed job of two same-name jobs clears the failure, and
   assert.deepEqual([checks.failing.map((c) => c.key), checks.passing, checks.total], [[], 1, 1]);
 });
 
+test("of two reports of one status at the same moment, the failing one stands, in either order", async (t) => {
+  for (const states of [["FAILURE", "SUCCESS"], ["SUCCESS", "FAILURE"]]) {
+    const { look } = babysat(t, { checks: states.map((state) => statusContext("ci/ext", state, "2026-10-14T12:00:00Z")) });
+    assert.deepEqual(look().checks.failing.map((c) => c.name), ["ci/ext"], states.join(" then "));
+  }
+});
+
 test("an external status follows its latest state", async (t) => {
   const { live, look } = babysat(t, { checks: [statusContext("ci/ext", "PENDING", "2026-10-14T12:00:00Z")] });
   assert.deepEqual(look().checks.running, ["ci/ext"]);
