@@ -398,3 +398,39 @@ test("prepare rejects a dangling link whose target sits under an in-copy link th
   assert.match(result.stderr, /through-link -> .*outside\/missing\.txt/);
   assertUntouched(outside);
 });
+
+test("a refused prepare removes the lists of an earlier run, so verify cannot pass on them", (t) => {
+  const { root, repo, dir, scratch, run } = fixture(t, (repo, git) => {
+    writeFileSync(join(repo, "kept.txt"), "kept\n");
+    git("add", ".");
+    git("commit", "-qm", "init");
+  });
+  assert.equal(run("prepare").status, 0);
+  // A new untracked link that leaves the copy appears before the next preparation.
+  const outside = outsideFile(root);
+  symlinkSync(outside, join(repo, "escape-link"));
+  symlinkSync(outside, join(scratch, "escape-link"));
+
+  const refused = run("prepare");
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.ok(!existsSync(join(dir, "sources.lst")));
+  assert.ok(!existsSync(join(dir, "deleted.lst")));
+  assert.equal(run("verify").status, 2);
+});
+
+test("a prepare that cannot list the repository removes the lists of an earlier run", (t) => {
+  const { root, repo, dir, scratch, run } = fixture(t, (repo, git) => {
+    writeFileSync(join(repo, "kept.txt"), "kept\n");
+    git("add", ".");
+    git("commit", "-qm", "init");
+  });
+  assert.equal(run("prepare").status, 0);
+  const notRepo = join(root, "not-a-repo");
+  mkdirSync(notRepo);
+
+  const failed = spawnSync(process.execPath, [...runtimeArgs, script.pathname, "prepare", notRepo, scratch, dir], { encoding: "utf8" });
+  assert.equal(failed.status, 2, failed.stdout);
+  assert.ok(!existsSync(join(dir, "sources.lst")));
+  assert.ok(!existsSync(join(dir, "deleted.lst")));
+  assert.equal(run("verify").status, 2);
+});

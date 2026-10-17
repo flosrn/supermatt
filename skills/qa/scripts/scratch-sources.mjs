@@ -7,7 +7,8 @@
 // under a symlinked directory that resolves inside the copy, which it protects
 // at its real path so chmod traverses no link. A listed path that is absent
 // from the working tree (an uncommitted deletion) goes to <dir>/deleted.lst;
-// every present path goes to <dir>/sources.lst. A listed
+// every present path goes to <dir>/sources.lst. It first removes both lists
+// from any earlier run, so a preparation that stops leaves none behind. A listed
 // symlink, or a path under a symlinked directory, that resolves outside the copy
 // is rejected before any file is touched or any list is written, since following
 // it would act on files outside the copy.
@@ -20,7 +21,7 @@
 // difference, 2 on usage or setup errors (a repository git cannot list, or a
 // manifest verify cannot read).
 import { spawnSync } from "node:child_process";
-import { chmodSync, lstatSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 const [mode, repo, scratch, dir] = process.argv.slice(2);
@@ -48,6 +49,8 @@ const readList = (name) => {
 const writeList = (name, paths) => writeFileSync(join(dir, name), paths.map((path) => `${path}\0`).join(""));
 
 if (mode === "prepare") {
+  // An earlier run's lists must not survive a preparation that stops below.
+  for (const name of ["sources.lst", "deleted.lst"]) rmSync(join(dir, name), { force: true });
   const listed = spawnSync("git", ["-C", repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { encoding: "utf8", maxBuffer: 1 << 30 });
   if (listed.status !== 0) {
     console.error(`git ls-files failed in ${repo}: ${listed.stderr.trim()}`);
