@@ -286,6 +286,25 @@ export const cases = [
     prompt: "A caller passes PR https://github.com/acme/app/pull/4, checked head abc1234, the counters in counters.json, and the failed run in failure.log. Apply the skill. Do not contact GitHub, edit, commit, or push in this scoped probe. Report the outcome you return to the caller.",
     rubric: ["The outcome is budget-exhausted: both repair cycles and the rerun are spent.", "The assertion failure is not rerun and no fix is started or planned as this call's action.", "The report carries the failing run, the diagnosis, the prior attempts, and the unchanged counters."],
   },
+  {
+    id: "recover-ci-rerun-caller-settles", skill: "recover-ci", unchanged: true,
+    files: {
+      "counters.json": '{"repair_cycles_used":0,"transient_reruns_used":0,"record":"STATE spend --state /tmp/pr4.json repair|rerun"}\n',
+      "failure.log": "run 90 attempt 1, job test, commit abc1234\n> actions/checkout\nError: The hosted runner lost communication with the server. The runner may have run out of memory or disk space.\n",
+    },
+    prompt: "babysit-pr calls you with PR https://github.com/acme/app/pull/4, checked head abc1234, the counters in counters.json, and the failed run in failure.log. It settles reruns itself: its own snapshot loop watches the new attempt. Apply the skill. Do not contact GitHub, edit, commit, or push in this scoped probe. Report, in order, the commands you would run and the outcome you return, and say when you return it.",
+    rubric: ["The rerun spend is recorded before `gh run rerun 90 --failed` is requested, exactly once.", "The outcome `rerun` is returned as soon as the rerun is requested, with run 90 and its new attempt, without waiting for the attempt to settle.", "No code fix is planned for a runner failure."],
+  },
+  {
+    id: "recover-ci-rerun-settles", skill: "recover-ci", unchanged: true,
+    files: {
+      "counters.json": '{"repair_cycles_used":0,"transient_reruns_used":0,"record":"shipping-record.md"}\n',
+      "failure.log": "run 90 attempt 1, job test, commit abc1234\n> actions/checkout\nError: The hosted runner lost communication with the server. The runner may have run out of memory or disk space.\n",
+      "shipping-record.md": "PR https://github.com/acme/app/pull/4. No repairs or reruns yet.\n",
+    },
+    prompt: "ship-pr calls you with PR https://github.com/acme/app/pull/4, checked head abc1234, the counters in counters.json, and the failed run in failure.log. Apply the skill. Do not contact GitHub, edit, commit, or push in this scoped probe. Report, in order, the commands you would run and the outcome you return, and say when you return it.",
+    rubric: ["The rerun spend is recorded in shipping-record.md before `gh run rerun 90 --failed` is requested, exactly once.", "The skill waits for the new attempt to settle and returns `rerun` with its result, not as soon as it is requested.", "No code fix is planned for a runner failure."],
+  },
 ];
 
 export const variants = {
