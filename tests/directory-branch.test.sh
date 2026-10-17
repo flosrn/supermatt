@@ -17,8 +17,8 @@ git config user.name test
 git config user.email test@example.com
 git config commit.gpgsign false
 git config tag.gpgsign false
-mkdir -p .claude-plugin skills/a scripts tests .github/workflows
-for f in README.md .claude-plugin/plugin.json skills/a/SKILL.md scripts/s.sh tests/t.sh .github/workflows/ci.yml; do
+mkdir -p .claude-plugin .cursor-plugin skills/a scripts tests .github/workflows
+for f in README.md .claude-plugin/plugin.json .cursor-plugin/plugin.json skills/a/SKILL.md scripts/s.sh tests/t.sh .github/workflows/ci.yml; do
   echo x > "$f"
 done
 git add -A && git commit -q -m init && git tag v1.0.0 && git push -q origin main v1.0.0
@@ -26,6 +26,7 @@ git add -A && git commit -q -m init && git tag v1.0.0 && git push -q origin main
 sh "$REPO/scripts/directory-branch.sh" v1.0.0 || fail "first run exited nonzero"
 files="$(git --git-dir="$TMP/origin.git" ls-tree -r --name-only directory)"
 [ "$files" = ".claude-plugin/plugin.json
+.cursor-plugin/plugin.json
 README.md
 skills/a/SKILL.md" ] || fail "unexpected directory tree: $files"
 [ -z "$(git status --porcelain)" ] || fail "the working tree or index changed"

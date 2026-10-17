@@ -19,7 +19,21 @@ export function files(root, prefix = "") {
   });
 }
 
+export function verifyPackages(root) {
+  const claude = JSON.parse(readFileSync(join(root, ".claude-plugin/plugin.json"), "utf8"));
+  const codex = JSON.parse(readFileSync(join(root, ".agents/plugins/marketplace.json"), "utf8"));
+  const cursor = JSON.parse(readFileSync(join(root, ".cursor-plugin/plugin.json"), "utf8"));
+  assert.equal(claude.name, "supermatt", "Claude package name mismatch");
+  assert.equal(codex.name, "supermatt", "Codex marketplace name mismatch");
+  assert.deepEqual(codex.plugins.map(plugin => plugin.name), ["supermatt"], "Codex plugin name mismatch");
+  assert.equal(cursor.name, "supermatt", "Cursor package name mismatch");
+  assert.ok(!("version" in cursor), "Cursor package must use the Claude manifest version");
+  assert.ok(!("skills" in cursor), "Cursor package must discover the root skills/ directory");
+  return { claude: claude.name, codex: codex.name, cursor: cursor.name };
+}
+
 export function manifest(root) {
+  const packages = verifyPackages(root);
   const entries = files(root);
   const skills = entries.filter(p => /^skills\/[^/]+\/SKILL\.md$/.test(p)).map(path => {
     const body = readFileSync(join(root, path), "utf8");
@@ -34,7 +48,7 @@ export function manifest(root) {
   assert.ok(skills.length, "Empty skill inventory");
   assert.equal(entries.filter(p => p.endsWith("/SKILL.md")).length, skills.length, "Nested skills are not supported");
   const resources = Object.fromEntries(entries.map(path => [path, digest(readFileSync(join(root, path)))]));
-  return { skills, files: resources, digest: digest(JSON.stringify(resources)) };
+  return { skills, packages, files: resources, digest: digest(JSON.stringify(resources)) };
 }
 
 // Keep this exclusion list paired with scripts/directory-branch.sh; its existing

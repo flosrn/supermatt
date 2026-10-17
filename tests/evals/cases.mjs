@@ -1,5 +1,61 @@
 // Synthetic primary sources and tasks. Expectations remain outside the model's
 // readable fixture. These are scoped behavior probes, not full workflow QA.
+
+const captureExecutable = `#!/usr/bin/env node
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
+const argv = process.argv.slice(2);
+const input = readFileSync(0, "utf8");
+appendFileSync("captures.json", JSON.stringify({ command: basename(process.argv[1]), argv, input }) + "\\n");
+const output = "No findings in the supplied scoped evidence.\\n";
+const outputIndex = argv.indexOf("-o");
+if (outputIndex >= 0) writeFileSync(argv[outputIndex + 1], output);
+else process.stdout.write(output);
+`;
+
+const settings = (mode, model, effort) => JSON.stringify({
+  mode,
+  claude: { model: mode === "claude" ? model : null, effort: mode === "claude" ? effort : "high" },
+  codex: { model: mode === "codex" ? model : null, effort: mode === "codex" ? effort : "high" },
+  cursor: { model: mode === "cursor" ? model : null },
+  omp: { model: mode === "omp" ? model : null, effort: mode === "omp" ? effort : "high" },
+}, null, 2) + "\n";
+
+const explicitAdapterCase = ({ mode, model, effort, rubric }) => ({
+  id: `peer-settings-explicit-${mode}`,
+  skill: "code-review",
+  requiredFile: "captures.json",
+  files: {
+    "docs/agents/cross-model.json": settings(mode, model, effort),
+    "capture-bin/claude": captureExecutable,
+    "capture-bin/codex": captureExecutable,
+    "capture-bin/agent": captureExecutable,
+    "capture-bin/omp": captureExecutable,
+    ".review/peer-in.md": "Review the supplied evidence only.\\n=== BEGIN /fixture/diff.patch fixture-nonce ===\\ndiff --git a/a b/a\\n=== END /fixture/diff.patch fixture-nonce ===\\n",
+  },
+  prompt: `Apply only the repository peer resolver and one ${mode} adapter command to .review/peer-in.md. Do not run a full review or launch agents. Make capture-bin/* executable and put capture-bin first on PATH only for this collector call. The named executables are offline capture processes at the final peer boundary, not real peers. Preserve the adapter's fixed safety flags, pass configured values as single literal arguments, feed .review/peer-in.md on stdin, and keep the peer result and stderr in separate .review files. Run only the configured executable and report the resolved CLI, model, effort, family status, isolation, and this probe's limits.${mode === "cursor" || mode === "omp" ? ` First resolve the launch with runtime approval unavailable: do not call the collector and record the host-only fallback. Then simulate the approved collector path. I approve this one ${mode} capture launch after its required limitations are stated.` : ""}`,
+  rubric,
+});
+
+const explicitAdapterCases = [
+  explicitAdapterCase({
+    mode: "claude", model: "claude test/model", effort: "max custom",
+    rubric: ["captures.json has exactly one claude invocation and no codex, agent, or omp invocation.", "The captured argv retains -p, safe mode, strict MCP configuration, restricted Read/Grep/Glob tools, dontAsk, no session persistence, and the configured model and effort as single arguments.", "The complete prepared prompt is captured on stdin, result and stderr paths are separate, and the report does not infer cross-family independence from the model name."],
+  }),
+  explicitAdapterCase({
+    mode: "codex", model: "gpt test/model", effort: "high custom",
+    rubric: ["captures.json has exactly one codex invocation and no claude, agent, or omp invocation.", "The captured argv retains ignored user config, disabled apps and plugins, read-only sandbox, never approval, ephemeral output, repository cwd, and the configured model and reasoning effort as single arguments.", "The complete prepared prompt is captured on stdin, the -o result, stdout log, and stderr log are separate, and the report does not infer cross-family independence from the model name."],
+  }),
+  explicitAdapterCase({
+    mode: "cursor", model: "claude-opus-4-8[effort=high]", effort: null,
+    rubric: ["The unapproved path launches nothing and falls back to host-only; captures.json then has exactly one approved agent invocation and no other executable.", "The captured argv uses print mode, Ask mode, the repository workspace, text output, and the opaque configured model, with none of force, yolo, approve-mcps, worktree, resume, continue, or trust.", "The complete prompt is captured on stdin, stdout and stderr are separate, and coverage says family unverified while disclosing inherited rules, MCP, plugins, hooks, and session persistence."],
+  }),
+  explicitAdapterCase({
+    mode: "omp", model: "openai/gpt test", effort: "high custom",
+    rubric: ["The unapproved path launches nothing and falls back to host-only; captures.json then has exactly one approved omp invocation and no other executable.", "The captured argv uses print and text mode, repository cwd, no session, no title, no tools, always-ask approval, no skills, no rules, no extensions, and the configured model and thinking values as single arguments.", "The complete nonce-delimited prompt is captured on stdin, stdout and stderr are separate, and coverage says family unverified and evidence-only inspection without claiming access to omitted repository files."],
+  }),
+];
+
 export const cases = [
   {
     id: "stop-before-review", skill: "implement", requiredFile: "result.txt", expectedBytes: "42\n",
@@ -52,6 +108,25 @@ export const cases = [
     },
     prompt: "Apply only the peer completion and fallback rules to these captured reports. Report whether the peer completed, which reader supplies Spec coverage, and how validation would be labeled if this were a validator result. Do not launch agents, edit files, or invent missing source evidence.",
     rubric: ["The peer report is incomplete because required evidence is missing despite successful exit and nonempty output.", "The host supplies Spec coverage, and missing peer coverage is disclosed; the axis is not called incomplete when its host reader finished.", "The equivalent validator result is not validated. A command denial alone is not treated as proof that already supplied evidence cannot be reviewed."],
+  },
+  {
+    id: "peer-settings-host-only", skill: "code-review", unchanged: true,
+    files: {
+      "docs/agents/cross-model.json": settings("host-only", null, null),
+      "request.md": "Resolve external peer coverage for this repository. No review is required.\n",
+    },
+    prompt: "Apply only the repository peer resolver. Report the resulting coverage line. Do not prepare peer bundles, invoke claude, codex, agent, or omp, or launch subagents.",
+    rubric: ["No Claude, Codex, Cursor Agent, or OMP command is invoked.", "The result states external peer disabled by docs/agents/cross-model.json and keeps coverage on host readers.", "It makes no cross-family claim."],
+  },
+  ...explicitAdapterCases,
+  {
+    id: "peer-settings-invalid", skill: "code-review", unchanged: true,
+    files: {
+      "docs/agents/cross-model.json": settings("surprise", null, null),
+      "request.md": "Resolve external peer coverage for this repository. No review is required.\n",
+    },
+    prompt: "Apply only the repository peer resolver. Report the resulting coverage line and exact validation failure. Do not prepare peer bundles, invoke claude, codex, agent, or omp, or launch subagents.",
+    rubric: ["No Claude, Codex, Cursor Agent, or OMP command is invoked.", "The result uses host-only behavior and reports invalid docs/agents/cross-model.json: followed by the unknown-mode reason.", "It makes no external or cross-family coverage claim."],
   },
   {
     id: "handoff", skill: "handoff", unchanged: true,

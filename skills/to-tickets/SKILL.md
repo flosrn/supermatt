@@ -10,7 +10,7 @@ license: MIT
 
 Break a plan, spec, or conversation into a set of **tickets**: tracer-bullet vertical slices, each declaring the tickets that **block** it.
 
-Read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`. If either is missing, tell the user to run `/setup-supermatt-skills` (`$setup-supermatt-skills` in Codex).
+Read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`. If either is missing, tell the user to run `/setup-supermatt-skills` in Claude linked installs or Cursor, `/supermatt:setup-supermatt-skills` from the Claude plugin, `$setup-supermatt-skills` in Codex, or `/skill:setup-supermatt-skills` in OMP.
 
 ## Process
 
@@ -20,7 +20,7 @@ Work from whatever is already in the conversation context. If the user passes a 
 
 ### 2. Explore the codebase (optional)
 
-If you have not already explored the codebase, spawn an Explore subagent to do it, so the file contents stay out of this context. Have it return a summary: the current state of the code in the area, the glossary terms and ADRs that apply, and prefactor candidates. Without subagents, explore it yourself. Ticket titles and descriptions should use the project's domain glossary vocabulary, and respect ADRs in the area you're touching.
+If you have not already explored the codebase, spawn a fresh read-only exploration subagent, so the file contents stay out of this context. Have it return a summary: the current state of the code in the area, the glossary terms and ADRs that apply, and prefactor candidates. If no independent context is available, explore it yourself and report that gap. Ticket titles and descriptions should use the project's domain glossary vocabulary and respect ADRs in the area you're touching.
 
 Look for opportunities to prefactor the code to make the implementation easier. "Make the change easy, then make the easy change."
 
@@ -66,7 +66,7 @@ Publish the approved tickets. **How** depends on the tracker `/setup-supermatt-s
 
 If the source was a spec issue labelled `ready-for-agent`, remove that label from it: its tickets are now the work, and the spec stays open as their parent. Leave the parent issue otherwise untouched.
 
-Then stop. Tell the user to run `/implement` (`$implement` in Codex) on a **frontier** ticket (one whose blockers are all closed) in a fresh context, one ticket per session.
+Then stop. Tell the user to run `/implement` in Claude linked installs or Cursor, `/supermatt:implement` from the Claude plugin, `$implement` in Codex, or `/skill:implement` in OMP on a **frontier** ticket (one whose blockers are all closed) in a fresh context, one ticket per session.
 
 <local-ticket-template>
 

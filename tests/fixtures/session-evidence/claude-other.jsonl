@@ -1,0 +1,2 @@
+{"type":"user","cwd":"/workspace/other","message":{"role":"user","content":"Foreign Claude marker"}}
+{"type":"assistant","cwd":"/workspace/other","message":{"role":"assistant","content":"Foreign Claude response"}}

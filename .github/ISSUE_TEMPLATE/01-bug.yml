@@ -21,6 +21,8 @@ body:
       options:
         - Claude Code
         - Codex
+        - Cursor
+        - OMP
         - Other
     validations:
       required: true
@@ -28,8 +30,8 @@ body:
     id: harness-version
     attributes:
       label: Harness version
-      description: Run `claude --version` or `codex --version`. Name the host here too if you chose Other.
-      placeholder: 2.1.280 (Claude Code)
+      description: Run `claude --version`, `codex --version`, `agent --version`, or `omp --version`. Name the host here too if you chose Other.
+      placeholder: 2.4.0 (Cursor)
     validations:
       required: true
   - type: input
@@ -51,7 +53,7 @@ body:
     attributes:
       label: Install method
       options:
-        - Plugin
+        - Plugin/Marketplace
         - scripts/link-skills.sh
   - type: textarea
     id: prompt

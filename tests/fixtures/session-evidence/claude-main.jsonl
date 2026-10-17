@@ -1,0 +1,3 @@
+{"type":"user","cwd":"/workspace/project","message":{"role":"user","content":"Claude user marker"}}
+{"type":"assistant","cwd":"/workspace/project","message":{"role":"assistant","content":"Claude assistant marker"}}
+{"type":"user","cwd":"/workspace/project","message":{"role":"user","content":[{"type":"tool_result","content":"Claude failed tool","is_error":true}]}}

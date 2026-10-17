@@ -10,7 +10,7 @@ A prototype is **throwaway code that answers a question**. The question decides 
 
 ## Pick a branch
 
-Identify which question is being answered, using the user's prompt, the surrounding code, or by asking if the user is around (if your harness has a multiple-choice question tool, such as `AskUserQuestion` in Claude Code, ask through it with the two branches as the options):
+Identify which question is being answered from the user's prompt or surrounding code. If it remains ambiguous and the user is available, ask through the host's live multiple-choice capability, following its schema, or use chat when no such capability is usable:
 
 - **"Does this logic / state model feel right?"** → [LOGIC.md](LOGIC.md). Build a single shareable HTML file (free-play buttons plus tabbed guided walkthroughs) that pushes the state machine through cases that are hard to reason about on paper, and that a non-developer can drive.
 - **"What should this look like?"** → [UI.md](UI.md). Generate several radically different UI variations on a single route, switchable via a URL search param and a floating bottom bar.

@@ -14,7 +14,7 @@ license: MIT
 
 Improve code structure without changing behavior. Works at three scopes: **project**, **file**, or **method**. Starts by assessing whether refactoring is even warranted: if the code is already clean, say so and stop.
 
-**Refactoring vs architecture:** this skill handles code-level improvements: complexity, duplication, naming, dead code, method extraction. If the assessment shows that the real problem is module boundaries, coupling between packages, or shallow modules that need deepening, say so. That is an architecture problem this skill won't fix: tell the user to run `/improve-architecture` (`$improve-architecture` in Codex).
+**Refactoring vs architecture:** this skill handles code-level improvements: complexity, duplication, naming, dead code, method extraction. If the assessment shows that the real problem is module boundaries, coupling between packages, or shallow modules that need deepening, say so. That is an architecture problem this skill won't fix: tell the user to run `/improve-architecture` in Claude linked installs or Cursor, `/supermatt:improve-architecture` from the Claude plugin, `$improve-architecture` in Codex, or `/skill:improve-architecture` in OMP.
 
 ## Philosophy
 
@@ -97,7 +97,7 @@ A finding that removes an indirection (a function where a value would do, a para
 
 **User override:** if the user provides a specific reason to refactor code rated Clean (e.g., "I know it looks fine but I want to extract this into smaller functions"), proceed with their request, but scope the changes strictly to what they asked for. Don't expand into a broader refactoring.
 
-**Architecture signal:** if the assessment shows problems that are really about module boundaries (tightly coupled packages, shallow modules, missing abstractions at the architectural level), say so: refactoring code inside a badly-bounded module won't fix the real problem. Tell the user to run `/improve-architecture` (`$improve-architecture` in Codex).
+**Architecture signal:** if the assessment shows problems that are really about module boundaries (tightly coupled packages, shallow modules, missing abstractions at the architectural level), say so: refactoring code inside a badly-bounded module won't fix the real problem. Tell the user to run `/improve-architecture` in Claude linked installs or Cursor, `/supermatt:improve-architecture` from the Claude plugin, `$improve-architecture` in Codex, or `/skill:improve-architecture` in OMP.
 
 ## Step 3: Plan
 
@@ -148,7 +148,7 @@ For the riskiest phase: [how to undo it]
 
 **Key principle:** the target state should have **less or equal** total code. If your plan adds net lines without removing complexity, reconsider. "Better organized but more code" is not a win: it's more entropy.
 
-Present the plan for approval (in Claude Code, through `ExitPlanMode`) and proceed only after approval.
+Present the plan through the host's native approval mechanism when exposed, otherwise in chat. Proceed only after explicit approval.
 
 ## Step 3.5: Verify test coverage
 
@@ -156,7 +156,7 @@ Present the plan for approval (in Claude Code, through `ExitPlanMode`) and proce
 
 1. Search for test files covering the target code (look for test files matching the module/class name, grep for the function name in test directories).
 2. If tests exist, note which behaviors they cover. Proceed to Step 4.
-3. If tests are missing or sparse, **stop and tell the user.** Refactoring without tests risks silently changing business logic. Ask whether to write characterization tests first or proceed without them. To write them, call the Skill tool with "tdd" and follow its characterization tests, in their own `test:` commit.
+3. If tests are missing or sparse, **stop and tell the user.** Refactoring without tests risks silently changing business logic. Ask whether to write characterization tests first or proceed without them. To write them, load and follow the `tdd` skill through the host's skill mechanism and use its characterization tests in their own `test:` commit.
 
 Judge coverage over the code you are about to change, not over the repository. A repo at 85% overall tells you nothing if the target sits in the untested 15%.
 

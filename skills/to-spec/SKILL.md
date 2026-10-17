@@ -8,7 +8,7 @@ license: MIT
 
 This skill takes the current conversation context and codebase understanding and produces a spec. Synthesize what you already know instead of re-grilling the idea: you ask the user only the seam check in step 2 and any step 4 finding that needs a decision.
 
-Read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md` first. If either is missing, tell the user to run `/setup-supermatt-skills` (`$setup-supermatt-skills` in Codex).
+Read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md` first. If either is missing, tell the user to run `/setup-supermatt-skills` in Claude linked installs or Cursor, `/supermatt:setup-supermatt-skills` from the Claude plugin, `$setup-supermatt-skills` in Codex, or `/skill:setup-supermatt-skills` in OMP.
 
 If the user passes a reference, fetch it with the tracker doc's **Read an issue** command. For a `wayfinder` map, the decisions live in one of two places. When the map names a written destination (a spec or ADRs a ticket already assembled), read that destination: it is the decision record, and you fetch a linked ticket only where the destination is silent. Otherwise fetch every ticket its **Decisions so far** section links: those tickets hold the decisions the spec collapses into a plan.
 

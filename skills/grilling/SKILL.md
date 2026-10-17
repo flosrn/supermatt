@@ -12,12 +12,14 @@ Every choice question includes the smallest option: do nothing, reuse what exist
 
 ## Asking questions
 
-Ask in the main conversation through the harness's native question tool whenever it is available, permitted in the current mode, and can represent the question:
+Ask in the main conversation through the host's live question capability when it is available, permitted in the current mode, and can represent the question:
 
-- **Codex:** use `request_user_input` when usable; otherwise use `request_user_input_async` if exposed and permitted. Follow the live tool schema: `request_user_input` accepts at most three questions with two or three options each. A skill does not enable a tool or change the harness's mode.
-- **Claude Code:** use `AskUserQuestion`, following its live schema and limits.
+- **Claude Code:** `AskUserQuestion`.
+- **Codex:** `request_user_input`, or `request_user_input_async` when that is the exposed permitted form.
+- **Cursor:** its ask-question capability.
+- **OMP:** `ask`.
 
-Put the recommended option first, mark it as recommended as the tool requires, and describe each option's tradeoff. Keep each question's Q-number in its prompt and a stable question id where supported. Use the tool's built-in custom-answer field rather than adding an `Other` option. Ask each question the native tool can represent through it, even when another question in the round needs chat. An open question can use a native tool that supports free-text-only questions; otherwise ask it in chat rather than inventing choices to fit a schema. When no native question tool is usable, use chat.
+Follow the live schema instead of copying another host's field names or limits. Put the recommended option first, mark it as recommended when the schema supports that, and describe each option's tradeoff. Keep each question's Q-number in its prompt and a stable question id where supported. Use the tool's built-in custom-answer field rather than adding an `Other` option. Ask each question the native tool can represent through it, even when another question in the round needs chat. An open question can use a native tool that supports free-text-only questions; otherwise ask it in chat. When no native question capability is usable, use chat.
 
 Wait for the user's actual answers before dependent work, the next round, or confirmation of shared understanding. An asynchronous question call returning is not an answer: continue only independent exploration while its reply is pending. A preselected option, timeout, cancellation, or unanswered question leaves that decision open.
 
