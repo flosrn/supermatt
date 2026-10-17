@@ -149,6 +149,44 @@ test("a PR named by number is bound to its own head branch", async (t) => {
   assert.deepEqual([resumed.action, resumed.pr, resumed.stateFile], ["reuse", 30, named.stateFile]);
 });
 
+test("two PRs with the same head branch name keep separate records, and a branch resume follows the PR named last", async (t) => {
+  const dir = stateDir(t);
+  const h = host({ prs: [
+    { number: 40, url: "https://github.com/acme/app/pull/40", state: "OPEN", headRefName: "feat/x" },
+    { number: 41, url: "https://github.com/acme/app/pull/41", state: "OPEN", headRefName: "feat/x" },
+  ] });
+  const a = open(base(dir, h.gh, { branch: undefined, pr: 40, duration: "2h" }));
+  spend(a.stateFile, "repair");
+  spend(a.stateFile, "repair");
+  handled(a.stateFile, { id: "C1", fingerprint: "f1", disposition: "fixed" });
+
+  const b = open(base(dir, h.gh, { branch: undefined, pr: 41, now: NOW + 600_000 }));
+  assert.notEqual(b.stateFile, a.stateFile);
+  assert.deepEqual([b.resumed, b.budgets.repair_cycles_left], [false, 2]);
+
+  const again = open(base(dir, h.gh, { branch: undefined, pr: 40, duration: "8h", now: NOW + 1200_000 }));
+  assert.deepEqual([again.stateFile, again.resumed, again.budgets.repair_cycles_left, again.budgets.deadline_at],
+    [a.stateFile, true, 0, "2026-10-14T14:00:00.000Z"]);
+  assert.equal(JSON.parse(readFileSync(again.stateFile, "utf8")).handled.C1.fingerprint, "f1");
+
+  // Without a PR number, the branch resumes the PR it was bound to last, and a write through
+  // the branch's discovery file lands in that PR's record.
+  assert.deepEqual(open(base(dir, h.gh)).stateFile, again.stateFile);
+});
+
+test("a branch's record before its PR exists moves to that PR's record when bound", async (t) => {
+  const dir = stateDir(t);
+  const h = host();
+  const first = open(base(dir, h.gh, { duration: "1h" }));
+  h.prs.push({ number: 7, url: "https://github.com/acme/app/pull/7", state: "OPEN", headRefName: "feat/x" });
+  const bound = bind(first.stateFile, 7);
+  assert.notEqual(bound, first.stateFile);
+  assert.equal(spend(first.stateFile, "repair").repair_cycles_left, 1, "an earlier FILE still writes to the bound record");
+  const resumed = open(base(dir, h.gh, { branch: undefined, pr: 7 }));
+  assert.deepEqual([resumed.stateFile, resumed.resumed, resumed.budgets.repair_cycles_left, resumed.budgets.deadline_at],
+    [bound, true, 1, "2026-10-14T13:00:00.000Z"]);
+});
+
 test("branches whose names differ only in punctuation keep separate state", async (t) => {
   const dir = stateDir(t);
   const h = host({ prs: [{ number: 3, url: "https://github.com/acme/app/pull/3", state: "OPEN", headRefName: "feat/x" }] });

@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -14,13 +14,15 @@ const ghTimeoutMs = () => Number(process.env.SUPERMATT_GH_TIMEOUT_MS ?? 120_000)
 // echoes it, and an expected refusal (rulesets on a free private repository) read as a failure.
 const realGh = (args) => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024, timeout: ghTimeoutMs(), killSignal: "SIGKILL" });
 
-// A readable slug for people, plus a hash of the exact repo and branch: two branches whose
-// names slug alike ("feat/x", "feat-x") must never share state.
-const fileFor = (dir, repo, branch) => {
-  const slug = `${repo}#${branch}`.replace(/[^A-Za-z0-9._-]+/g, "-");
-  const exact = createHash("sha256").update(`${repo}\0${branch}`).digest("hex").slice(0, 12);
-  return join(dir, `${slug}-${exact}.json`);
-};
+// A readable slug for people, plus a hash of the exact key: two branches whose names slug
+// alike ("feat/x", "feat-x") must never share state. A bound PR's record is keyed by the PR,
+// since two PRs can share a head branch name; the branch's file serves discovery before a
+// PR exists, and afterwards names the PR the branch was bound to last. A branch name holds
+// no NUL, so the two hash inputs never meet.
+const named = (dir, label, exact) =>
+  join(dir, `${label.replace(/[^A-Za-z0-9._-]+/g, "-")}-${createHash("sha256").update(exact).digest("hex").slice(0, 12)}.json`);
+const branchFile = (dir, repo, branch) => named(dir, `${repo}#${branch}`, `${repo}\0${branch}`);
+const prFile = (dir, repo, pr) => named(dir, `${repo}#pr-${pr}`, `${repo}\0pr\0${pr}`);
 
 function load(file) {
   return JSON.parse(readFileSync(file, "utf8"));
@@ -137,9 +139,12 @@ function locked(file, work) {
   }
 }
 
+// A branch file that names its bound PR forwards every write to that PR's record, so a FILE
+// kept from before the bind still writes where the PR's state lives.
 function update(file, change) {
   return locked(file, () => {
     const state = load(file);
+    if (state.bound_pr != null) return update(prFile(dirname(file), state.repo, state.bound_pr), change);
     const result = change(state);
     save(file, state);
     return result;
@@ -182,35 +187,52 @@ function fresh({ repo, branch, now, duration }) {
 const viewPr = (gh, repo, number) =>
   JSON.parse(gh(["pr", "view", String(number), "--repo", repo, "--json", "number,url,state,headRefName"]));
 
+// The open PR this branch's owner or the viewer pushed, or null when there is none.
+function discover(gh, repo, branch) {
+  // `--head` matches the branch name only, so a fork's PR with the same name would match.
+  // This branch's PR is pushed by the repository's owner or by the viewer, from a fork.
+  const owners = new Set([repo.split("/")[0], gh(["api", "user", "--jq", ".login"]).trim()]);
+  const openPrs = JSON.parse(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "number,url,state,headRefName,headRepositoryOwner"]))
+    .filter((p) => owners.has(p.headRepositoryOwner?.login));
+  if (openPrs.length > 1) throw new Error(`several open PRs for ${branch}: ${openPrs.map((p) => p.number).join(", ")}`);
+  return openPrs[0]?.number ?? null;
+}
+
+// Binds a branch to a PR: the PR's own record when it has one, else `seed` (the branch's
+// record from before the PR existed, or a fresh one). The branch file then names the PR.
+// The caller holds the branch file's lock; locks are always taken branch file first.
+function attach(discovery, seed, pr) {
+  const stateFile = prFile(dirname(discovery), seed.repo, pr);
+  return locked(stateFile, () => {
+    const existing = existsSync(stateFile) ? load(stateFile) : null;
+    const state = existing ?? { ...seed, pr };
+    save(stateFile, state);
+    save(discovery, { version: 1, repo: seed.repo, branch: seed.branch, bound_pr: pr });
+    return { stateFile, state, existing: existing != null };
+  });
+}
+
 // Finds the PR to babysit, or says one must be created. A PR once bound stays bound:
 // when it is closed or merged the outcome is closed, never a second PR for the branch.
-// The monitoring deadline and recovery counters are set when the state is created; a
-// resume keeps them, whatever duration it passes. Naming a different PR starts a new state.
+// The monitoring deadline and recovery counters are set when a PR's record is created; a
+// resume keeps them, whatever duration it passes. Each PR keeps its own record, so naming
+// another PR with the same head branch name never touches the first one's.
 export function open({ dir, gh = realGh, repo, branch, pr = null, duration = DEFAULT_DURATION, now = Date.now() }) {
   if (pr != null) branch = viewPr(gh, repo, pr).headRefName;
   mkdirSync(dir, { recursive: true });
-  const stateFile = fileFor(dir, repo, branch);
-  return locked(stateFile, () => {
-    let state = existsSync(stateFile) ? load(stateFile) : null;
-    const resumed = state != null && (pr == null || state.pr == null || state.pr === pr);
-    if (!resumed) state = fresh({ repo, branch, now, duration });
-    if (pr != null) state.pr = pr;
-
-    let action;
-    if (state.pr != null) {
-      action = viewPr(gh, repo, state.pr).state === "OPEN" ? "reuse" : "closed";
-    } else {
-      // `--head` matches the branch name only, so a fork's PR with the same name would match.
-      // This branch's PR is pushed by the repository's owner or by the viewer, from a fork.
-      const owners = new Set([repo.split("/")[0], gh(["api", "user", "--jq", ".login"]).trim()]);
-      const openPrs = JSON.parse(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "number,url,state,headRefName,headRepositoryOwner"]))
-        .filter((p) => owners.has(p.headRepositoryOwner?.login));
-      if (openPrs.length > 1) throw new Error(`several open PRs for ${branch}: ${openPrs.map((p) => p.number).join(", ")}`);
-      if (openPrs.length === 1) state.pr = openPrs[0].number;
-      action = openPrs.length === 1 ? "reuse" : "create";
+  const discovery = branchFile(dir, repo, branch);
+  return locked(discovery, () => {
+    const found = existsSync(discovery) ? load(discovery) : null;
+    const unbound = found?.bound_pr == null ? found : null;
+    pr ??= found?.bound_pr ?? discover(gh, repo, branch);
+    if (pr == null) {
+      const state = unbound ?? fresh({ repo, branch, now, duration });
+      save(discovery, state);
+      return { action: "create", pr: null, stateFile: discovery, resumed: unbound != null, budgets: budgets(state, now) };
     }
-    save(stateFile, state);
-    return { action, pr: state.pr, stateFile, resumed, budgets: budgets(state, now) };
+    const { stateFile, state, existing } = attach(discovery, unbound ?? fresh({ repo, branch, now, duration }), pr);
+    const action = viewPr(gh, repo, pr).state === "OPEN" ? "reuse" : "closed";
+    return { action, pr, stateFile, resumed: existing || unbound != null, budgets: budgets(state, now) };
   });
 }
 
@@ -228,11 +250,16 @@ export function spend(file, kind, { note = "", now = Date.now() } = {}) {
   });
 }
 
+// Binds the PR just created to the branch's record and returns the PR's state file.
 export function bind(file, pr) {
   if (!Number.isInteger(pr)) throw new Error("bind needs --pr N");
-  update(file, (state) => {
-    if (state.pr != null && state.pr !== pr) throw new Error(`state already bound to PR ${state.pr}`);
-    state.pr = pr;
+  return locked(file, () => {
+    const state = load(file);
+    const bound = state.bound_pr ?? state.pr;
+    if (bound != null && bound !== pr) throw new Error(`state already bound to PR ${bound}`);
+    if (state.bound_pr != null) return prFile(dirname(file), state.repo, pr);
+    if (state.pr != null) return file;
+    return attach(file, state, pr).stateFile;
   });
 }
 
@@ -585,7 +612,7 @@ function main(argv) {
       if (pr == null && !branch) throw new Error("detached HEAD: check out the PR branch or pass --pr");
       return open({ dir, repo, branch, pr, duration: values.duration });
     }
-    case "bind": bind(values.state, pr); return { bound: pr };
+    case "bind": return { bound: pr, stateFile: bind(values.state, pr) };
     case "snapshot": return snapshot({ file: values.state });
     case "handled": handled(values.state, values); return { handled: values.id };
     case "ci-result": ciResult(values.state, values); return { recorded: values.key };
