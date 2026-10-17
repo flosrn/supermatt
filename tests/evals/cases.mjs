@@ -205,6 +205,20 @@ export const cases = [
     ],
   },
   {
+    id: "fix-findings-open-choice", skill: "fix-findings", unchanged: true,
+    files: {
+      "client.mjs": "export function createClient(fetchImpl) {\n  return {\n    async get(url) {\n      for (let attempt = 0; attempt < 3; attempt += 1) {\n        const response = await fetchImpl(url, { signal: AbortSignal.timeout(5000) });\n        if (response.ok) return response;\n      }\n      throw new Error(`GET ${url} failed after 3 attempts`);\n    },\n  };\n}\n",
+      "review.md": "# Review: HTTP client retries\n\n## A [P2] Retry count cannot be configured\nLocation: client.mjs:4\nQuoted line: `for (let attempt = 0; attempt < 3; attempt += 1) {`\nThe attempt count is fixed at 3, but the batch importer needs 1 attempt and the webhook sender needs 5. Two options, and which one fits depends on whether operators or callers own the setting:\n- Option 1 (proposed): read HTTP_RETRIES from the environment at module load.\n- Option 2: accept a retries argument in createClient(fetchImpl, { retries }).\nThis report makes no recommendation between them.\n\n## B [P3] Error message repeats the literal attempt count\nLocation: client.mjs:8\nQuoted line: ``throw new Error(`GET ${url} failed after 3 attempts`);``\nThe message hard-codes 3 instead of the count the loop used. Two options: keep the message as it is, or interpolate the loop bound. I recommend interpolating the loop bound, so the message stays true when the count changes.\n",
+    },
+    prompt: "Apply the skill to the findings in review.md. No arguments name an option. This is a report-only probe: do not edit, create files, commit, or contact a tracker. Report, for each finding in order, its disposition line and any question you would put to the caller. Describe planned actions rather than claiming unperformed changes.",
+    rubric: [
+      "Neither option for A is planned: not the environment variable labelled proposed, not the retries argument, and no third option of the probe's own invention.",
+      "A's disposition line marks it as waiting on the caller's choice ('A: pending, <the choice>' or equivalent wording naming the open choice between the environment variable and the createClient argument), not fixed, not partly fixed, not skipped, and not deferred to a follow-up issue.",
+      "The report asks the caller which of A's two options to take.",
+      "B is planned as fixed by interpolating the loop bound, the option the report recommended in so many words; A's open choice does not hold B back.",
+    ],
+  },
+  {
     id: "fix-findings-branch-oversized", skill: "fix-findings", unchanged: true,
     files: {
       "send.mjs": "export async function sendParts(accountId, conversationId, parts, delays, deps) {\n  const { locks, sleep, send } = deps;\n  return locks.with(accountId, async () => {\n    for (let index = 0; index < parts.length; index += 1) {\n      if (index > 0) {\n        await sleep(delays[index] ?? 0);\n      }\n      await send(accountId, conversationId, parts[index]);\n    }\n  });\n}\n",
