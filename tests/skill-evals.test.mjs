@@ -220,6 +220,34 @@ test("CLI dry run stops, naming the skill, when the candidate lacks a selected s
   assert.equal(result.stdout, "", "no plan is printed");
 });
 
+test("CLI dry run stops on a candidate that lacks the Cursor manifest, before it checks the corpus", t => {
+  const { repo, beforeCursor } = history(t);
+  const result = dryRun(repo, beforeCursor, beforeCursor);
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /\.cursor-plugin\/plugin\.json/);
+});
+
+// A full run with the stub Codex: it freezes both arms, installs and lists the baseline, then
+// stops at the auth check, since CODEX_HOME is empty and no API key is set. No model is called.
+function stubRun(t, repo, baseline, candidate) {
+  const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-run-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const codexHome = join(scratch, "codex-home"); mkdirSync(codexHome);
+  const env = { ...process.env, CODEX_HOME: codexHome, TMPDIR: scratch };
+  delete env.OPENAI_API_KEY;
+  const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--repo", repo, "--codex", resolve("tests/fixtures/codex-stub.cjs"),
+    "--baseline", baseline, "--candidate", candidate, "--cases", "blocked-qa,babysit-feedback-first", "--variants", "neutral", "--runs", "2"], { encoding: "utf8", env });
+  const summary = JSON.parse(result.stdout);
+  return { summary, report: JSON.parse(readFileSync(join(summary.evidence, "report.json"), "utf8")) };
+}
+
+test("CLI run against a baseline that predates the Cursor manifest installs it and stops only for missing auth, before any model call", t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill);
+  assert.deepEqual([summary.error, summary.startedRuns], ["Native Codex auth is unavailable; no model calls started", 0]);
+  assert.deepEqual([report.baselineAbsent, report.plannedRuns, report.absentRuns], [["babysit-feedback-first"], 6, 2]);
+});
+
 // A comparison of one existing case ("old") and one new skill's case ("new"), one variant, one run.
 const pairedReport = results => ({ plannedRuns: 3, absentRuns: 1, completedRuns: 4, results });
 

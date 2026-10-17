@@ -195,7 +195,7 @@ async function main() {
       collect(JSON.parse(readFileSync(auth, "utf8")));
     }
     for (const [arm, revision] of [["baseline", values.baseline], ["candidate", values.candidate]]) {
-      const carrier = join(work, `${arm}-carrier`), expected = manifest(carrier);
+      const carrier = join(work, `${arm}-carrier`), expected = manifests[arm];
       const home = join(work, `${arm}-home`), env = privateEnvironment(home), cwd = join(work, `${arm}-fixture`);
       mkdirSync(cwd);
       await installPlugin(codex, carrier, { cwd, env });
