@@ -287,6 +287,14 @@ test("a failed job the jobs API does not list is never replaced by a newer same-
   assert.deepEqual(look().checks.failing.map((c) => c.key), ["check-run:1"]);
 });
 
+test("rerunning the one failed job of two same-name jobs clears the failure, and only the rerun attempt is counted", async (t) => {
+  const { look } = babysat(t, { checks: [
+    checkRun("test", "SUCCESS", 1, 10, 1, 1), checkRun("test", "FAILURE", 2, 10, 1, 1), checkRun("test", "SUCCESS", 3, 10, 1, 2),
+  ] });
+  const { checks } = look();
+  assert.deepEqual([checks.failing.map((c) => c.key), checks.passing, checks.total], [[], 1, 1]);
+});
+
 test("an external status follows its latest state", async (t) => {
   const { live, look } = babysat(t, { checks: [statusContext("ci/ext", "PENDING", "2026-10-14T12:00:00Z")] });
   assert.deepEqual(look().checks.running, ["ci/ext"]);
