@@ -315,19 +315,58 @@ function threadComments(gh, thread) {
 }
 
 // A check is identified by its producer, not its display name: a status and a check run,
-// or jobs of two workflows, can share a name and must each pass. Within one producer the
-// newest run (a rerun) replaces older ones.
+// or jobs of two workflows, can share a name and must each pass. A status and a non-Actions
+// check run keep their newest report; Actions jobs are chosen by `actionsJobs`.
 function check(node) {
   if (node.__typename === "CheckRun") {
     const status = node.status !== "COMPLETED" ? "pending" : ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(node.conclusion) ? "pass" : "fail";
     const suite = node.checkSuite ?? {};
-    const producer = suite.workflowRun?.workflow?.databaseId != null ? `workflow:${suite.workflowRun.workflow.databaseId}` : `app:${suite.app?.databaseId}`;
+    const workflow = suite.workflowRun?.workflow?.databaseId;
+    const producer = workflow != null ? `workflow:${workflow}` : `app:${suite.app?.databaseId}`;
     return { name: node.name, identity: `check-run:${producer}:${node.name}`, order: node.databaseId, key: `check-run:${node.databaseId}`,
-      status, conclusion: node.conclusion, url: node.detailsUrl, run_id: suite.workflowRun?.databaseId ?? null };
+      status, conclusion: node.conclusion, url: node.detailsUrl, run_id: suite.workflowRun?.databaseId ?? null, actions: workflow != null };
   }
   const status = node.state === "SUCCESS" ? "pass" : ["PENDING", "EXPECTED"].includes(node.state) ? "pending" : "fail";
   return { name: node.context, identity: `status:${node.context}`, order: Date.parse(node.createdAt), key: `status:${node.context}:${node.createdAt}`,
-    status, conclusion: node.state, url: node.targetUrl, run_id: null };
+    status, conclusion: node.state, url: node.targetUrl, run_id: null, actions: false };
+}
+
+// The attempt of every job of one workflow run, by job id (an Actions job id is its check run id).
+function attempts(gh, repo, run) {
+  const out = gh(["api", `repos/${repo}/actions/runs/${run}/jobs?filter=all&per_page=100`, "--paginate", "--jq", '.jobs[] | "\\(.id) \\(.run_attempt)"']);
+  return new Map(out.split("\n").filter(Boolean).map((line) => line.split(" ").map(Number)));
+}
+
+// Jobs of one workflow run can share a display name and must each pass, and a rerun reports
+// a new attempt of the same run under the same names. Per workflow and name, the newest
+// run's newest attempt stands, every job of it. An older attempt's failures are replaced only
+// when the newest attempt has at least as many jobs of that name: a rerun of one of several
+// same-name failed jobs cannot say which it replaced, so those failures stay.
+function actionsJobs(gh, repo, runs) {
+  const attempt = new Map();
+  for (const run of new Set(runs.map((c) => c.run_id))) for (const [id, n] of attempts(gh, repo, run)) attempt.set(id, n);
+  const groups = new Map();
+  for (const c of runs) {
+    // A job the jobs API does not list has no attempt evidence: it stands alone, never replaced.
+    const n = attempt.get(Number(c.key.slice("check-run:".length)));
+    const group = n == null ? c.key : c.identity;
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push({ ...c, attempt: n ?? null, execution: [c.run_id, n ?? 0] });
+  }
+  const kept = [];
+  for (const jobs of groups.values()) {
+    const newer = (a, b) => a.execution[0] - b.execution[0] || a.execution[1] - b.execution[1];
+    const newest = jobs.reduce((a, b) => (newer(b, a) > 0 ? b : a));
+    const current = jobs.filter((j) => newer(j, newest) === 0);
+    kept.push(...current);
+    const older = new Map();
+    for (const j of jobs.filter((x) => newer(x, newest) < 0 && x.status === "fail")) {
+      const at = j.execution.join(":");
+      older.set(at, [...(older.get(at) ?? []), j]);
+    }
+    for (const failed of older.values()) if (failed.length > current.length) kept.push(...failed);
+  }
+  return kept;
 }
 
 // Rulesets on a private repository need a paid plan; without one GitHub answers 403 with
@@ -351,10 +390,13 @@ export function observe(gh, repo, number) {
   const pr = pullRequestOf(data);
   const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts ?? { nodes: [], pageInfo: { hasNextPage: false } };
   if (contexts.pageInfo.hasNextPage) throw new Error("more than 100 checks on the head; read them with gh pr checks");
+  const reported = contexts.nodes.map(check);
   const latest = new Map();
-  for (const c of contexts.nodes.map(check)) {
-    if (!(latest.get(c.identity)?.order >= c.order)) latest.set(c.identity, c);
+  for (const c of reported.filter((x) => !x.actions)) {
+    if (!(latest.get(c.identity)?.order >= c.order)) latest.set(c.identity, { ...c, attempt: null });
   }
+  const checks = [...latest.values(), ...actionsJobs(gh, repo, reported.filter((x) => x.actions))]
+    .map(({ identity, order, actions, execution, ...c }) => c);
   const rules = branchRules(gh, repo, pr.baseRefName);
   const required = new Set(pr.baseRef?.refUpdateRule?.requiredStatusCheckContexts ?? []);
   for (const rule of rules) if (rule.type === "required_status_checks") for (const c of rule.parameters.required_status_checks) required.add(c.context);
@@ -375,7 +417,7 @@ export function observe(gh, repo, number) {
   return {
     number: pr.number, url: pr.url, state: pr.state, draft: pr.isDraft, head_ref: pr.headRefName, head: pr.headRefOid,
     base_ref: pr.baseRefName, base: pr.baseRef?.target?.oid ?? null, mergeable: pr.mergeable, merge_state: pr.mergeStateStatus,
-    review_decision: pr.reviewDecision, checks: [...latest.values()], required: [...required], feedback,
+    review_decision: pr.reviewDecision, checks, required: [...required], feedback,
   };
 }
 

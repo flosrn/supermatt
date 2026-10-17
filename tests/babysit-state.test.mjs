@@ -16,8 +16,8 @@ function stateDir(t) {
   return dir;
 }
 
-const checkRun = (name, conclusion, databaseId, runId = databaseId * 10, workflow = 1) => ({
-  __typename: "CheckRun", databaseId, name, status: conclusion ? "COMPLETED" : "IN_PROGRESS", conclusion,
+const checkRun = (name, conclusion, databaseId, runId = databaseId * 10, workflow = 1, attempt = 1) => ({
+  __typename: "CheckRun", databaseId, name, status: conclusion ? "COMPLETED" : "IN_PROGRESS", conclusion, attempt,
   detailsUrl: `https://github.com/acme/app/actions/runs/${runId}/job/${databaseId}`,
   checkSuite: { app: { databaseId: 15368 }, workflowRun: { databaseId: runId, workflow: { databaseId: workflow } } },
 });
@@ -79,6 +79,11 @@ function host({ prs = [], live = null } = {}) {
       return JSON.stringify({ data: { viewer: { login: "me" }, repository: { pullRequest } } });
     }
     if (group === "api" && verb === "user") return "me\n";
+    // The Actions jobs API: each job of a workflow run, every attempt, with its attempt number.
+    const jobs = /^repos\/acme\/app\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100$/.exec(verb);
+    if (group === "api" && jobs) {
+      return live.checks.filter((c) => c.checkSuite?.workflowRun?.databaseId === Number(jobs[1])).map((c) => `${c.databaseId} ${c.attempt}\n`).join("");
+    }
     if (group === "api" && verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}`) {
       if (live.rules instanceof Error) throw live.rules;
       return JSON.stringify(live.rules);
@@ -206,6 +211,27 @@ test("two workflows with a job of the same name are two checks; a rerun replaces
     const seen = look();
     assert.deepEqual([seen.checks.passing, seen.checks.failing.map((c) => c.run_id)], [1, [30]]);
   }
+});
+
+test("two jobs of one workflow run that share a name are two checks: a passing one cannot hide a failing one", async (t) => {
+  for (const order of [[0, 1], [1, 0]]) {
+    const runs = [checkRun("test", "FAILURE", 1, 10), checkRun("test", "SUCCESS", 2, 10)];
+    const { look } = babysat(t, { checks: order.map((i) => runs[i]), mergeStateStatus: "UNSTABLE" });
+    const seen = look(NOW);
+    assert.deepEqual([seen.checks.passing, seen.checks.failing.map((c) => c.key)], [1, ["check-run:1"]]);
+    assert.notEqual(look(NOW + 400_000).outcome, "ready");
+  }
+});
+
+test("a rerun attempt of a workflow run replaces the attempt before it, by attempt and not by job id", async (t) => {
+  // Attempt 2 reran the failed job; a lower job id in the newer attempt still wins.
+  const { look } = babysat(t, { checks: [checkRun("test", "FAILURE", 5, 10, 1, 1), checkRun("test", "SUCCESS", 4, 10, 1, 2)] });
+  const seen = look();
+  assert.deepEqual([seen.checks.passing, seen.checks.failing.length], [1, 0]);
+
+  // Two same-name jobs failed and only one was rerun: which one is unknowable, so both failures stand.
+  const partial = babysat(t, { checks: [checkRun("test", "FAILURE", 1, 10, 1, 1), checkRun("test", "FAILURE", 2, 10, 1, 1), checkRun("test", "SUCCESS", 3, 10, 1, 2)] });
+  assert.deepEqual(partial.look().checks.failing.map((c) => c.key), ["check-run:1", "check-run:2"]);
 });
 
 test("an external status follows its latest state", async (t) => {
