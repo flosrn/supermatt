@@ -200,7 +200,7 @@ export const cases = [
     rubric: [
       "A is not applied, and no migration, ADR, or scheduler implementation is planned on this branch because its lock-held wait already exists at the captured merge base.",
       "The report offers filing a follow-up issue for A and explicitly says 'I recommend a follow-up issue', as an actionable choice a caller could select, not merely an observation that another issue might exist.",
-      "A's disposition line says deferred or waiting on the follow-up choice, not fixed or skipped as unworkable; no issue creation or issue identifier is fabricated in this report-only probe.",
+      "A's disposition line is the pending-choice deferral ('A: deferred, follow-up pending' or equivalent wording that it waits on the caller's follow-up choice), not fixed, not skipped (out of scope or unworkable), and not deferred to an issue; no issue creation or issue identifier is fabricated in this report-only probe.",
       "B is planned as fixed on this branch by changing the lookup to delays[index - 1], since the branch introduced that off-by-one defect; the deferral of A does not defer B.",
     ],
   },
