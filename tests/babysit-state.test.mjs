@@ -846,3 +846,30 @@ test("CLI snapshot refuses a branch with no bound PR and asks for a bind", (t) =
   const { stateFile } = open(base(stateDir(t), host().gh));
   refuses(t, stateFile, ["snapshot"], /bind/);
 });
+
+test("CLI bind refuses a second PR for a branch already bound to another", (t) => {
+  const h = host();
+  const { stateFile } = open(base(stateDir(t), h.gh));
+  h.prs.push({ number: 7, url: "https://github.com/acme/app/pull/7", state: "OPEN", headRefName: "feat/x" });
+  bind(stateFile, 7);
+  refuses(t, stateFile, ["bind", "--pr", "8"], /\b7\b/);
+});
+
+test("CLI bind of the PR a record already holds returns that record and writes nothing", (t) => {
+  const { stateFile } = babysat(t);
+  const { bin } = stubGh(t);
+  const before = tree(dirname(stateFile));
+  const again = cli(bin, ["bind", "--state", stateFile, "--pr", "4"], dirname(stateFile));
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(JSON.parse(again.stdout).stateFile, stateFile);
+  assert.deepEqual(tree(dirname(stateFile)), before);
+});
+
+test("a branch's record from before its PR existed keeps its window when open later discovers the PR", (t) => {
+  const dir = stateDir(t);
+  const h = host();
+  open(base(dir, h.gh, { duration: "1h" }));
+  h.prs.push({ number: 7, url: "https://github.com/acme/app/pull/7", state: "OPEN", headRefName: "feat/x" });
+  const found = open(base(dir, h.gh, { duration: "8h", now: NOW + 600_000 }));
+  assert.deepEqual([found.pr, found.resumed, found.budgets.deadline_at], [7, true, "2026-10-14T13:00:00.000Z"]);
+});
