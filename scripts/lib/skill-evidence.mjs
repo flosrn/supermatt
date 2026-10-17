@@ -32,8 +32,10 @@ export function verifyPackages(root) {
   return { claude: claude.name, codex: codex.name, cursor: cursor.name };
 }
 
-export function manifest(root) {
-  const packages = verifyPackages(root);
+// `packaging: false` skips the package manifest checks, for a snapshot that is only measured
+// and never shipped: an older baseline can predate a manifest the current release requires.
+export function manifest(root, { packaging = true } = {}) {
+  const packages = packaging ? verifyPackages(root) : null;
   const entries = files(root);
   const skills = entries.filter(p => /^skills\/[^/]+\/SKILL\.md$/.test(p)).map(path => {
     const body = readFileSync(join(root, path), "utf8");

@@ -84,13 +84,14 @@ async function initializeFixture(root, testCase, env) {
 }
 
 // Freezes both arms, including an uncommitted candidate, into installable carriers under
-// `work`, and returns each arm's manifest.
+// `work`, and returns each arm's manifest. Only the candidate ships, so only it must pass the
+// package manifest checks: a baseline release can predate a manifest required today.
 async function freeze(repo, work) {
   const manifests = {};
   for (const [arm, revision] of [["baseline", values.baseline], ["candidate", values.candidate]]) {
     const source = join(work, `${arm}-source`), carrier = join(work, `${arm}-carrier`);
     await snapshot(repo, revision, source); project(source, carrier);
-    manifests[arm] = manifest(carrier);
+    manifests[arm] = manifest(carrier, { packaging: arm === "candidate" });
     rmSync(source, { recursive: true });
   }
   return manifests;

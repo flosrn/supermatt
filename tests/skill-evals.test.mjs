@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collectState, comparisonStatus, planComparison, absentResult } from "../scripts/lib/skill-evals.mjs";
 import { mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { run, digest, save } from "../scripts/lib/skill-evidence.mjs";
 import { cases } from "./evals/cases.mjs";
 
@@ -178,4 +179,43 @@ test("CLI adjudication rechecks mechanical failures before accepting a review", 
   const checked = JSON.parse(readFileSync(join(root, "adjudicated-report.json")));
   assert.equal(checked.status, "fail");
   assert.equal(checked.results.find(result => result.id === id).status, "fail");
+});
+
+// A repository whose first commit predates the Cursor manifest and the babysit-pr skill, as
+// main did before babysit-pr; the next commit adds the Cursor manifest, the last the skill.
+function history(t) {
+  const repo = mkdtempSync(join(tmpdir(), "supermatt-evals-history-"));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: repo, encoding: "utf8" }).trim();
+  const commit = files => {
+    for (const [path, body] of Object.entries(files)) { mkdirSync(dirname(join(repo, path)), { recursive: true }); writeFileSync(join(repo, path), body); }
+    git("add", "-A"); git("commit", "-qm", "snapshot");
+    return git("rev-parse", "HEAD");
+  };
+  const skillFiles = name => ({ [`skills/${name}/SKILL.md`]: `---\nname: ${name}\n---\n`, [`skills/${name}/agents/openai.yaml`]: "policy:\n  allow_implicit_invocation: true\n" });
+  git("init", "-q", "-b", "main");
+  const beforeCursor = commit({ ".claude-plugin/plugin.json": '{"name":"supermatt"}', ".agents/plugins/marketplace.json": '{"name":"supermatt","plugins":[{"name":"supermatt"}]}', ...skillFiles("qa") });
+  const beforeSkill = commit({ ".cursor-plugin/plugin.json": '{"name":"supermatt"}' });
+  const withSkill = commit(skillFiles("babysit-pr"));
+  return { repo, beforeCursor, beforeSkill, withSkill };
+}
+
+// Plans a qa case and a babysit-pr case, one variant, two runs each.
+const dryRun = (repo, baseline, candidate) => spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--repo", repo,
+  "--baseline", baseline, "--candidate", candidate, "--cases", "blocked-qa,babysit-feedback-first", "--variants", "neutral", "--runs", "2", "--dry-run"], { encoding: "utf8" });
+
+test("CLI dry run against a baseline that predates the Cursor manifest and a new skill plans the new skill as absent there", t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const result = dryRun(repo, beforeCursor, withSkill);
+  assert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(result.stdout);
+  assert.deepEqual([plan.baselineAbsent, plan.plannedRuns], [["babysit-feedback-first"], 6]);
+});
+
+test("CLI dry run stops, naming the skill, when the candidate lacks a selected skill", t => {
+  const { repo, beforeCursor, beforeSkill } = history(t);
+  const result = dryRun(repo, beforeCursor, beforeSkill);
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /babysit-pr/);
+  assert.equal(result.stdout, "", "no plan is printed");
 });
