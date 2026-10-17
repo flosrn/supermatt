@@ -3,19 +3,22 @@
 //
 // prepare <repo> <scratch> <dir>: lists the repository's tracked and untracked
 // (not ignored) paths, classifies each by what the copy actually holds, and
-// write-protects only regular files whose path stays inside the copy. A listed
-// path that is absent from the working tree (an uncommitted deletion) goes to
-// <dir>/deleted.lst; every present path goes to <dir>/sources.lst. A listed
+// write-protects only regular files inside the copy, including a file listed
+// under a symlinked directory that resolves inside the copy, which it protects
+// at its real path so chmod traverses no link. A listed path that is absent
+// from the working tree (an uncommitted deletion) goes to <dir>/deleted.lst;
+// every present path goes to <dir>/sources.lst. A listed
 // symlink, or a path under a symlinked directory, that resolves outside the copy
-// is rejected before any file is touched, since following it would act on files
-// outside the copy.
+// is rejected before any file is touched or any list is written, since following
+// it would act on files outside the copy.
 //
 // verify <repo> <scratch> <dir>: compares each path in sources.lst between the
 // repository and the copy (type, file bytes, link target) and confirms each path
 // in deleted.lst is still absent from the copy. Prints one line per difference.
 //
 // Both lists are NUL-delimited. Exit 0 on success, 1 on a rejected link or a
-// difference, 2 on usage or setup errors.
+// difference, 2 on usage or setup errors (a repository git cannot list, or a
+// manifest verify cannot read).
 import { spawnSync } from "node:child_process";
 import { chmodSync, lstatSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -34,7 +37,14 @@ const lstatOrNull = (path) => {
     throw error;
   }
 };
-const readList = (name) => readFileSync(join(dir, name), "utf8").split("\0").filter(Boolean);
+const readList = (name) => {
+  try {
+    return readFileSync(join(dir, name), "utf8").split("\0").filter(Boolean);
+  } catch (error) {
+    console.error(`Cannot read ${join(dir, name)} (${error.code}): run prepare before verify`);
+    process.exit(2);
+  }
+};
 const writeList = (name, paths) => writeFileSync(join(dir, name), paths.map((path) => `${path}\0`).join(""));
 
 if (mode === "prepare") {
@@ -51,8 +61,7 @@ if (mode === "prepare") {
     try {
       return realpathSync(path);
     } catch {
-      const parent = dirname(path);
-      return parent === path ? path : join(realOrLexical(parent), basename(path));
+      return join(realOrLexical(dirname(path)), basename(path));
     }
   };
 
@@ -75,8 +84,9 @@ if (mode === "prepare") {
       else escaping.push(`${path} -> ${target}`);
     } else {
       sources.push(path);
-      // A regular file whose parent is a real directory of the copy: chmod acts on this file only.
-      if (stat.isFile() && parent === dirname(copied)) protect.push(copied);
+      // The parent is fully resolved inside the copy and the last component is no link,
+      // so chmod on the real path reaches this in-copy file without traversing any link.
+      if (stat.isFile()) protect.push(join(parent, basename(copied)));
     }
   }
   if (escaping.length > 0) {
