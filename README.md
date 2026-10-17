@@ -20,6 +20,9 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+> [!NOTE]
+> This is Flo's fork of [svyatov/supermatt](https://github.com/svyatov/supermatt). Its `main` is upstream `main` plus fixes waiting to go upstream and a few personal patches, titled `(personal patch, not for upstream)`. `git log --first-parent upstream/main..main` lists them. Below is upstream's README, edited only where those commits change a skill.
+
 - **Claude Code and Codex.** Each host installs SuperMatt from its own native plugin marketplace.
 - **41 skills.** 32 for engineering and 9 for productivity, listed below.
 - **A second model reviews your changes.** `code-review` runs every axis twice, once in a sub-agent and once in `codex` from Claude Code (or `claude` from Codex) when that CLI is installed, and the model that did not raise a finding validates it. Upstream reviews on two axes.
