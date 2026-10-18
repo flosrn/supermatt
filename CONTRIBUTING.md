@@ -100,7 +100,7 @@ This rechecks trace integrity and mechanical assertions against the matching cor
 ## Open a pull request
 
 1. Create a branch named `type/kebab-description`, such as `fix/tdd-red-check`.
-2. Write commits as Conventional Commits: `type(scope): description`.
+2. Write commits as Conventional Commits: `type(scope): description`. Accepted types: `feat`, `fix`, `docs`, `chore`, `ci`, `refactor`.
 3. Open the pull request against `main` and fill in the template.
 
 Pull requests are squash merged.
