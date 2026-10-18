@@ -29,6 +29,9 @@ const test = (name, fn) => nodeTest(name, { timeout: 30_000 }, fn);
 // nothing, `exitOnEnter` ends omp at the next Enter, and `processFails` fails
 // that many `tern process` calls. A world's `failure` fails `remaining` calls
 // of its `command` with its `message`, after letting `skip` of them succeed.
+// `failureAfterRun`, `failureAfterPaste` and `failureAfterEnter` arm that same
+// mechanism at the named stage; a failure's `after` arms the next failure
+// when it fires, including an inspect failure after a failed process query.
 const FAKE_TERN = `#!/usr/bin/env node
 const fs = require("node:fs");
 const file = process.env.FAKE_TERN_WORLD;
@@ -40,8 +43,10 @@ const fail = (m) => { save(); process.stderr.write("tern " + a[0] + ": " + m + "
 if (w.failure && a[0] === w.failure.command && w.failure.remaining > 0) {
   if (w.failure.skip > 0) w.failure.skip -= 1;
   else {
-    w.failure.remaining -= 1;
-    fail(w.failure.message);
+    const failure = w.failure;
+    failure.remaining -= 1;
+    if (failure.after) w.failure = failure.after;
+    fail(failure.message);
   }
 }
 const pane = (id) => w.panes[id] || fail("no block " + id);
@@ -147,6 +152,7 @@ switch (a[0]) {
       write(o, { dir: "out", verb: "o", body: { id: "s:1", mode: "inline", title: "omp", role: "omp.session" } });
       frame(o, [["add", "main", "s:1", null, { id: "main", k: "col" }], ["add", "dock", "s:1", null, { id: "dock", k: "col", c: [{ id: "b", k: "col" }, { id: "e", k: "col", c: [composer(o)] }] }], ["add", "layer", "s:1", null, { id: "layer", k: "col" }]]);
       p.states = [...(w.launch.states || ["idle"])];
+      if (w.launch.failureAfterRun) w.failure = w.launch.failureAfterRun;
     }
     out("");
   }
@@ -155,6 +161,7 @@ switch (a[0]) {
     const o = p.omp;
     if (a[2] === "paste" && !ompFg(p)) p.lineBuffer = (p.lineBuffer || "") + a[3];
     if (a[2] === "paste" && ompFg(p)) {
+      if (p.failureAfterPaste) w.failure = p.failureAfterPaste;
       if (p.statesAfterPaste) { p.states = [...p.statesAfterPaste]; delete p.statesAfterPaste; }
       if (o.state !== "blocked" && !p.pasteLost) {
         o.text += a[3];
@@ -175,6 +182,7 @@ switch (a[0]) {
       } else if (key === "Down" && o.state === "blocked") {
         frame(o, [["set", "u.q0", { selected: "u.q0/option:1" }]]);
       } else if (key === "Enter") {
+        if (p.failureAfterEnter) w.failure = p.failureAfterEnter;
         if (p.echoAt > Date.now()) p.enterBeforeEcho = true;
         if (p.exitOnEnter) { delete p.exitOnEnter; become(p, "exit"); continue; }
         if (o.state === "blocked") { p.states = [...(p.afterEnter || ["idle"])]; delete p.afterEnter; continue; }
@@ -995,6 +1003,7 @@ test("a wait whose --timeout runs out on a busy process read reports timeout, no
   w.edit((x) => { x.failure = { command: "process", skip: 1, remaining: 30, message: "os error 35" }; });
   const r = w.run("agent", "wait", "app-work-1-1", "--until", "idle", "--timeout", "1000");
   assert.equal(r.error?.code, "timeout", r.stderr);
+  assert.equal(w.calls().filter((c) => c[0] === "inspect").length, 2, "a process timeout does not trigger a fresh absence check");
 });
 
 test("a busy daemon at the prompt gate does not read as a prompt that never landed", (t) => {
@@ -1012,6 +1021,25 @@ test("a prompt whose --timeout runs out while the daemon is busy at the gate rep
   w.edit((x) => { x.failure = { command: "inspect", skip: 4, remaining: 1000, message: "os error 35" }; });
   const r = w.run("agent", "prompt", "app-work-1-1", "go", "--wait", "--timeout", "8000");
   assert.equal(r.error?.code, "timeout", r.stderr);
+});
+
+test("a prompt gate's busy process read preserves the caller timeout and worker", (t) => {
+  const w = worker(t, { fakeTime: true });
+  const record = w.record(50);
+  w.edit((x) => {
+    x.panes[50].afterEnter = Array(20).fill("working");
+    x.panes[50].failureAfterEnter = { command: "process", skip: 1, remaining: 1000, message: "os error 35" };
+  });
+  const r = w.run("agent", "prompt", "app-work-1-1", "go", "--wait", "--timeout", "8000");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "timeout", r.stderr);
+  assert.equal(w.sleeps().reduce((sum, ms) => sum + ms, 0), 8000);
+  assert.equal(w.calls().at(-1)[0], "process", "timeout propagates before a fresh inspect");
+  assert.deepEqual(sends(w), [["send", "50", "paste", "go"], ["send", "50", "keys", "Enter"]]);
+  assert.equal(w.read().panes[50].prompts, 1);
+  assert.ok(existsSync(record));
+  w.edit((x) => { x.failure.remaining = 0; });
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
 });
 
 test("a read after agent start's wait keeps the full retry budget", (t) => {
@@ -1071,10 +1099,245 @@ test("a pane missing from one inspect fails the prompt before the paste, and kee
   assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.agent_status, "idle", "the worker is still reachable by name");
 });
 
+test("agent get by name reports a failed process query without losing the worker or its record", (t) => {
+  const w = worker(t);
+  const record = w.record(50);
+  w.edit((x) => { x.panes[50].processFails = 1; });
+  const r = w.run("agent", "get", "app-work-1-1");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern process: the session daemon did not answer" });
+  assert.ok(existsSync(record), "an unavailable process query does not remove the surface record");
+  const recovered = w.run("agent", "get", "app-work-1-1");
+  assert.equal(recovered.code, 0, recovered.stderr);
+  assert.equal(recovered.json.result.agent.pane_id, "50");
+  assert.equal(recovered.json.result.agent.name, "app-work-1-1");
+  assert.equal(recovered.json.result.agent.agent_status, "idle");
+});
+
+test("agent get by pane propagates process failure and preserves named recovery", (t) => {
+  const w = worker(t);
+  const record = w.record(50);
+  w.edit((x) => { x.panes[50].processFails = 1; });
+  const r = w.run("agent", "get", "50");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern process: the session daemon did not answer" });
+  assert.ok(existsSync(record));
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+});
+
+test("agent list fails as a whole when a shown worker's process query fails", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].processFails = 1; });
+  const r = w.run("agent", "list");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern process: the session daemon did not answer" });
+  assert.equal(r.json, undefined, "no partial successful list is emitted");
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+});
+
+test("agent rename cannot steal a name whose holder's process query fails", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].processFails = 1; });
+  const r = w.run("agent", "rename", "13", "app-work-1-1");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "tern_failed");
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+});
+
+test("agent start cannot steal an unavailable holder's name or type into its target pane", (t) => {
+  const w = worker(t);
+  w.edit((x) => {
+    x.panes[51] = { tab: 6, title: "zsh", cwd: "/repo/wt", child: shell(61), foreground: shell(61) };
+    x.panes[50].processFails = 100;
+  });
+  const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "51");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "tern_failed");
+  assert.ok(!w.calls().some((c) => c[0] === "send" || c[0] === "run"), "no input or launch reached the target pane");
+  w.edit((x) => { x.panes[50].processFails = 0; });
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+});
+
+test("agent read propagates a failed process lookup instead of capturing", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].processFails = 1; });
+  const r = w.run("agent", "read", "app-work-1-1", "--source", "visible");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "tern_failed");
+  assert.ok(!w.calls().some((c) => c[0] === "capture"));
+});
+
+test("agent send-keys propagates a failed lookup before sending keys", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].processFails = 1; });
+  const r = w.run("agent", "send-keys", "app-work-1-1", "enter");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "tern_failed");
+  assert.deepEqual(sends(w), []);
+});
+
+test("agent wait reports persistent process failure while retaining the name and record", (t) => {
+  const w = worker(t);
+  const record = w.record(50);
+  w.edit((x) => { x.panes[50].processFails = 100; });
+  const r = w.run("agent", "wait", "app-work-1-1", "--timeout", "1000");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "tern_failed");
+  assert.ok(existsSync(record));
+  w.edit((x) => { x.panes[50].processFails = 0; });
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+});
+
+test("agent get treats a pane absent from fresh inspect after process failure as absent", (t) => {
+  const w = worker(t);
+  const record = w.record(50);
+  w.edit((x) => { x.panes[50].processFails = 1; x.panes[50].missingOnInspect = 2; });
+  const r = w.run("agent", "get", "app-work-1-1");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "agent_not_found");
+  assert.ok(existsSync(record));
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+});
+
+test("agent list omits a pane absent from fresh inspect after process failure", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].processFails = 1; x.panes[50].missingOnInspect = 2; });
+  const r = w.run("agent", "list");
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.json.result.agents.map((a) => a.pane_id), ["13"]);
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+});
+
+test("agent prompt reports process failure after a lost Enter with a composer warning", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].enterLost = true; x.panes[50].failureAfterEnter = { command: "process", remaining: 100, message: "the session daemon did not answer" }; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "go");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "tern_failed");
+  assert.match(r.error.message, /tern process: the session daemon did not answer/);
+  assert.match(r.error.message, /read the pane/i);
+  assert.match(r.error.message, /unsent|composer/i);
+  assert.deepEqual(sends(w), [["send", "50", "paste", "go"], ["send", "50", "keys", "Enter"]]);
+  w.edit((x) => { x.failure.remaining = 0; });
+  assert.match(w.run("agent", "read", "app-work-1-1", "--source", "visible").stdout, /> go/);
+});
+
+test("agent prompt reports process failure after paste without pressing Enter and warns about unsent text", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].failureAfterPaste = { command: "process", remaining: 100, message: "the session daemon did not answer" }; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "go");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "tern_failed");
+  assert.match(r.error.message, /tern process: the session daemon did not answer/);
+  assert.match(r.error.message, /read the pane/i);
+  assert.match(r.error.message, /unsent|composer/i);
+  assert.deepEqual(sends(w), [["send", "50", "paste", "go"]]);
+  w.edit((x) => { x.failure.remaining = 0; });
+  assert.match(w.run("agent", "read", "app-work-1-1", "--source", "visible").stdout, /> go/);
+});
+
+test("agent prompt warns about observed unsent text when its final pre-Enter process query fails", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].failureAfterPaste = { command: "process", remaining: 100, skip: 1, message: "the session daemon did not answer" }; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "go");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "tern_failed");
+  assert.match(r.error.message, /tern process: the session daemon did not answer/);
+  assert.match(r.error.message, /read the pane/i);
+  assert.match(r.error.message, /sits unsent/i);
+  assert.deepEqual(sends(w), [["send", "50", "paste", "go"]], "the failed final guard sends no Enter");
+  w.edit((x) => { x.failure.remaining = 0; });
+  assert.match(w.run("agent", "read", "app-work-1-1", "--source", "visible").stdout, /> go/);
+});
+
+test("agent start tolerates one failed process query during readiness and claims the ready worker", (t) => {
+  const w = lane(t, { launch: { ...ready, failureAfterRun: { command: "process", remaining: 1, message: "the session daemon did not answer" } } });
+  const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.result.agent.agent_status, "idle");
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+});
+
+test("blocked send-keys succeeds when its postkeys process query fails", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].states = ["blocked"]; x.panes[50].failureAfterEnter = { command: "process", remaining: 1, message: "the session daemon did not answer" }; });
+  const r = w.run("agent", "send-keys", "app-work-1-1", "enter");
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.json.result.keys, ["Enter"]);
+  assert.deepEqual(sends(w), [["send", "50", "keys", "Enter"]]);
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.agent_status, "idle");
+});
+
+for (const fresh of [false, true]) {
+  test(`agent start propagates ${fresh ? "fresh " : ""}inspect failure during readiness`, (t) => {
+    const inspectFailure = { command: "inspect", remaining: 1, message: "inspect unavailable" };
+    const launch = { ...ready, failureAfterRun: fresh ? { command: "process", remaining: 1, message: "the session daemon did not answer", after: inspectFailure } : inspectFailure };
+    const w = lane(t, { launch });
+    const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "1000");
+    assert.equal(r.code, 1);
+    assert.deepEqual(r.error, { code: "tern_failed", message: "tern inspect: inspect unavailable" });
+  });
+
+  test(`blocked send-keys propagates ${fresh ? "fresh " : ""}inspect failure after keys land`, (t) => {
+    const w = worker(t);
+    w.edit((x) => {
+      const p = x.panes[50];
+      p.states = ["blocked"];
+      const inspectFailure = { command: "inspect", remaining: 1, message: "inspect unavailable" };
+      p.failureAfterEnter = fresh ? { command: "process", remaining: 1, message: "the session daemon did not answer", after: inspectFailure } : inspectFailure;
+    });
+    const r = w.run("agent", "send-keys", "app-work-1-1", "enter");
+    assert.equal(r.code, 1);
+    assert.deepEqual(r.error, { code: "tern_failed", message: "tern inspect: inspect unavailable" });
+    assert.deepEqual(sends(w), [["send", "50", "keys", "Enter"]]);
+  });
+}
+
+test("agent prompt propagates process lookup failure before paste without sending input", (t) => {
+  const w = worker(t);
+  w.edit((x) => { x.panes[50].processFails = 1; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "go");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern process: the session daemon did not answer" });
+  assert.deepEqual(sends(w), []);
+});
+
+test("agent wait propagates process failure after it has begun waiting", (t) => {
+  const w = worker(t);
+  const record = w.record(50);
+  w.edit((x) => { x.panes[50].states = Array(20).fill("working"); x.failure = { command: "process", remaining: 100, skip: 2, message: "the session daemon did not answer" }; });
+  const r = w.run("agent", "wait", "app-work-1-1", "--timeout", "2000");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "tern_failed");
+  assert.ok(existsSync(record));
+  w.edit((x) => { x.failure.remaining = 0; });
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+});
+
+for (const [phase, skip] of [["activity gate", 1], ["turn settlement", 2]]) {
+  test(`agent prompt --wait propagates midwait process failure during ${phase}`, (t) => {
+    const w = worker(t);
+    w.edit((x) => {
+      x.panes[50].afterEnter = Array(20).fill("working");
+      x.panes[50].failureAfterEnter = { command: "process", remaining: 100, skip, message: "the session daemon did not answer" };
+    });
+    const r = w.run("agent", "prompt", "app-work-1-1", "go", "--wait", "--timeout", "2000");
+    assert.equal(r.code, 1);
+    assert.equal(r.error?.code, "tern_failed");
+    assert.match(r.error.message, /tern process: the session daemon did not answer/);
+    assert.match(r.error.message, /read the pane/i);
+    assert.match(r.error.message, /composer/i);
+    assert.deepEqual(sends(w), [["send", "50", "paste", "go"], ["send", "50", "keys", "Enter"]]);
+    assert.equal(w.read().panes[50].prompts, 1, "the turn started before its wait failed");
+    w.edit((x) => { x.failure.remaining = 0; });
+    assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
+  });
+}
+
 test("tern process calls that fail for a moment do not cost a live worker its name", (t) => {
   const w = worker(t);
-  w.edit((x) => { x.panes[50].processFails = 2; });
-  assert.equal(w.run("agent", "get", "app-work-1-1").error?.code, "agent_not_found");
+  w.edit((x) => { x.panes[50].processFails = 1; });
+  assert.equal(w.run("agent", "get", "app-work-1-1").error?.code, "tern_failed");
   assert.equal(w.run("agent", "prompt", "app-work-1-1", "go", "--wait").json?.result.agent.agent_status, "done");
 });
 
