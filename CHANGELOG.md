@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- `to-spec`: the fresh-context check traces each acceptance scenario that names real data through that data under the implementation decisions as written, and reports the step where the result diverges, so a rule that cannot produce its own acceptance scenario is caught before tickets are cut.
+
 ## [0.22.0] - 2026-10-17
 
 ### Added
