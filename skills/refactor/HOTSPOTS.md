@@ -35,7 +35,7 @@ settled, not hot.
 Use whatever the project already has. If it has nothing, line count is a usable first pass:
 
 ```bash
-git ls-files '*.<ext>' | xargs wc -l | sort -rn | head -30
+git ls-files -z -- '*.<ext>' | xargs -0 wc -l -- | sort -rn | head -30
 ```
 
 Prefer cognitive complexity over cyclomatic when a tool offers both: it penalizes nesting depth,

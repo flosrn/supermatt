@@ -10,6 +10,8 @@ Actively build and sharpen the project's domain model as you design. This is the
 
 ## File structure
 
+Read `docs/agents/domain.md` first if it exists. Its configured glossary, map, and ADR paths take precedence, including older names such as `CONTEXT.md` and `CONTEXT-MAP.md`; read the configured map for per-context paths. Use the defaults below only where no path is configured. Throughout this skill and its format references, `GLOSSARY.md`, `GLOSSARY-MAP.md`, and `docs/adr/` mean those resolved paths. Preserve existing names; do not rename or migrate files.
+
 Most repos have a single context:
 
 ```
@@ -22,7 +24,7 @@ Most repos have a single context:
 └── src/
 ```
 
-If a `GLOSSARY-MAP.md` exists at the root, the repo has multiple contexts. The map points to where each one lives:
+If the resolved glossary map exists, the repo has multiple contexts. The map points to where each one lives:
 
 ```
 /
@@ -38,7 +40,7 @@ If a `GLOSSARY-MAP.md` exists at the root, the repo has multiple contexts. The m
 │       └── docs/adr/
 ```
 
-Create files lazily: only when you have something to write. If no `GLOSSARY.md` exists, create one when the first term is resolved. If no `docs/adr/` exists, create it when the first ADR is needed.
+Create files at the resolved paths lazily: the glossary only when the first term is resolved, and an ADR directory only when the first ADR is needed.
 
 ## During the session
 

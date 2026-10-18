@@ -2,6 +2,8 @@
 
 ## Safe actions
 
+Never approve removing a worktree this run did not create, even when it is clean or inside the checkout.
+
 An action is safe when everything it deletes, overwrites, or rewrites is inside the repo checkout, or it is one of these:
 
 - Clear a cache that rebuilds itself: a subfolder of `~/.cache`, or a package manager's own clean command (`bun pm cache rm`, `npm cache clean`).
@@ -12,6 +14,10 @@ An action is safe when everything it deletes, overwrites, or rewrites is inside 
 Every other delete, overwrite, or rewrite outside the checkout is unsafe: files elsewhere in the home folder, another repo, system config, anything with `sudo`, a push to DEFAULT, or a force-push to any other branch.
 
 The retrospective is report-only. If its worker asks to apply a candidate, tell it to report the candidate and continue without editing or publishing, even when the proposed action would otherwise be safe.
+
+Before submitting any answer, check every action it authorizes against Safe actions, the lane's assigned issue, worktree, phase and delegated approval scope, and the called skill's mandatory human-consent rules. This applies to permission and plan approvals, yes/no, recommended or first options, every choice in multi-question or multi-select forms, and free-text advice. A recommendation is not authorization. If any action is unsafe, outside that scope, requires human consent the coordinator cannot supply, or is too unclear to assess, park the lane without submitting the answer.
+
+Send every text answer through [Send the prompt](WORKER.md#dispatch-preamble), retaining the question, chosen answer and rationale in the next dispatch's evidence. A native dialog cannot carry that text block: before any option that clears context or starts fresh execution, require its carried-forward execution prompt or plan to contain the current task and populated DISPATCH. Amend it through the host's supported plan-editing mechanism if needed; if that context cannot be supplied or confirmed, park instead of approving. Recheck the carried-forward scope after any plan edit.
 
 ## Answer a dialog
 

@@ -41,14 +41,16 @@ Compaction is the **default, not the first reach**. It sits at the bottom becaus
 
 ## Primary and secondary sources
 
-Every move except **Continue** turns a **primary source** into a **secondary source**: the session as it happened, replaced by a summary of it. The trade is always the same shape:
+Compaction and `/handoff` turn a **primary source** into a **secondary source** for the next phase: the session as it happened is replaced by a summary of it. That trade has this shape:
 
 | Source                            | Information | Noise | Room to move |
 | --------------------------------- | ----------- | ----- | ------------ |
 | Primary (Continue)                | Full        | Lots  | Little       |
 | Secondary (compaction, `/handoff`) | Lossy | Less | Lots |
 
-This is why question 1 comes first. You only pay the lossiness when staying costs more than it saves.
+Reset instead discards the current context without carrying a summary forward; use it only when that context is irrelevant. A subagent leaves the caller's context intact, works from the task and sources it receives, and returns a report. That report is a secondary source for the delegated work, not a replacement for the caller's session.
+
+This is why question 1 comes first. When the next phase needs the current session as a primary source, continue rather than replacing or discarding it.
 
 ## These are judgement calls
 

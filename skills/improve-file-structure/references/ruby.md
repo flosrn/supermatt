@@ -2,7 +2,7 @@
 
 ## Conventions and constraints
 
-RubyGems uses `lib/<gem>.rb` as a loading entry point and `lib/<gem>/` for supporting files. The packaged file list must include those files. Preserve the public `require` surface when reorganizing internals. Source: [Make your own gem](https://guides.rubygems.org/make-your-own-gem/).
+RubyGems uses `lib/<gem>.rb` as a loading entry point and `lib/<gem>/` for supporting files. The packaged file list must include those files. Preserve the public `require` surface when reorganizing internals. Source: [Make your own gem](https://guides.rubygems.org/make-your-own-gem.md).
 
 Rails autoloading expects file paths to match constants relative to configured autoload roots, subject to inflection rules. For example, `app/models/admin/user.rb` conventionally defines `Admin::User`; a directory move can imply a namespace change. Inspect roots, namespaces, and inflector overrides before proposing it. Source: [Rails autoloading and reloading constants](https://guides.rubyonrails.org/autoloading_and_reloading_constants.html).
 

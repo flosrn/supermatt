@@ -24,8 +24,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 
 - `git remote -v` and `.git/config`: is this a GitHub repo? Which one?
 - `AGENTS.md` and `CLAUDE.md` at the repo root: does either exist? Is there already an `## Agent skills` section in either?
-- `GLOSSARY.md` and `GLOSSARY-MAP.md` at the repo root. `CONTEXT.md` or `CONTEXT-MAP.md` is the same file under its older name: in Section C, recommend keeping that name and pointing `domain.md` at it. Offer a rename only as the second option, and before any rename, `git grep` for its references and update them.
-- `docs/adr/` and any `src/*/docs/adr/` directories
+- Resolve glossary, map, and ADR paths from an existing `docs/agents/domain.md` first, using its selected layout rather than unused template examples. Preserve configured paths even before the files exist. Where unset, follow domain paths referenced by the repo's existing instructions and discover `GLOSSARY.md`, `GLOSSARY-MAP.md`, their legacy names `CONTEXT.md` and `CONTEXT-MAP.md`, and existing ADR directories such as `docs/adr/` and `src/*/docs/adr/`. Read any map for its per-context paths. Preserve discovered names; use default names only where neither configuration nor existing files supply a path. If candidates conflict, resolve the choice in Section C. Offer a rename only as a second option, and before any approved rename, find and update its references.
 - `docs/agents/`: does this skill's prior output already exist, including `cross-model.json`?
 - `.scratch/`: a sign that a local-markdown issue tracker convention is already in use
 - Monorepo signals: a `pnpm-workspace.yaml`, a `workspaces` field in `package.json`, or a populated `packages/*` with its own `src/`. These are present only in a genuinely large multi-package repo; their absence means single-context, which is almost every repo.
@@ -35,7 +34,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 
 Summarise what's present and what's missing. Then take the sections in order. One section, one answer, then the next.
 
-Lead each section with the recommended answer so the user can accept it in a word. Use the host's live multiple-choice capability when available and follow its schema; otherwise ask in chat. Give a one-line explainer only when the choice genuinely branches; skip the section entirely when exploration already settled it (Section C when there's no monorepo).
+Lead each section with the recommended answer so the user can accept it in a word. Use the host's live multiple-choice capability when available and follow its schema; otherwise ask in chat. Give a one-line explainer only when the choice genuinely branches; skip a question when exploration already settled it.
 
 **Section A: Issue tracker.**
 
@@ -48,17 +47,21 @@ Default posture: these skills were designed for GitHub. If a `git remote` points
 - **Local markdown**: issues live as files under `.scratch/<feature>/` in this repo (good for solo projects or repos without a remote)
 - **Other** (Jira, Linear, etc.): ask the user how their tracker does each operation the GitHub template defines (create, read, list, comment, labels, close, blocking, and the wayfinding operations)
 
-Record the choice in `docs/agents/issue-tracker.md`. The GitHub and GitLab templates carry a "PRs as a request surface" flag, defaulted **off**. Leave it off and don't raise it: a user who wants external PRs in the triage queue can flip the flag in the file later.
+Record the choice in `docs/agents/issue-tracker.md`. The GitHub and GitLab templates carry a "PRs as a request surface" flag. Default it to **off** for new files; preserve an existing value on reruns. Don't raise it: a user who wants external PRs in the triage queue can flip the flag in the file later.
 
-**Section B: Triage label vocabulary.** `to-spec`, `to-tickets`, and `triage` all apply these labels, so this section always runs. Ask exactly one question:
+**Section B: Triage label vocabulary.** `to-spec`, `to-tickets`, and `triage` all apply these labels, so this section always runs.
+
+On first setup, ask:
 
 > Do you want to keep the default triage labels? (recommended: **yes**)
 
-The defaults are the seven canonical roles, each label string equal to its name: `bug`, `enhancement`, `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. On **yes**, write them as-is. Only if the user says no, usually because their tracker already uses other names (e.g. `bug:triage` for `needs-triage`), collect the overrides so the skills apply existing labels instead of creating duplicates.
+The defaults are the seven canonical roles, each label string equal to its name: `bug`, `enhancement`, `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. On **yes**, use them as-is. On **no**, collect the overrides so the skills apply existing labels instead of creating duplicates.
 
-**Section C: Domain docs.** Default to **single-context** (one `GLOSSARY.md` at the repo root, and ADRs in `docs/adr/` once the first one is written). This fits almost every repo, so write it as the default: this section has no question.
+On reruns, show the current mappings and ask whether to **keep current** (recommended), **reset to defaults**, or **supply replacements**. The selected mappings are authoritative for both the draft and final file; a reset discards prior overrides.
 
-Offer **multi-context** (a root `GLOSSARY-MAP.md` pointing to per-context `GLOSSARY.md` files) only when exploration found monorepo signals. Then confirm which layout they want.
+**Section C: Domain docs.** Preserve the resolved layout and paths from exploration. An existing map or a map selected by the configured layout establishes **multi-context**, even without monorepo signals. Otherwise keep the configured layout, or default to **single-context**. Ask only to resolve conflicting discoveries or to offer multi-context when monorepo signals exist and no layout is established.
+
+For paths still unresolved, single-context defaults to `GLOSSARY.md` at the repo root and `docs/adr/`; multi-context defaults to a root `GLOSSARY-MAP.md` pointing to per-context glossaries. Preserve any resolved legacy or custom names and ADR paths in the layout description, reading instructions, and examples. Domain files are created lazily by the consuming skills; rename an existing file only with explicit user approval.
 
 **Section D: External peer calls.** Ask which mode `code-review` and `jury` should use:
 
@@ -77,7 +80,7 @@ Print the drafts as text in your reply, then ask whether to write them:
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
 - The contents of `docs/agents/issue-tracker.md`, `docs/agents/domain.md`, `docs/agents/triage-labels.md`, and `docs/agents/cross-model.json`
 
-A file taken from its template as-is drafts as its name plus the lines you filled in (the repo slug, the layout line, label overrides). Done when every file Step 4 will write has its draft printed above the question. Write after the user answers.
+A file taken from its template as-is drafts as its name plus the lines you filled in (the repo slug, selected label mappings, resolved domain layout and paths). Done when every file Step 4 will write has its draft printed above the question. Write after the user answers.
 
 ### 4. Write
 
@@ -122,7 +125,9 @@ Then write the docs files using the seed templates in this skill folder as a sta
 - [domain.md](./domain.md): domain doc consumer rules + layout
 - [cross-model.json](./cross-model.json): external peer mode, model, and effort settings
 
-When a `docs/agents/` file already exists, diff it against its template. Take the template's text, carry over the repo-specific lines (the repo slug, label overrides, the layout line), and show the diff as the Step 3 draft.
+For every `domain.md` draft, fill the path placeholders with the resolved glossary/map/ADR paths, substitute those paths in the examples too, and remove the unused layout branch.
+
+When a `docs/agents/` file already exists, diff it against its template. Take the template's text, carry over the repo-specific values (the repo slug, resolved glossary/map/ADR paths and layout, and the PR/MR request-surface flag), then apply this run's approved answers. Section B's selected mappings replace any carried-forward label overrides. Show the resulting diff as the Step 3 draft.
 
 For `docs/agents/cross-model.json`, require the exact seed shape with every profile present. `mode` accepts only `auto`, `host-only`, `claude`, `codex`, `cursor`, or `omp`. Reject unknown or missing keys. Every `model` is either `null` or a nonempty string. Claude, Codex, and OMP `effort` is either `null` or a nonempty string. Cursor has no `effort` key. Preserve a valid existing file on reruns unless the user changes Section D answers. If the existing file is invalid, draft the seed with the user's answers instead.
 

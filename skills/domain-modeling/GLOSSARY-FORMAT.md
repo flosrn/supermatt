@@ -37,9 +37,11 @@ _Avoid_: Client, buyer, account
 
 ## Single vs multi-context repos
 
-**Single context (most repos):** One `GLOSSARY.md` at the repo root.
+The paths resolved by the skill from `docs/agents/domain.md` take precedence over these default names, including `CONTEXT.md` and `CONTEXT-MAP.md`.
 
-**Multiple contexts:** A `GLOSSARY-MAP.md` at the repo root lists the contexts, where they live, and how they relate to each other:
+**Single context (most repos):** One glossary, by default `GLOSSARY.md` at the repo root.
+
+**Multiple contexts:** The configured map, by default `GLOSSARY-MAP.md` at the repo root, lists the contexts, where they live, and how they relate to each other:
 
 ```md
 # Glossary Map
@@ -57,10 +59,10 @@ _Avoid_: Client, buyer, account
 - **Ordering ↔ Billing**: Shared types for `CustomerId` and `Money`
 ```
 
-The skill infers which structure applies:
+Use the paths resolved by the skill:
 
-- If `GLOSSARY-MAP.md` exists, read it to find contexts
-- If only a root `GLOSSARY.md` exists, single context
-- If neither exists, create a root `GLOSSARY.md` lazily when the first term is resolved
+- If the resolved glossary map exists, read it to find contexts
+- If only the resolved glossary exists, single context
+- If neither exists, follow the configured layout and create the relevant glossary lazily when the first term is resolved; without configuration, default to a root `GLOSSARY.md`
 
 When multiple contexts exist, infer which one the current topic relates to. If unclear, ask.

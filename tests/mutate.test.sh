@@ -30,6 +30,25 @@ cmp -s add.sh add.orig || fail "add.sh was not restored"
 
 sh "$REPO/skills/tdd/scripts/mutate.sh" '[ "$(sh add.sh)" = 2 ]' red.m >/dev/null || fail "an all-red run exited nonzero"
 
+# Mutations preserve bytes outside the exact replacement, including EOF.
+printf 'echo original' > no-newline.sh
+cp no-newline.sh no-newline.orig
+printf 'echo mutated' > no-newline.expected
+printf 'no-newline.sh\noriginal\n====\nmutated\n' > no-newline.m
+code=0
+out="$(sh "$REPO/skills/tdd/scripts/mutate.sh" \
+  'if [ "$(sh no-newline.sh)" = mutated ]; then cmp -s no-newline.sh no-newline.expected; else cmp -s no-newline.sh no-newline.orig; fi' no-newline.m)" || code=$?
+[ "$out" = "no-newline.m GREEN" ] || fail "a mutation changed unrelated bytes: $out"
+[ "$code" = 1 ] || fail "a surviving exact mutation exited $code, want 1"
+cmp -s no-newline.sh no-newline.orig || fail "a no-newline target was not restored"
+
+printf 'add.sh\n1+1\n' > no-separator.m
+code=0
+out="$(sh "$REPO/skills/tdd/scripts/mutate.sh" '[ "$(sh add.sh)" = 2 ]' no-separator.m)" || code=$?
+[ "$code" = 1 ] || fail "a malformed mutation exited $code, want 1"
+[ "$out" = "no-separator.m missing" ] || fail "a malformed mutation was applied: $out"
+cmp -s add.sh add.orig || fail "a malformed mutation changed its target"
+
 # A broken mutation, as a deleted name is in Go, gets a hint on stderr to keep
 # the name in use. A run with none broken prints no hint.
 hint="$(sh "$REPO/skills/tdd/scripts/mutate.sh" -b 'sh -n add.sh' '[ "$(sh add.sh)" = 2 ]' broken.m 2>&1 >/dev/null)" || true
@@ -94,17 +113,27 @@ cp "$backup" add.sh
 # A TEST already red with no mutation, as `-run A|B` is once sh reads the | as
 # a pipe, would report every mutation red. The run stops before any.
 code=0
-out="$(sh "$REPO/skills/tdd/scripts/mutate.sh" '[ "$(sh add.sh)" = 2 ] | no-such-command' red.m 2>&1)" || code=$?
+out="$(sh "$REPO/skills/tdd/scripts/mutate.sh" 'echo baseline-test-stdout; echo baseline-test-stderr >&2; [ "$(sh add.sh)" = 2 ] | no-such-command' red.m 2>&1)" || code=$?
 [ "$code" = 2 ] || fail "a red baseline exited $code, want 2"
 case "$out" in
 *"fails with no mutation"*) ;;
 *) fail "a red baseline reported: $out" ;;
 esac
+case "$out" in
+*"baseline-test-stdout"*"baseline-test-stderr"*) ;;
+*) fail "baseline TEST diagnostics were lost: $out" ;;
+esac
 cmp -s add.sh add.orig || fail "add.sh changed on a red baseline"
 
 code=0
-sh "$REPO/skills/tdd/scripts/mutate.sh" -b false '[ "$(sh add.sh)" = 2 ]' red.m >/dev/null 2>&1 || code=$?
+out="$(sh "$REPO/skills/tdd/scripts/mutate.sh" \
+  -b 'echo baseline-build-stdout; echo baseline-build-stderr >&2; exit 1' \
+  '[ "$(sh add.sh)" = 2 ]' red.m 2>&1)" || code=$?
 [ "$code" = 2 ] || fail "a broken baseline BUILD exited $code, want 2"
+case "$out" in
+*"baseline-build-stdout"*"baseline-build-stderr"*) ;;
+*) fail "baseline BUILD diagnostics were lost: $out" ;;
+esac
 
 # An explicit timeout applies before any mutation, not only to mutated TEST.
 code=0

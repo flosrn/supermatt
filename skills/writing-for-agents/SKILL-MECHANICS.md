@@ -11,7 +11,7 @@ Two choices trade the two loads. The host-specific syntax, model-side loader, an
 
 Claude Code, Codex, and Cursor enforce explicit-only metadata. OMP uses it for catalog hiding, not model authorization. Design explicit-only skills for deliberate human entry, but never put a security boundary behind hidden status.
 
-Pick model invocation only when the agent must reach the skill by itself or another skill depends on it. Shared reference needed by two user-invoked skills belongs in a plain file inside the plugin root.
+Pick model invocation only when the agent must reach the skill by itself or another skill depends on it. The bounded [orchestrator dispatch exception](../../references/harnesses.md#orchestrator-dispatch) uses explicit worker commands and does not change their invocation policies. Shared reference needed by two user-invoked skills belongs in a plain file inside the plugin root.
 
 ## Splitting by invocation
 

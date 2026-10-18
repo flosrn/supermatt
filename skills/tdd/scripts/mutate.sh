@@ -21,9 +21,9 @@
 #
 # TEST runs under a perl supervisor that leads a process group of its own, so
 # dash, which has no job control without a terminal, gets one too. The group
-# is killed whole once TEST exits. A process whose parent died, as a test
-# runner's child does when the runner is killed on its own timeout, stays in
-# the group, so nothing TEST started outlives it.
+# is killed whole once TEST exits, including orphaned children that remain
+# in it. TEST must clean up descendants it detaches into another process
+# group or session.
 set -u
 
 usage() {
@@ -106,8 +106,9 @@ run_test() {
 }
 
 start=$(date +%s)
-if ! { [ -z "$build" ] || sh -c "$build"; } > /dev/null 2>&1 || ! { run_test "${limit:-0}" && [ "$outcome" = pass ]; }; then
+if ! { [ -z "$build" ] || sh -c "$build"; } > "$backup.output" 2>&1 || ! { run_test "${limit:-0}" && [ "$outcome" = pass ]; }; then
   echo "mutate.sh: BUILD or TEST fails with no mutation applied, so no red would mean anything: $test" >&2
+  cat "$backup.output" >&2
   exit 2
 fi
 limit=${limit:-$((($(date +%s) - start) * 5 + 60))}
@@ -120,20 +121,21 @@ for m in "$@"; do
     exit 2
   fi
   target=$mutation_target
-  if ! awk '
-    FNR == NR {
-      if (FNR == 1) next
-      if ($0 == "====" && !sep) { sep = 1; next }
-      if (sep) to = (tn++ ? to "\n" : "") $0
-      else from = (fn++ ? from "\n" : "") $0
-      next
-    }
-    { text = (n++ ? text "\n" : "") $0 }
-    END {
-      i = index(text, from)
-      if (from == "" || !i) exit 3
-      printf "%s%s%s\n", substr(text, 1, i - 1), to, substr(text, i + length(from))
-    }' "$m" "$backup" > "$target"; then
+  if ! perl -0777 -e '
+    my ($mutation, $original) = @ARGV;
+    open my $m, "<:raw", $mutation or die "$mutation: $!";
+    my $spec = <$m>;
+    $spec =~ /\A[^\n]*\n(.*?)^====(?:\n|\z)(.*)\z/ms or exit 3;
+    my ($from, $to) = ($1, $2);
+    s/\n\z// for ($from, $to);
+    length($from) or exit 3;
+    open my $f, "<:raw", $original or die "$original: $!";
+    my $text = <$f> // "";
+    my $i = index($text, $from);
+    $i >= 0 or exit 3;
+    substr($text, $i, length($from), $to);
+    print $text;
+  ' "$m" "$backup" > "$target"; then
     result=missing
   elif [ -n "$build" ] && ! sh -c "$build" > /dev/null 2>&1; then
     result=broken

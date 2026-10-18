@@ -18,6 +18,20 @@ For model-side composition, **load and follow the `<name>` skill through the hos
 
 Claude Code, Codex, and Cursor enforce explicit-only skill metadata. OMP maps `disable-model-invocation` to catalog hiding, not a hard authorization boundary. Do not use hidden status as a security boundary.
 
+### Orchestrator dispatch
+
+An explicit human invocation of `orchestrate` delegates these user-invoked commands to that run's assigned workers: `triage`, `implement`, `fix-findings`, `commit`, `refactor`, `ship-pr`, `retro`, and `what-would-you-do`. Send them as explicit worker prompts using the human invocation forms above, not as implicit model-side dependencies. Keep their frontmatter and Codex invocation policies unchanged.
+
+Each dispatch stays within the run's assigned issue, worktree, phase, and approval scope. Pass that scope and relevant prior evidence to a fresh worker. This exception ends with the run and does not authorize other user-invoked skills, unrelated work, or dispatch by another caller.
+
+Preserve every caller and callee safety, confirmation, and stop rule, including report-only retrospectives and external-peer consent. A required human approval outside the delegated scope parks the lane; the coordinator cannot supply it itself.
+
+### Delegated triage decisions
+
+When the user explicitly delegates decisions for the current `triage` run, that skill may request `grilling`'s delegated mode. Pass the user's delegation and its issue or queue scope to the callee. Only recommendation, selection, and outcome-confirmation waits within that scope become agent decisions, recorded with reasons rather than attributed to the user. Ordinary interviews and other callers still require human answers and confirmation.
+
+Delegation does not establish missing facts, expand the issue scope, or authorize an external peer, destructive operation, permission change, or other action requiring separate approval. Keep those gates intact. Record out-of-scope decisions and unavailable facts as unresolved; a dependent ticket is not ready for implementation. Withdrawal of delegation restores interactive mode.
+
 ## Capability fallbacks
 
 Use the host's native question, approval, subagent, file-writing, and background mechanisms when available. Otherwise:

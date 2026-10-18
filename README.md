@@ -119,13 +119,15 @@ flowchart LR
 
 1. `grill-with-docs` sharpens the idea by interview.
 2. `to-spec` turns the conversation into a spec on your issue tracker.
-3. `to-tickets` splits the spec into tickets. Skip it when the work fits in one session.
+3. `to-tickets` splits the spec into independently green tickets. Skip it when the work fits in one session.
 4. Use `implement` for each ticket, or `implement-spec` for the whole spec on one integration branch. Both build through `tdd`, check the running program with `qa`, and finish with `code-review`; `implement-spec` checks the combined result across tickets.
 5. `refactor` cleans up the branch without changing behavior, and `ship-pr` repairs CI within bounded attempts, merges only on green checks, and verifies post-merge workflows. Failed post-merge workflows use follow-up repair PRs.
 
 Run `retro` before clearing the session, or provide a verified session ID or path later. It reads local Claude Code, Codex, Cursor, and OMP transcript evidence and reports gaps instead of guessing from the newest file. After a bug fix, use it to identify what would have prevented the bug; use `improve-architecture` when the finding is a missing test seam.
 
 With triaged GitHub issues or local Markdown tickets, `orchestrate` runs steps 4 and 5 unattended for each issue, several issues in parallel if you ask, in worker sessions inside Herdr. Workers use the harness that started it: Claude Code, Codex, Cursor, or OMP. Cursor and OMP workers receive the authoritative active model ID when available, otherwise they keep the harness default. Local tracker files stay in the main checkout; code changes ship through GitHub PRs.
+
+An explicit `orchestrate` invocation delegates only its [listed worker commands](./references/harnesses.md#orchestrator-dispatch) within that run. Other user-invoked skills still require a human command; existing safety and approval gates remain in force.
 
 ## How it differs from mattpocock/skills
 
@@ -200,11 +202,11 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 |---|---|
 | **[ask-supermatt](./skills/ask-supermatt/SKILL.md)** | Ask which skill or flow fits your situation. A router over the skills in this repo. |
 | **[grill-with-docs](./skills/grill-with-docs/SKILL.md)** | Grilling session that also builds your project's domain model, sharpening terminology and updating `GLOSSARY.md` and ADRs inline. |
-| **[triage](./skills/triage/SKILL.md)** | Move issues and external PRs through a state machine of triage roles: categorise, verify, grill if needed, and write agent-ready briefs. |
+| **[triage](./skills/triage/SKILL.md)** | Move issues and external PRs through a state machine of triage roles: categorise, verify, grill if needed, and write agent-ready briefs. Explicit delegation permits recorded decisions within the assigned scope, not invented facts or approval bypasses. |
 | **[ideate](./skills/ideate/SKILL.md)** | Generate grounded ideas for what to build next, critique every one, and rank the survivors in a Markdown file, each with a prompt that takes it into `/grill-with-docs`. |
 | **[improve-architecture](./skills/improve-architecture/SKILL.md)** | Assess a codebase's architecture and stop when it is healthy; otherwise map the structure, list deepening opportunities, grill and design the one you pick, and hand a plan to `/implement`. |
-| **[improve-file-structure](./skills/improve-file-structure/SKILL.md)** | Assess file organization and stop when it is healthy; otherwise design a clearer layout and a behavior-preserving migration plan for `/implement`, with TypeScript, Go, Python, and Ruby guidance. |
-| **[refactor](./skills/refactor/SKILL.md)** | Refactor code at method, file, or project scope without changing behavior. Assesses first and stops when the code is clean, and gates edits on test coverage. |
+| **[improve-file-structure](./skills/improve-file-structure/SKILL.md)** | Assess file organization and stop when it is healthy; otherwise design a clearer layout and a behavior-preserving migration plan for `/implement`, with TypeScript, Go, Python, and Ruby guidance. Multi-session specs retain the approved move map, linked from each affected ticket. |
+| **[refactor](./skills/refactor/SKILL.md)** | Refactor code at method, file, or project scope without changing behavior. Assesses first and stops when the code is clean, and gates edits on test coverage and a verified baseline. |
 | **[improve-tests](./skills/improve-tests/SKILL.md)** | Cut a test suite to the tests that catch real bugs and its run time to the minimum: measure first, delete or demote low-value tests, fix slow setup, and prove every cut keeps the checks that matter. |
 | **[orchestrate](./skills/orchestrate/SKILL.md)** | Work through GitHub issues or local Markdown tickets unattended in parallel Claude Code, Codex, Cursor, or OMP lanes, with workers in Herdr panes and git worktrees. |
 | **[commit](./skills/commit/SKILL.md)** | Commit all changes on the current branch, main included, after a scan for secrets. |
@@ -212,11 +214,11 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 | **[fix-findings](./skills/fix-findings/SKILL.md)** | Apply every finding from the most recent review, audit, verification, or check, at the root cause and without widening scope. |
 | **[setup-supermatt-skills](./skills/setup-supermatt-skills/SKILL.md)** | Configure this repo for the engineering skills: issue tracker, triage labels, domain doc layout, and external peer policy. Run once per repo. |
 | **[to-spec](./skills/to-spec/SKILL.md)** | Turn the current conversation into a spec and publish it to the issue tracker. |
-| **[to-tickets](./skills/to-tickets/SKILL.md)** | Break any plan, spec, or conversation into a set of tracer-bullet tickets, each declaring its blocking edges, as text in one file per ticket locally or as native blocking links on a real tracker. |
+| **[to-tickets](./skills/to-tickets/SKILL.md)** | Break any plan, spec, or conversation into a set of tracer-bullet tickets, each declaring its blocking edges, as text in one file per ticket locally or as native blocking links where supported, otherwise the configured textual fallback. |
 | **[implement](./skills/implement/SKILL.md)** | Build the work described by a spec, tickets, or triaged issues, driving `/tdd` at pre-agreed seams, then committing, checking it with `/qa`, and closing out with `/code-review`. |
 | **[implement-spec](./skills/implement-spec/SKILL.md)** | Build a whole spec through native parallel subagents in ticket worktrees, integrate into one branch, and verify the combined result with `/qa` and `/code-review` before shipping. |
 | **[retro](./skills/retro/SKILL.md)** | Run a retrospective on verified Claude Code, Codex, Cursor, or OMP session evidence and get ranked suggestions for the agent's environment, with explicit gaps when full history is unavailable. |
-| **[wayfinder](./skills/wayfinder/SKILL.md)** | Plan a huge chunk of work (more than one agent session can hold) as a shared map of decision tickets on the issue tracker, resolved one at a time until the way to the destination is clear. |
+| **[wayfinder](./skills/wayfinder/SKILL.md)** | Plan a huge chunk of work as a shared map of decision tickets. Where the tracker lacks exclusive acquisition, one coordinator grants session-owned claims before tickets run in parallel. |
 
 ### Model-invoked
 
@@ -224,7 +226,7 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 |---|---|
 | **[prototype](./skills/prototype/SKILL.md)** | Build a throwaway prototype to answer a design question: a single shareable HTML file for state/logic, or several toggleable UI variations. |
 | **[diagnosing-bugs](./skills/diagnosing-bugs/SKILL.md)** | Disciplined diagnosis loop for hard bugs and performance regressions: build a feedback loop that goes red on this bug → minimise → hypothesise → instrument → fix → regression-test. |
-| **[research](./skills/research/SKILL.md)** | Investigate a question against high-trust primary sources and capture the findings as a cited Markdown file in the repo, run as a background agent. |
+| **[research](./skills/research/SKILL.md)** | Investigate a question against high-trust primary sources and capture the findings as a cited Markdown file in the repo, using a background agent when available, with fresh-session or direct-research fallbacks. |
 | **[tdd](./skills/tdd/SKILL.md)** | Test-driven development with a red-green loop. Builds features or fixes bugs one vertical slice at a time. |
 | **[domain-modeling](./skills/domain-modeling/SKILL.md)** | Actively build and sharpen a project's domain model by challenging terms, stress-testing with scenarios, and updating `GLOSSARY.md` and ADRs inline. |
 | **[codebase-design](./skills/codebase-design/SKILL.md)** | Shared discipline and vocabulary for designing deep modules: small interfaces, clean seams, testable through the interface. |
@@ -245,7 +247,7 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 | **[teach](./skills/teach/SKILL.md)** | Teach the user a new skill or concept over multiple sessions, using the current directory as a stateful teaching workspace. |
 | **[to-questionnaire](./skills/to-questionnaire/SKILL.md)** | Turn a decision you can't answer alone into a Markdown questionnaire for the one person who can (filled in async, or together over a meeting). |
 | **[what-would-you-do](./skills/what-would-you-do/SKILL.md)** | Answer the agent's question with this one: it explains the problem, weighs each option, and recommends an answer. |
-| **[jury](./skills/jury/SKILL.md)** | Put a hard decision to a jury of 3 or 5 seats: blind votes, one anonymous review round, and one committed verdict. Its external seat follows the repository peer policy, including a host-only panel. |
+| **[jury](./skills/jury/SKILL.md)** | Put a hard decision to a jury of 3 or 5 seats: blind votes, one anonymous review round, and one committed verdict, or an unavailable result if no blind vote succeeds. Its external seat follows the repository peer policy, including a host-only panel. |
 | **[wait-what](./skills/wait-what/SKILL.md)** | Fire this the moment a message doesn't land. The agent re-pitches it with the context you're missing, in plain English, using your `GLOSSARY.md` vocabulary. |
 
 ### Model-invoked

@@ -1,9 +1,10 @@
 {"type":"title","v":1,"title":"Fixture"}
 {"type":"session","version":3,"id":"omp-session","timestamp":"2026-10-15T00:00:00.000Z","cwd":"/workspace/project"}
 {"type":"message","id":"u1","parentId":null,"message":{"role":"user","content":[{"type":"text","text":"OMP verified user marker"}]}}
-{"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":[{"type":"text","text":"OMP main answer"}]}}
-{"type":"message","id":"abandoned","parentId":"u1","message":{"role":"assistant","content":[{"type":"text","text":"OMP abandoned answer"}]}}
-{"type":"message","id":"tool1","parentId":"a1","message":{"role":"toolResult","content":[{"type":"text","text":"OMP failed tool"}],"details":{"isError":true}}}
+{"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":[{"type":"text","text":"OMP main answer"},{"type":"toolCall","id":"active-task","name":"task","arguments":{"name":"child"}}]}}
+{"type":"message","id":"abandoned","parentId":"u1","message":{"role":"assistant","content":[{"type":"text","text":"OMP abandoned answer"},{"type":"toolCall","id":"abandoned-task","name":"task","arguments":{"name":"abandoned"}}]}}
+{"type":"message","id":"abandoned-result","parentId":"abandoned","message":{"role":"toolResult","toolName":"task","toolCallId":"abandoned-task","content":[],"details":{"results":[{"id":"abandoned"}]}}}
+{"type":"message","id":"tool1","parentId":"a1","message":{"role":"toolResult","toolName":"task","toolCallId":"active-task","content":[{"type":"text","text":"OMP failed tool"}],"details":{"isError":true,"results":[{"id":"child"}]}}}
 {"type":"compaction","id":"compact1","parentId":"tool1","summary":"OMP compacted evidence"}
 {"type":"message","id":"final1","parentId":"compact1","message":{"role":"assistant","content":[{"type":"text","text":"OMP final answer"}]}}
 {"type":"model_usage","id":"usage1","parentId":"abandoned","activeLeafId":"final1","purpose":"late","api":"test","provider":"test","model":"test","usage":{},"stopReason":"stop"}

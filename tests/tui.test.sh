@@ -34,17 +34,46 @@ tmux has-session -t qa-isolated 2>/dev/null && fail "stop used the inherited ser
 tmux -S "$TMP/outer.sock" has-session -t outer || fail "the inherited session was changed"
 tmux -S "$TMP/outer.sock" kill-server
 
-# The launch script path can contain spaces and apostrophes too.
+# Launch paths can contain spaces and apostrophes, regardless of unrelated TMPDIR.
 quoted_tmp="$TMP/launch's dir"
 mkdir "$quoted_tmp"
-TMPDIR="$quoted_tmp" sh "$TUI" start qa-quoted 40 10 sh -c 'echo quoted-ready; sleep 5'
+export TMUX_TMPDIR="$quoted_tmp"
+TMPDIR="$TMP/nonexistent" sh "$TUI" start qa-quoted 40 10 sh -c 'echo quoted-ready; sleep 5' \
+  || fail "start depended on unrelated TMPDIR or rejected a quoted scratch path"
 sh "$TUI" wait qa-quoted quoted-ready 5 >/dev/null || fail "a quoted launch path did not start"
-[ -z "$(ls -A "$quoted_tmp")" ] || fail "a successful launch left its script behind"
-TMPDIR="$quoted_tmp" sh "$TUI" start qa-quoted 40 10 sh -c 'echo unwanted' \
+for launch in "$quoted_tmp"/tui-launch.*; do
+  [ ! -e "$launch" ] || fail "a successful launch left its script behind"
+done
+TMPDIR="$TMP/nonexistent" sh "$TUI" start qa-quoted 40 10 sh -c 'echo unwanted' \
   >"$TMP/duplicate.out" 2>"$TMP/duplicate.err" && fail "a duplicate session start passed"
-[ -z "$(ls -A "$quoted_tmp")" ] || fail "a rejected start left its launch script behind"
+for launch in "$quoted_tmp"/tui-launch.*; do
+  [ ! -e "$launch" ] || fail "a rejected start left its launch script behind"
+done
 sh "$TUI" wait qa-quoted quoted-ready 5 >/dev/null || fail "a rejected start changed the existing session"
 sh "$TUI" stop qa-quoted
+export TMUX_TMPDIR="$TMP"
+
+# Launch arguments reach the program byte-for-byte, without shell evaluation.
+set -- "" "it's here" "one
+" "two
+
+" "
+" "embedded
+line" " 	 spaced " '雪' '$(touch injected); * `false` $HOME \"'
+printf '%s\0' "$@" >"$TMP/argv.expected"
+sh "$TUI" start qa-argv 80 24 sh -c 'printf "%s\0" "$@" >"$0"; exit 7' "$TMP/argv.actual" "$@" \
+  || fail "argument recorder did not start"
+tries=100
+while [ "$(tmux display -p -t qa-argv '#{pane_dead}')" != 1 ] && [ "$tries" -gt 0 ]; do
+  sleep 0.1
+  tries=$((tries - 1))
+done
+cmp "$TMP/argv.expected" "$TMP/argv.actual" || fail "start changed argument bytes"
+[ "$(tmux display -p -t qa-argv '#{pane_dead_status}')" = 7 ] || fail "argument recorder lost its exit status"
+for launch in "$TMP"/tui-launch.*; do
+  [ ! -e "$launch" ] || fail "argument recorder left its launch script behind"
+done
+sh "$TUI" stop qa-argv
 
 # A pane can disappear after display/send-keys succeeds. Polling must propagate
 # capture failure instead of accepting absent text or a stable empty screen.
