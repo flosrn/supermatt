@@ -1,11 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collectState, comparisonStatus } from "../scripts/lib/skill-evals.mjs";
+import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collectState, comparisonStatus, planComparison, absentResult } from "../scripts/lib/skill-evals.mjs";
 import { mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { run, digest, save } from "../scripts/lib/skill-evidence.mjs";
 import { cases } from "./evals/cases.mjs";
+
+// A hook in a linked worktree exports an absolute GIT_DIR, which would aim every git command below at the real repo.
+for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
 
 const skill = { path: "/plugin/skills/example/SKILL.md", body: "SKILL CONTENT\n" };
 const events = [
@@ -115,6 +119,29 @@ test("candidate acceptance permits a measured baseline failure but not incomplet
   assert.equal(verdict([{ status: "unknown" }]), "blocked");
 });
 
+test("a case whose skill the baseline lacks is planned without baseline runs; one the candidate lacks stops before any run", () => {
+  const selected = [{ id: "old", skill: "qa" }, { id: "new", skill: "babysit-pr" }];
+  const skills = { baseline: new Set(["qa"]), candidate: new Set(["qa", "babysit-pr"]) };
+  const plan = planComparison(selected, skills, { conditions: ["neutral", "competing"], repetitions: 3 });
+  assert.deepEqual(plan, { absent: ["new"], plannedRuns: 18, absentRuns: 6 });
+  assert.throws(() => planComparison(selected, { ...skills, candidate: new Set(["qa"]) }, { conditions: ["neutral"], repetitions: 1 }), /candidate.*babysit-pr/);
+});
+
+test("absent baseline rows complete a comparison only in the baseline arm and as accounted", () => {
+  const report = { plannedRuns: 3, absentRuns: 1, completedRuns: 4, results: [
+    { id: "baseline-old-neutral-1", status: "fail" }, absentResult("baseline-new-neutral-1"),
+    { id: "candidate-old-neutral-1", status: "pass" }, { id: "candidate-new-neutral-1", status: "pass" },
+  ] };
+  assert.equal(comparisonStatus(report), "pass");
+  assert.equal(comparisonStatus({ ...report, absentRuns: 0 }), "blocked", "an absent row the plan did not account for");
+  const swapped = report.results.map(r => r.id === "baseline-new-neutral-1" ? { ...r, id: "baseline-old-neutral-2" } : r);
+  assert.equal(comparisonStatus({ ...report, results: swapped }), "blocked", "rows must pair across arms");
+  const candidateAbsent = report.results.map(r => r.id === "candidate-new-neutral-1" ? absentResult(r.id) : r);
+  assert.equal(comparisonStatus({ ...report, results: candidateAbsent }), "blocked", "the candidate arm is never absent");
+  const review = { id: "baseline-new-neutral-1", verdict: "pass", reviewer: "r", rationale: "r", evidence: ["x:1"] };
+  assert.throws(() => reviewResults(report.results, [review]), /Cannot override/, "an absent row has nothing to adjudicate");
+});
+
 test("CLI rejects a timeout above five minutes before launching a model", async () => {
   await assert.rejects(run(process.execPath, ["scripts/evaluate-skills.mjs", "--model", "test", "--baseline", "HEAD", "--timeout", "301", "--dry-run"]), /1\.\.300/);
 });
@@ -155,4 +182,107 @@ test("CLI adjudication rechecks mechanical failures before accepting a review", 
   const checked = JSON.parse(readFileSync(join(root, "adjudicated-report.json")));
   assert.equal(checked.status, "fail");
   assert.equal(checked.results.find(result => result.id === id).status, "fail");
+});
+
+// A repository whose first commit predates the Cursor manifest and the babysit-pr skill, as
+// main did before babysit-pr; the next commit adds the Cursor manifest, the last the skill.
+function history(t) {
+  const repo = mkdtempSync(join(tmpdir(), "supermatt-evals-history-"));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: repo, encoding: "utf8" }).trim();
+  const commit = files => {
+    for (const [path, body] of Object.entries(files)) { mkdirSync(dirname(join(repo, path)), { recursive: true }); writeFileSync(join(repo, path), body); }
+    git("add", "-A"); git("commit", "-qm", "snapshot");
+    return git("rev-parse", "HEAD");
+  };
+  const skillFiles = name => ({ [`skills/${name}/SKILL.md`]: `---\nname: ${name}\n---\n`, [`skills/${name}/agents/openai.yaml`]: "policy:\n  allow_implicit_invocation: true\n" });
+  git("init", "-q", "-b", "main");
+  const beforeCursor = commit({ ".claude-plugin/plugin.json": '{"name":"supermatt"}', ".agents/plugins/marketplace.json": '{"name":"supermatt","plugins":[{"name":"supermatt"}]}', ...skillFiles("qa") });
+  const beforeSkill = commit({ ".cursor-plugin/plugin.json": '{"name":"supermatt"}' });
+  const withSkill = commit(skillFiles("babysit-pr"));
+  return { repo, beforeCursor, beforeSkill, withSkill };
+}
+
+// Plans a qa case and a babysit-pr case, one variant, two runs each.
+const dryRun = (repo, baseline, candidate) => spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--repo", repo,
+  "--baseline", baseline, "--candidate", candidate, "--cases", "blocked-qa,babysit-feedback-first", "--variants", "neutral", "--runs", "2", "--dry-run"], { encoding: "utf8" });
+
+test("CLI dry run against a baseline that predates the Cursor manifest and a new skill plans the new skill as absent there", t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const result = dryRun(repo, beforeCursor, withSkill);
+  assert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(result.stdout);
+  assert.deepEqual([plan.baselineAbsent, plan.plannedRuns], [["babysit-feedback-first"], 6]);
+});
+
+test("CLI dry run stops, naming the skill, when the candidate lacks a selected skill", t => {
+  const { repo, beforeCursor, beforeSkill } = history(t);
+  const result = dryRun(repo, beforeCursor, beforeSkill);
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /babysit-pr/);
+  assert.equal(result.stdout, "", "no plan is printed");
+});
+
+test("CLI dry run stops on a candidate that lacks the Cursor manifest, before it checks the corpus", t => {
+  const { repo, beforeCursor } = history(t);
+  const result = dryRun(repo, beforeCursor, beforeCursor);
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /\.cursor-plugin\/plugin\.json/);
+});
+
+// A full run with the stub Codex: it freezes both arms, installs and lists the baseline, then
+// stops at the auth check, since CODEX_HOME is empty and no API key is set. No model is called.
+function stubRun(t, repo, baseline, candidate) {
+  const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-run-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const codexHome = join(scratch, "codex-home"); mkdirSync(codexHome);
+  const env = { ...process.env, CODEX_HOME: codexHome, TMPDIR: scratch };
+  delete env.OPENAI_API_KEY;
+  const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--repo", repo, "--codex", resolve("tests/fixtures/codex-stub.cjs"),
+    "--baseline", baseline, "--candidate", candidate, "--cases", "blocked-qa,babysit-feedback-first", "--variants", "neutral", "--runs", "2"], { encoding: "utf8", env });
+  const summary = JSON.parse(result.stdout);
+  return { summary, report: JSON.parse(readFileSync(join(summary.evidence, "report.json"), "utf8")) };
+}
+
+test("CLI run against a baseline that predates the Cursor manifest installs it and stops only for missing auth, before any model call", t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill);
+  assert.deepEqual([summary.error, summary.startedRuns], ["Native Codex auth is unavailable; no model calls started", 0]);
+  assert.deepEqual([report.baselineAbsent, report.plannedRuns, report.absentRuns], [["babysit-feedback-first"], 6, 2]);
+});
+
+// A comparison of one existing case ("old") and one new skill's case ("new"), one variant, one run.
+const pairedReport = results => ({ plannedRuns: 3, absentRuns: 1, completedRuns: 4, results });
+
+test("a comparison whose plan expects an absent baseline row it does not have is blocked", () => {
+  const report = pairedReport([{ id: "baseline-old-neutral-1", status: "pass" }, { id: "baseline-new-neutral-1", status: "pass" },
+    { id: "candidate-old-neutral-1", status: "pass" }, { id: "candidate-new-neutral-1", status: "pass" }]);
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("an absent row in the candidate arm blocks the comparison even when a candidate run failed", () => {
+  const report = pairedReport([{ id: "baseline-old-neutral-1", status: "pass" }, { id: "baseline-new-neutral-1", status: "pass" },
+    { id: "candidate-old-neutral-1", status: "fail" }, absentResult("candidate-new-neutral-1")]);
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("a blocked baseline run blocks the comparison even when the candidate failed", () => {
+  const report = { plannedRuns: 2, completedRuns: 2, results: [{ id: "baseline-one", status: "blocked" }, { id: "candidate-one", status: "fail" }] };
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("rows that belong to neither arm block the comparison instead of standing in for a run", () => {
+  const report = { plannedRuns: 4, completedRuns: 4, results: [{ id: "baseline-one", status: "pass" }, { id: "candidate-one", status: "pass" },
+    { id: "other-one", status: "pass" }, { id: "other-two", status: "pass" }] };
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("a baseline run with an unknown status blocks the comparison", () => {
+  const report = { plannedRuns: 2, completedRuns: 2, results: [{ id: "baseline-one", status: "crashed" }, { id: "candidate-one", status: "pass" }] };
+  assert.equal(comparisonStatus(report), "blocked");
+});
+
+test("a baseline run that needs review keeps a passing candidate's comparison at needs review", () => {
+  const report = { plannedRuns: 2, completedRuns: 2, results: [{ id: "baseline-one", status: "needs review" }, { id: "candidate-one", status: "pass" }] };
+  assert.equal(comparisonStatus(report), "needs review");
 });

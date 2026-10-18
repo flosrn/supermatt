@@ -19,6 +19,9 @@ export function files(root, prefix = "") {
   });
 }
 
+// Each file's digest, by path.
+const inventory = (root, entries = files(root)) => Object.fromEntries(entries.map(path => [path, digest(readFileSync(join(root, path)))]));
+
 export function verifyPackages(root) {
   const claude = JSON.parse(readFileSync(join(root, ".claude-plugin/plugin.json"), "utf8"));
   const codex = JSON.parse(readFileSync(join(root, ".agents/plugins/marketplace.json"), "utf8"));
@@ -32,8 +35,10 @@ export function verifyPackages(root) {
   return { claude: claude.name, codex: codex.name, cursor: cursor.name };
 }
 
-export function manifest(root) {
-  const packages = verifyPackages(root);
+// `packaging: false` skips the package manifest checks, for a snapshot that is only measured
+// and never shipped: an older baseline can predate a manifest the current release requires.
+export function manifest(root, { packaging = true } = {}) {
+  const packages = packaging ? verifyPackages(root) : null;
   const entries = files(root);
   const skills = entries.filter(p => /^skills\/[^/]+\/SKILL\.md$/.test(p)).map(path => {
     const body = readFileSync(join(root, path), "utf8");
@@ -47,7 +52,7 @@ export function manifest(root) {
   });
   assert.ok(skills.length, "Empty skill inventory");
   assert.equal(entries.filter(p => p.endsWith("/SKILL.md")).length, skills.length, "Nested skills are not supported");
-  const resources = Object.fromEntries(entries.map(path => [path, digest(readFileSync(join(root, path)))]));
+  const resources = inventory(root, entries);
   return { skills, packages, files: resources, digest: digest(JSON.stringify(resources)) };
 }
 
@@ -192,8 +197,8 @@ export function verifyDiscovery(observed, expected, home) {
     root = candidate;
     assert.equal(relative(root, installed), source.path);
   }
-  const actual = manifest(root);
-  assert.deepEqual(actual.files, expected.files, "Installed resource inventory or bytes differ");
+  // Equal bytes carry every check manifest() ran on the frozen carrier for this arm.
+  assert.deepEqual(inventory(root), expected.files, "Installed resource inventory or bytes differ");
   return { skills: native.length, resources: Object.keys(expected.files).length, root,
     invocationMetadata: "pass", runtimeInvocationPolicy: "unobserved" };
 }

@@ -1,12 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, processStart, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
+
+// A hook in a linked worktree exports an absolute GIT_DIR, which would aim every git command below at the real repo.
+for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 
@@ -16,8 +19,8 @@ function stateDir(t) {
   return dir;
 }
 
-const checkRun = (name, conclusion, databaseId, runId = databaseId * 10, workflow = 1) => ({
-  __typename: "CheckRun", databaseId, name, status: conclusion ? "COMPLETED" : "IN_PROGRESS", conclusion,
+const checkRun = (name, conclusion, databaseId, runId = databaseId * 10, workflow = 1, attempt = 1) => ({
+  __typename: "CheckRun", databaseId, name, status: conclusion ? "COMPLETED" : "IN_PROGRESS", conclusion, attempt,
   detailsUrl: `https://github.com/acme/app/actions/runs/${runId}/job/${databaseId}`,
   checkSuite: { app: { databaseId: 15368 }, workflowRun: { databaseId: runId, workflow: { databaseId: workflow } } },
 });
@@ -79,6 +82,12 @@ function host({ prs = [], live = null } = {}) {
       return JSON.stringify({ data: { viewer: { login: "me" }, repository: { pullRequest } } });
     }
     if (group === "api" && verb === "user") return "me\n";
+    // The Actions jobs API: each job of a workflow run, every attempt, with its attempt number.
+    // A job whose attempt is null is one the API does not list.
+    const jobs = /^repos\/acme\/app\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100$/.exec(verb);
+    if (group === "api" && jobs) {
+      return live.checks.filter((c) => c.checkSuite?.workflowRun?.databaseId === Number(jobs[1]) && c.attempt != null).map((c) => `${c.databaseId} ${c.attempt}\n`).join("");
+    }
     if (group === "api" && verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}`) {
       if (live.rules instanceof Error) throw live.rules;
       return JSON.stringify(live.rules);
@@ -144,6 +153,44 @@ test("a PR named by number is bound to its own head branch", async (t) => {
   assert.deepEqual([resumed.action, resumed.pr, resumed.stateFile], ["reuse", 30, named.stateFile]);
 });
 
+test("two PRs with the same head branch name keep separate records, and a branch resume follows the PR named last", async (t) => {
+  const dir = stateDir(t);
+  const h = host({ prs: [
+    { number: 40, url: "https://github.com/acme/app/pull/40", state: "OPEN", headRefName: "feat/x" },
+    { number: 41, url: "https://github.com/acme/app/pull/41", state: "OPEN", headRefName: "feat/x" },
+  ] });
+  const a = open(base(dir, h.gh, { branch: undefined, pr: 40, duration: "2h" }));
+  spend(a.stateFile, "repair");
+  spend(a.stateFile, "repair");
+  handled(a.stateFile, { id: "C1", fingerprint: "f1", disposition: "fixed" });
+
+  const b = open(base(dir, h.gh, { branch: undefined, pr: 41, now: NOW + 600_000 }));
+  assert.notEqual(b.stateFile, a.stateFile);
+  assert.deepEqual([b.resumed, b.budgets.repair_cycles_left], [false, 2]);
+
+  const again = open(base(dir, h.gh, { branch: undefined, pr: 40, duration: "8h", now: NOW + 1200_000 }));
+  assert.deepEqual([again.stateFile, again.resumed, again.budgets.repair_cycles_left, again.budgets.deadline_at],
+    [a.stateFile, true, 0, "2026-10-14T14:00:00.000Z"]);
+  assert.equal(JSON.parse(readFileSync(again.stateFile, "utf8")).handled.C1.fingerprint, "f1");
+
+  // Without a PR number, the branch resumes the PR it was bound to last, and a write through
+  // the branch's discovery file lands in that PR's record.
+  assert.deepEqual(open(base(dir, h.gh)).stateFile, again.stateFile);
+});
+
+test("a branch's record before its PR exists moves to that PR's record when bound", async (t) => {
+  const dir = stateDir(t);
+  const h = host();
+  const first = open(base(dir, h.gh, { duration: "1h" }));
+  h.prs.push({ number: 7, url: "https://github.com/acme/app/pull/7", state: "OPEN", headRefName: "feat/x" });
+  const bound = bind(first.stateFile, 7);
+  assert.notEqual(bound, first.stateFile);
+  assert.equal(spend(first.stateFile, "repair").repair_cycles_left, 1, "an earlier FILE still writes to the bound record");
+  const resumed = open(base(dir, h.gh, { branch: undefined, pr: 7 }));
+  assert.deepEqual([resumed.stateFile, resumed.resumed, resumed.budgets.repair_cycles_left, resumed.budgets.deadline_at],
+    [bound, true, 1, "2026-10-14T13:00:00.000Z"]);
+});
+
 test("branches whose names differ only in punctuation keep separate state", async (t) => {
   const dir = stateDir(t);
   const h = host({ prs: [{ number: 3, url: "https://github.com/acme/app/pull/3", state: "OPEN", headRefName: "feat/x" }] });
@@ -205,6 +252,56 @@ test("two workflows with a job of the same name are two checks; a rerun replaces
     const { look } = babysat(t, { checks: order.map((i) => runs[i]) });
     const seen = look();
     assert.deepEqual([seen.checks.passing, seen.checks.failing.map((c) => c.run_id)], [1, [30]]);
+  }
+});
+
+test("two jobs of one workflow run that share a name are two checks: a passing one cannot hide a failing one", async (t) => {
+  for (const order of [[0, 1], [1, 0]]) {
+    const runs = [checkRun("test", "FAILURE", 1, 10), checkRun("test", "SUCCESS", 2, 10)];
+    const { look } = babysat(t, { checks: order.map((i) => runs[i]), mergeStateStatus: "UNSTABLE" });
+    const seen = look(NOW);
+    assert.deepEqual([seen.checks.passing, seen.checks.failing.map((c) => c.key)], [1, ["check-run:1"]]);
+    assert.notEqual(look(NOW + 400_000).outcome, "ready");
+  }
+});
+
+test("a rerun attempt of a workflow run replaces the attempt before it, by attempt and not by job id", async (t) => {
+  // Attempt 2 reran the failed job; a lower job id in the newer attempt still wins.
+  const { look } = babysat(t, { checks: [checkRun("test", "FAILURE", 5, 10, 1, 1), checkRun("test", "SUCCESS", 4, 10, 1, 2)] });
+  const seen = look();
+  assert.deepEqual([seen.checks.passing, seen.checks.failing.length], [1, 0]);
+
+  // Two same-name jobs failed and only one was rerun: which one is unknowable, so both failures stand.
+  const partial = babysat(t, { checks: [checkRun("test", "FAILURE", 1, 10, 1, 1), checkRun("test", "FAILURE", 2, 10, 1, 1), checkRun("test", "SUCCESS", 3, 10, 1, 2)] });
+  assert.deepEqual(partial.look().checks.failing.map((c) => c.key), ["check-run:1", "check-run:2"]);
+});
+
+test("a rerun of every same-name failed job replaces all of the earlier failures", async (t) => {
+  const { look } = babysat(t, { checks: [
+    checkRun("test", "FAILURE", 1, 10, 1, 1), checkRun("test", "FAILURE", 2, 10, 1, 1),
+    checkRun("test", "SUCCESS", 3, 10, 1, 2), checkRun("test", "SUCCESS", 4, 10, 1, 2),
+  ] });
+  const seen = look();
+  assert.deepEqual([seen.checks.passing, seen.checks.failing.map((c) => c.key)], [2, []]);
+});
+
+test("a failed job the jobs API does not list is never replaced by a newer same-name job of its run", async (t) => {
+  const { look } = babysat(t, { checks: [{ ...checkRun("test", "FAILURE", 1, 10, 1), attempt: null }, checkRun("test", "SUCCESS", 2, 10, 1, 2)] });
+  assert.deepEqual(look().checks.failing.map((c) => c.key), ["check-run:1"]);
+});
+
+test("rerunning the one failed job of two same-name jobs clears the failure, and only the rerun attempt is counted", async (t) => {
+  const { look } = babysat(t, { checks: [
+    checkRun("test", "SUCCESS", 1, 10, 1, 1), checkRun("test", "FAILURE", 2, 10, 1, 1), checkRun("test", "SUCCESS", 3, 10, 1, 2),
+  ] });
+  const { checks } = look();
+  assert.deepEqual([checks.failing.map((c) => c.key), checks.passing, checks.total], [[], 1, 1]);
+});
+
+test("of two reports of one status at the same moment, the failing one stands, in either order", async (t) => {
+  for (const states of [["FAILURE", "SUCCESS"], ["SUCCESS", "FAILURE"]]) {
+    const { look } = babysat(t, { checks: states.map((state) => statusContext("ci/ext", state, "2026-10-14T12:00:00Z")) });
+    assert.deepEqual(look().checks.failing.map((c) => c.name), ["ci/ext"], states.join(" then "));
   }
 });
 
@@ -651,4 +748,146 @@ test("a private repository whose plan has no rulesets has no ruleset checks; oth
 
   const denied = babysat(t, { rules: new Error("Command failed: gh api repos/acme/app/rules/branches/main\ngh: Not Found (HTTP 404)\n") });
   assert.throws(() => denied.look(), /HTTP 404/);
+});
+
+// A refused CLI call exits 1, writes nothing, and its error names the problem.
+const CLI = fileURLToPath(new URL("../skills/babysit-pr/scripts/babysit-state.mjs", import.meta.url));
+
+// A stub gh on PATH: the open PRs come from prs.json beside it, any PR it is asked to view
+// is PR 40, and any other call fails.
+function stubGh(t) {
+  const bin = mkdtempSync(join(tmpdir(), "babysit-stub-gh-"));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const setPrs = (numbers) => writeFileSync(join(bin, "prs.json"), JSON.stringify(numbers.map((number) => (
+    { number, url: `https://github.com/acme/app/pull/${number}`, state: "OPEN", headRefName: "feat/x", headRepositoryOwner: { login: "acme" } }))));
+  setPrs([]);
+  writeFileSync(join(bin, "gh"), `#!/bin/sh
+case "$1 $2" in
+  "api user") echo me ;;
+  "pr list") cat "${join(bin, "prs.json")}" ;;
+  "pr view") echo '{"number":40,"url":"https://github.com/acme/app/pull/40","state":"OPEN","headRefName":"feat/x"}' ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+`, { mode: 0o755 });
+  return { bin, setPrs };
+}
+
+// A checkout on branch feat/x, whose babysit-pr state lives under .git.
+function checkout(t) {
+  const repo = mkdtempSync(join(tmpdir(), "babysit-checkout-"));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: repo, encoding: "utf8" });
+  git("init", "-q", "-b", "feat/x");
+  return { repo, git, states: join(repo, ".git", "supermatt") };
+}
+
+const cli = (bin, args, cwd) => spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+
+// Every state file under dir, with its bytes.
+const tree = (dir) => !existsSync(dir) ? {} : Object.fromEntries(readdirSync(dir, { recursive: true }).map(String).sort()
+  .filter((path) => statSync(join(dir, path)).isFile()).map((path) => [path, readFileSync(join(dir, path), "utf8")]));
+
+test("CLI open refuses a branch with several open PRs and binds none of them", (t) => {
+  const { bin, setPrs } = stubGh(t);
+  const { repo, states } = checkout(t);
+  assert.equal(cli(bin, ["open", "--repo", "acme/app"], repo).status, 0);
+  setPrs([40, 41]);
+  const before = tree(states);
+  const refused = cli(bin, ["open", "--repo", "acme/app"], repo);
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /\b40\b.*\b41\b/);
+  assert.deepEqual(tree(states), before);
+});
+
+// Runs one refused CLI call against a state file and checks nothing under its directory changed.
+function refuses(t, stateFile, args, problem) {
+  const { bin } = stubGh(t);
+  const before = tree(dirname(stateFile));
+  const refused = cli(bin, [...args.slice(0, 1), "--state", stateFile, ...args.slice(1)], dirname(stateFile));
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, problem);
+  assert.deepEqual(tree(dirname(stateFile)), before);
+}
+
+test("CLI ci-result refuses an outcome outside the allowed set before any write", (t) => {
+  const { stateFile, look } = babysat(t, { checks: [checkRun("test", "FAILURE", 1)] });
+  look();
+  refuses(t, stateFile, ["ci-result", "--key", "check-run:1", "--outcome", "Rerun"], /outcome/);
+});
+
+test("CLI handled refuses a disposition outside the allowed set before any write", (t) => {
+  const { stateFile } = babysat(t, { comments: [comment("C1", "Rename x.")] });
+  refuses(t, stateFile, ["handled", "--id", "C1", "--fingerprint", "abc", "--disposition", "done"], /disposition/);
+});
+
+test("CLI handled refuses a call without --fingerprint before any write", (t) => {
+  const { stateFile } = babysat(t, { comments: [comment("C1", "Rename x.")] });
+  refuses(t, stateFile, ["handled", "--id", "C1", "--disposition", "fixed"], /fingerprint/);
+});
+
+test("CLI ci-result refuses a result before any snapshot has seen a head", (t) => {
+  const { stateFile } = babysat(t, { checks: [checkRun("test", "FAILURE", 1)] });
+  refuses(t, stateFile, ["ci-result", "--key", "check-run:1", "--outcome", "rerun"], /snapshot/);
+});
+
+test("CLI bind refuses a call with no PR number and leaves the branch unbound", (t) => {
+  const { stateFile } = open(base(stateDir(t), host().gh));
+  refuses(t, stateFile, ["bind"], /--pr/);
+});
+
+test("CLI open refuses a --pr that is not a number and creates no state", (t) => {
+  const { bin } = stubGh(t);
+  const { repo, states } = checkout(t);
+  const refused = cli(bin, ["open", "--repo", "acme/app", "--pr", "abc"], repo);
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /abc/);
+  assert.deepEqual(tree(states), {});
+});
+
+test("CLI open refuses a detached HEAD without --pr and creates no state", (t) => {
+  const { bin } = stubGh(t);
+  const { repo, git, states } = checkout(t);
+  git("commit", "-q", "--allow-empty", "-m", "start");
+  git("checkout", "-q", "--detach");
+  const refused = cli(bin, ["open", "--repo", "acme/app"], repo);
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /detached/);
+  assert.deepEqual(tree(states), {});
+});
+
+test("CLI spend refuses an unknown kind before it spends anything", (t) => {
+  const { stateFile } = babysat(t);
+  refuses(t, stateFile, ["spend", "retry"], /retry/);
+});
+
+test("CLI snapshot refuses a branch with no bound PR and asks for a bind", (t) => {
+  const { stateFile } = open(base(stateDir(t), host().gh));
+  refuses(t, stateFile, ["snapshot"], /bind/);
+});
+
+test("CLI bind refuses a second PR for a branch already bound to another", (t) => {
+  const h = host();
+  const { stateFile } = open(base(stateDir(t), h.gh));
+  h.prs.push({ number: 7, url: "https://github.com/acme/app/pull/7", state: "OPEN", headRefName: "feat/x" });
+  bind(stateFile, 7);
+  refuses(t, stateFile, ["bind", "--pr", "8"], /\b7\b/);
+});
+
+test("CLI bind of the PR a record already holds returns that record and writes nothing", (t) => {
+  const { stateFile } = babysat(t);
+  const { bin } = stubGh(t);
+  const before = tree(dirname(stateFile));
+  const again = cli(bin, ["bind", "--state", stateFile, "--pr", "4"], dirname(stateFile));
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(JSON.parse(again.stdout).stateFile, stateFile);
+  assert.deepEqual(tree(dirname(stateFile)), before);
+});
+
+test("a branch's record from before its PR existed keeps its window when open later discovers the PR", (t) => {
+  const dir = stateDir(t);
+  const h = host();
+  open(base(dir, h.gh, { duration: "1h" }));
+  h.prs.push({ number: 7, url: "https://github.com/acme/app/pull/7", state: "OPEN", headRefName: "feat/x" });
+  const found = open(base(dir, h.gh, { duration: "8h", now: NOW + 600_000 }));
+  assert.deepEqual([found.pr, found.resumed, found.budgets.deadline_at], [7, true, "2026-10-14T13:00:00.000Z"]);
 });
