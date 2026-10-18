@@ -76,7 +76,7 @@ All file-level checks, plus:
 
 A whole codebase always offers more findings than are worth acting on. Read `HOTSPOTS.md` and rank by change frequency crossed with complexity before listing anything. It decides what to look at first, not what is wrong.
 
-Read the ranked candidates through subagents, one per area, each returning findings rather than file contents. A project-scope assessment reads far more code than it reports on, and most of it comes back Clean. Step 4 reads what it actually edits. A project under about 1,000 source lines is the exception: read it directly, a few files per call, so each output stays under the 30,000-character limit that moves a result to a file.
+Read the ranked candidates through subagents, one per area, each returning findings rather than file contents. For branch-since-`<ref>` scope, the delegating session first writes `git diff <ref>...HEAD` to a file and requires the command to succeed before dispatching any reader. Follow [code-review's file-handoff pattern](../code-review/SKILL.md#1-pin-the-fixed-point), keeping this committed-diff scope rather than its broader working-tree scope. Pass the diff file path and relevant source scope to every reader so they can assess the changed code without shell or Git access. A project-scope assessment reads far more code than it reports on, and most of it comes back Clean. Step 4 reads what it actually edits. A project under about 1,000 source lines is the exception: read it directly, a few files per call, so each output stays under the 30,000-character limit that moves a result to a file.
 
 ### Planned and settled work
 
