@@ -8,6 +8,9 @@ import { dirname, join, resolve } from "node:path";
 import { run, digest, save } from "../scripts/lib/skill-evidence.mjs";
 import { cases } from "./evals/cases.mjs";
 
+// A hook in a linked worktree exports an absolute GIT_DIR, which would aim every git command below at the real repo.
+for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
+
 const skill = { path: "/plugin/skills/example/SKILL.md", body: "SKILL CONTENT\n" };
 const events = [
   { type: "thread.started", thread_id: "test" },

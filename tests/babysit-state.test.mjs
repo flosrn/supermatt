@@ -8,6 +8,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, processStart, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
+// A hook in a linked worktree exports an absolute GIT_DIR, which would aim every git command below at the real repo.
+for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
+
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 
 function stateDir(t) {
