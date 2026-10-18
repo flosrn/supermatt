@@ -35,18 +35,23 @@ class Failure extends Error {
 }
 class Usage extends Error {}
 
+// The caller's deadline for the wait in progress, which a retried read never
+// outlasts.
+let readsUntil;
+
 function tern(...args) {
   const retryable = ["inspect", "process", "capture", "--version"].includes(args[0]);
-  const deadline = Date.now() + 60_000;
+  const budget = Date.now() + 60_000;
+  const deadline = Math.min(budget, readsUntil ?? Infinity);
   let delay = 100;
   while (true) {
     const r = spawnSync("tern", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     if (r.error) throw new Failure("tern_failed", `tern ${args[0]}: ${r.error.message}`);
     if (r.status === 0) return r.stdout;
+    const failed = new Failure("tern_failed", (r.stderr || `tern ${args[0]} exited ${r.status}`).trim());
+    if (!retryable || r.signal || !/os error 35|Resource temporarily unavailable/.test(r.stderr || "")) throw failed;
     const remaining = deadline - Date.now();
-    if (!retryable || r.signal || !/os error 35|Resource temporarily unavailable/.test(r.stderr || "") || remaining <= 0) {
-      throw new Failure("tern_failed", (r.stderr || `tern ${args[0]} exited ${r.status}`).trim());
-    }
+    if (remaining <= 0) throw deadline < budget ? timedOut() : failed;
     sleep(Math.min(delay, remaining));
     delay = Math.min(delay * 2, 1000);
   }
@@ -57,15 +62,23 @@ function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+const timedOut = () => new Failure("timeout", "timed out waiting for agent status");
+
 // Polls fast at first, then once a second, so an hours-long wait stays cheap.
-function poll(deadline, check) {
+// A read the daemon is too busy to answer is retried until `readLimit`.
+function poll(deadline, check, readLimit = deadline) {
   const started = Date.now();
-  for (;;) {
-    const value = check();
-    if (value !== undefined) return value;
-    if (deadline !== undefined && Date.now() >= deadline) throw new Failure("timeout", "timed out waiting for agent status");
-    const interval = Date.now() - started < 10_000 ? 250 : 1000;
-    sleep(deadline === undefined ? interval : Math.max(0, Math.min(interval, deadline - Date.now())));
+  readsUntil = readLimit;
+  try {
+    for (;;) {
+      const value = check();
+      if (value !== undefined) return value;
+      if (deadline !== undefined && Date.now() >= deadline) throw timedOut();
+      const interval = Date.now() - started < 10_000 ? 250 : 1000;
+      sleep(deadline === undefined ? interval : Math.max(0, Math.min(interval, deadline - Date.now())));
+    }
+  } finally {
+    readsUntil = undefined;
   }
 }
 
@@ -612,9 +625,9 @@ const commands = {
         poll(gate, () => {
           const now = current(agent);
           return ["working", "blocked"].includes(now.agent_status) || now[SURFACE].prompts > before.prompts ? true : undefined;
-        });
+        }, deadline ?? Infinity);
       } catch (e) {
-        if (e.code === "timeout" && gate !== deadline) throw new Failure("agent_prompt_stalled", `agent ${who} showed no activity within ${PROMPT_GATE_MS}ms of the prompt`);
+        if (e.code === "timeout" && Date.now() < (deadline ?? Infinity)) throw new Failure("agent_prompt_stalled", `agent ${who} showed no activity within ${PROMPT_GATE_MS}ms of the prompt`);
         throw e;
       }
     }

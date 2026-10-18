@@ -27,7 +27,8 @@ const test = (name, fn) => nodeTest(name, { timeout: 30_000 }, fn);
 // an Enter's frame that many milliseconds later, `pasteLost` and `enterLost`
 // make omp ignore them, `noTurn` makes an Enter empty the composer and start
 // nothing, `exitOnEnter` ends omp at the next Enter, and `processFails` fails
-// that many `tern process` calls.
+// that many `tern process` calls. A world's `failure` fails `remaining` calls
+// of its `command` with its `message`, after letting `skip` of them succeed.
 const FAKE_TERN = `#!/usr/bin/env node
 const fs = require("node:fs");
 const file = process.env.FAKE_TERN_WORLD;
@@ -37,8 +38,11 @@ w.calls.push(a);
 const save = () => fs.writeFileSync(file, JSON.stringify(w));
 const fail = (m) => { save(); process.stderr.write("tern " + a[0] + ": " + m + "\\n"); process.exit(1); };
 if (w.failure && a[0] === w.failure.command && w.failure.remaining > 0) {
-  w.failure.remaining -= 1;
-  fail(w.failure.message);
+  if (w.failure.skip > 0) w.failure.skip -= 1;
+  else {
+    w.failure.remaining -= 1;
+    fail(w.failure.message);
+  }
 }
 const pane = (id) => w.panes[id] || fail("no block " + id);
 const out = (v) => { save(); process.stdout.write(typeof v === "string" ? v : JSON.stringify(v, null, 2) + "\\n"); process.exit(0); };
@@ -969,6 +973,44 @@ test("a version read recovers after EAGAIN", (t) => {
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /tern 0\.9\.2/);
   assert.equal(w.calls().length, 3);
+});
+
+test("a wait with --timeout stops retrying a busy daemon at its own timeout", (t) => {
+  const w = worker(t, { fakeTime: true });
+  w.edit((x) => { x.failure = { command: "inspect", skip: 1, remaining: 1000, message: "os error 35" }; });
+  const r = w.run("agent", "wait", "app-work-1-1", "--until", "working", "--timeout", "1000");
+  assert.equal(r.error?.code, "timeout", r.stderr);
+  assert.equal(w.sleeps().reduce((sum, ms) => sum + ms, 0), 1000);
+});
+
+test("a busy daemon at the prompt gate does not read as a prompt that never landed", (t) => {
+  const w = worker(t, { fakeTime: true });
+  // Resolving, the paste and the Enter take four reads; the fifth is the gate's.
+  w.edit((x) => { x.failure = { command: "inspect", skip: 4, remaining: 30, message: "os error 35" }; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "go", "--wait");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.result.agent.agent_status, "done");
+  assert.equal(w.read().failure.remaining, 0);
+});
+
+test("a prompt whose --timeout runs out while the daemon is busy at the gate reports timeout", (t) => {
+  const w = worker(t, { fakeTime: true });
+  w.edit((x) => { x.failure = { command: "inspect", skip: 4, remaining: 1000, message: "os error 35" }; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "go", "--wait", "--timeout", "8000");
+  assert.equal(r.error?.code, "timeout", r.stderr);
+});
+
+test("a read after agent start's wait keeps the full retry budget", (t) => {
+  const w = lane(t, { fakeTime: true });
+  // A name an earlier omp in pane 13 held, so the claim re-reads pane 13 after the wait.
+  assert.equal(w.run("agent", "rename", "13", "app-work-1-1").code, 0);
+  w.edit((x) => { x.panes[13].child = omp(99); x.panes[13].foreground = omp(99); });
+  // Checking the name and the wait take two reads; the third is the claim's.
+  w.edit((x) => { x.failure = { command: "inspect", skip: 2, remaining: 5, message: "os error 35" }; });
+  const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "1000");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.result.agent.name, "app-work-1-1");
+  assert.equal(w.read().failure.remaining, 0);
 });
 
 test("renaming an agent to the name it already holds succeeds", (t) => {
