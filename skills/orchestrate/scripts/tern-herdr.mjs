@@ -34,6 +34,9 @@ class Failure extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 class Usage extends Error {}
+// A failed Tern query during `agent prompt`, carrying the composer note the
+// caller needs; any other error is returned unchanged.
+const withNote = (e, note) => e.code === "tern_failed" ? new Failure(e.code, `${e.message}; ${note}`) : e;
 
 // The caller's deadline for the wait in progress, which a retried read never
 // outlasts.
@@ -625,8 +628,7 @@ const commands = {
       pasted = awaitTypable(agent, ECHO_MAX_MS, (s) => !!s.composer);
       assertTypable(agent, pasted.composer ? TEXT_UNSENT : PASTE_UNSEEN);
     } catch (e) {
-      if (e.code === "tern_failed") throw new Failure(e.code, `${e.message}; ${pasted?.composer ? `${TEXT_UNSENT}; read the pane before prompting again` : PASTE_UNSEEN}`);
-      throw e;
+      throw withNote(e, pasted?.composer ? `${TEXT_UNSENT}; read the pane before prompting again` : PASTE_UNSEEN);
     }
     if (!pasted.composer) throw new Failure("agent_prompt_stalled", `agent ${who} showed no paste in its composer within ${ECHO_MAX_MS}ms; ${PASTE_UNSEEN}`);
     tern("send", agent.pane_id, "keys", "Enter");
@@ -636,8 +638,7 @@ const commands = {
     try {
       sent = awaitTypable(agent, SUBMIT_MAX_MS, (s) => !s.composer, true);
     } catch (e) {
-      if (e.code === "tern_failed") throw new Failure(e.code, `${e.message}; ${PASTE_UNSEEN}`);
-      throw e;
+      throw withNote(e, PASTE_UNSEEN);
     }
     if (sent.composer) throw new Failure("agent_prompt_stalled", `agent ${who} kept the prompt in its composer after Enter; ${TEXT_UNSENT}`);
     if (!flags.wait) return { agent };
@@ -654,15 +655,13 @@ const commands = {
         }, deadline ?? Infinity);
       } catch (e) {
         if (e.code === "timeout" && Date.now() < (deadline ?? Infinity)) throw new Failure("agent_prompt_stalled", `agent ${who} showed no activity within ${PROMPT_GATE_MS}ms of the prompt`);
-        if (e.code === "tern_failed") throw new Failure(e.code, `${e.message}; ${PASTE_UNSEEN}`);
-        throw e;
+        throw withNote(e, PASTE_UNSEEN);
       }
     }
     try {
       return { agent: settle(agent, until, deadline, true) };
     } catch (e) {
-      if (e.code === "tern_failed") throw new Failure(e.code, `${e.message}; ${PASTE_UNSEEN}`);
-      throw e;
+      throw withNote(e, PASTE_UNSEEN);
     }
   },
   "agent wait"(args) {
