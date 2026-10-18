@@ -34,6 +34,28 @@ test("scratch preflight detects lost ancestor dependencies before execution", (t
   assert.equal(run(scratch, "fixture-preload", "still-missing").status, 1);
 });
 
+test("scratch preflight resolves Node built-ins from an empty directory", (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "scratch-dependencies-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, [...runtimeArgs, script, scratch, "node:test", "node:fs"], { encoding: "utf8" });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /node:test: built-in/);
+  assert.match(result.stdout, /node:fs: built-in/);
+});
+
+test("scratch preflight still rejects missing packages mixed with built-ins", (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "scratch-dependencies-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, [...runtimeArgs, script, scratch, "node:fs", "still-missing", "node:test"], { encoding: "utf8" });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /node:fs: built-in/);
+  assert.match(result.stdout, /node:test: built-in/);
+  assert.ok(result.stderr.startsWith(`Cannot resolve still-missing from ${scratch}: `), result.stderr);
+  assert.doesNotMatch(result.stderr, /Cannot resolve node:/);
+});
+
 test("scratch preflight requires a directory and at least one package", () => {
   const result = spawnSync(process.execPath, [...runtimeArgs, script], { encoding: "utf8" });
   assert.equal(result.status, 2);
