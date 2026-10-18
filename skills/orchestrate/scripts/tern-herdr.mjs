@@ -371,14 +371,16 @@ const PROCESS_QUERY_FAILED = Symbol("process query failed");
 // The agent in a pane right now, or undefined when its foreground is not omp.
 // An omp `agent start` launched is read from its surface record (`record`, or
 // the one its name holds); any other omp, the orchestrator's own pane among
-// them, only from Tern's working flag.
+// them, only from Tern's working flag. A pane the fresh inspect after a failed
+// process query no longer shows is dropped from `snap` too, so the caller treats
+// it as absent from inspect and keeps its name.
 function agentIn(pane, snap = snapshot(), record) {
   const info = snap.panes.get(pane);
   if (!info) return undefined;
   let fg;
   try { ({ fg } = foreground(pane)); } catch (e) {
     if (e.code === "timeout") throw e;
-    if (!snapshot().panes.has(pane)) return undefined;
+    if (!snapshot().panes.has(pane)) { snap.panes.delete(pane); return undefined; }
     e[PROCESS_QUERY_FAILED] = true;
     throw e;
   }

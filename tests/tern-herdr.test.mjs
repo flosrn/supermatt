@@ -1199,6 +1199,24 @@ test("agent get treats a pane absent from fresh inspect after process failure as
   assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pane_id, "50");
 });
 
+test("a pane absent from fresh inspect keeps its name even when a later process query shows a shell", (t) => {
+  const w = worker(t);
+  const record = w.record(50);
+  const name = join(w.stateDir, "names", "app-work-1-1.json");
+  // The fresh inspect after the failed process query omits the pane while omp
+  // has left it, so only a stale view would go on to ask Tern for its foreground.
+  w.edit((x) => { x.panes[50].processFails = 1; x.panes[50].missingOnInspect = 2; x.panes[50].exitAfterInspects = 2; });
+  const r = w.run("agent", "get", "app-work-1-1");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "agent_not_found");
+  assert.ok(existsSync(name), "a pane absent from inspect keeps its name");
+  assert.ok(existsSync(record), "a pane absent from inspect keeps its surface record");
+  // Once inspect shows the pane again with a shell in front, the name is cleared.
+  assert.equal(w.run("agent", "get", "app-work-1-1").error?.code, "agent_not_found");
+  assert.ok(!existsSync(name));
+  assert.ok(!existsSync(record));
+});
+
 test("agent list omits a pane absent from fresh inspect after process failure", (t) => {
   const w = worker(t);
   w.edit((x) => { x.panes[50].processFails = 1; x.panes[50].missingOnInspect = 2; });
