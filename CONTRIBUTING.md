@@ -24,6 +24,31 @@ codex plugin marketplace add .
 codex plugin add supermatt@supermatt
 ```
 
+Load the checkout directly in Cursor Agent CLI:
+
+```
+agent --plugin-dir .
+```
+
+Load it directly in OMP:
+
+```
+omp --plugin-dir .
+```
+
+For an isolated OMP marketplace smoke, use a temporary OMP profile, add this checkout as its marketplace, then run:
+
+```text
+omp plugin marketplace add "$PWD"
+```
+
+```
+omp plugin install --dry-run --scope user supermatt@supermatt
+omp --plugin-dir "$PWD" --no-session -p --model MODEL '/skill:ask-supermatt I need to fix a reproducible bug'
+```
+
+Remove only the temporary profile after preserving the smoke output. Never reuse or delete the normal user profile.
+
 ## Check your change
 
 Run these checks before you open a pull request. CI runs them too:
@@ -40,9 +65,9 @@ bun test tests/
 
 `bun test tests/` runs the JavaScript tests, including orchestration, scratch dependencies, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`.
 
-### Codex discovery and behavioral evaluation
+### Codex-only discovery and behavioral evaluation
 
-These opt-in checks use the installed Codex CLI and Git; behavioral evaluation also requires Node for fixture execution. Bun is the preferred driver. They never install or upgrade a tool, modify your installed plugins, or publish a report. Claude checks remain separate; unavailable Claude coverage must be recorded as pending.
+`scripts/test-plugin-discovery.mjs` and `scripts/evaluate-skills.mjs` are Codex runtime checks. They do not verify Claude Code, Cursor, or OMP execution. These opt-in checks use the installed Codex CLI and Git; behavioral evaluation also requires Node for fixture execution. Bun is the preferred driver. They never install or upgrade a tool, modify your installed plugins, or publish a report. Unavailable host coverage must be recorded as unobserved.
 
 ```sh
 bun scripts/test-plugin-discovery.mjs

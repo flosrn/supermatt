@@ -14,11 +14,11 @@ Before spawning sub-agents, write a user-facing explanation of the problem space
 - The dependencies it would rely on, and which category they fall into (see [DEEPENING.md](DEEPENING.md))
 - A rough illustrative code sketch to ground the constraints, not a proposal, just a way to make the constraints concrete
 
-Show this to the user, then immediately proceed to Step 2. The user reads and thinks while the sub-agents work in parallel.
+Show this to the user, then immediately proceed to Step 2. The user reads and thinks while the alternatives are explored.
 
 ### 2. Spawn sub-agents
 
-Spawn 3+ sub-agents in parallel. Each must produce a **radically different** interface for the deepened module.
+Use 3+ separate design briefs, each producing a **radically different** interface for the deepened module. Spawn sub-agents up to the host's available capacity and queue the remaining briefs. If subagents are unavailable, use sequential fresh sessions where possible; otherwise explore the briefs yourself and report that the designs did not receive independent contexts.
 
 Prompt each sub-agent with a separate technical brief (file paths, coupling details, dependency category from [DEEPENING.md](DEEPENING.md), what sits behind the seam). The brief is independent of the user-facing problem-space explanation in Step 1. Give each agent a different design constraint:
 

@@ -12,7 +12,7 @@ license: MIT
 
 Design **deep modules**: a lot of behaviour behind a small interface, placed at a clean seam, testable through that interface. Use this language and these principles wherever code is being designed or restructured. The aim is leverage for callers, locality for maintainers, and testability for everyone.
 
-To survey a whole codebase for deepening opportunities, tell the user to run `/improve-architecture` (`$improve-architecture` in Codex).
+To survey a whole codebase for deepening opportunities, tell the user to run `/improve-architecture` in Claude linked installs or Cursor, `/supermatt:improve-architecture` from the Claude plugin, `$improve-architecture` in Codex, or `/skill:improve-architecture` in OMP.
 
 ## Glossary
 
@@ -122,4 +122,4 @@ Good interfaces make testing natural:
 
 - **Naming what's wrong with a module**, see [RED-FLAGS.md](RED-FLAGS.md): named signs of shallow and leaky modules, and how to read them together.
 - **Deepening a cluster given its dependencies**, see [DEEPENING.md](DEEPENING.md): dependency categories, seam discipline, and replace-don't-layer testing.
-- **Exploring alternative interfaces**, see [DESIGN-IT-TWICE.md](DESIGN-IT-TWICE.md): spin up parallel sub-agents to design the interface several radically different ways, then compare on depth, locality, and seam placement.
+- **Exploring alternative interfaces**, load [DESIGN-IT-TWICE.md](DESIGN-IT-TWICE.md) and [DEEPENING.md](DEEPENING.md): design the interface several radically different ways, using the workflow's delegation fallbacks, then compare on depth, locality, seam placement, and dependency category.

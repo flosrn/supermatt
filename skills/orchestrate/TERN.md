@@ -2,7 +2,7 @@
 
 This run drives OMP workers in Tern panes instead of Herdr panes. Every procedure in this skill stays as written, with these substitutions for the whole run:
 
-- **HERDR** is `node <this skill's directory>/scripts/tern-herdr.mjs`, with the directory as an absolute path, shell-quoted (`bun` may stand in for `node`). Every `herdr ...` command in SKILL.md, ANSWER.md, SPEC.md, TRIAGE.md and LOCAL.md runs as `HERDR ...` with the same arguments. It answers in Herdr's JSON shapes and error codes, built on the `tern` CLI.
+- **HERDR** is `node <this skill's directory>/scripts/tern-herdr.mjs`, with the directory as an absolute path, shell-quoted (`bun` may stand in for `node`). Every `herdr ...` command in SKILL.md, WORKER.md, ANSWER.md, SPEC.md, TRIAGE.md and LOCAL.md runs as `HERDR ...` with the same arguments. It answers in Herdr's JSON shapes and error codes, built on the `tern` CLI.
 - **`$HERDR_PANE_ID`** and **`$HERDR_TAB_ID`** are both `$TERN_PANE`, your own block. `HERDR tab rename "$TERN_PANE" ...` renames your tab.
 - **Workers are OMP only.** If the harness running this skill is not OMP, say that Tern serves only OMP workers, that Herdr runs the others, and stop.
 

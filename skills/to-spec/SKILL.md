@@ -8,7 +8,7 @@ license: MIT
 
 This skill takes the current conversation context and codebase understanding and produces a spec. Synthesize what you already know instead of re-grilling the idea: you ask the user only the seam check in step 2 and any step 4 finding that needs a decision.
 
-Read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md` first. If either is missing, tell the user to run `/setup-supermatt-skills` (`$setup-supermatt-skills` in Codex).
+Read `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md` first. If either is missing or unreadable, stop and tell the user to run `/setup-supermatt-skills` in Claude linked installs or Cursor, `/supermatt:setup-supermatt-skills` from the Claude plugin, `$setup-supermatt-skills` in Codex, or `/skill:setup-supermatt-skills` in OMP. Resume only after both required docs exist and have been read.
 
 If the user passes a reference, fetch it with the tracker doc's **Read an issue** command. For a `wayfinder` map, the decisions live in one of two places. When the map names a written destination (a spec or ADRs a ticket already assembled), read that destination: it is the decision record, and you fetch a linked ticket only where the destination is silent. Otherwise fetch every ticket its **Decisions so far** section links: those tickets hold the decisions the spec collapses into a plan.
 
@@ -22,13 +22,15 @@ Check with the user that these seams match their expectations.
 
 3. Write the spec using the template below. Don't publish it yet.
 
-4. Check the draft in a fresh context. This context wrote the spec, so it shares the spec's blind spots. Spawn one sub-agent with the draft and repo access, and this brief: "Report: (a) places where the spec contradicts itself, or a user story conflicts with an implementation decision or Out of Scope; (b) implementation decisions that the current codebase cannot support as written, citing the file; (c) user stories that no implementation or testing decision covers; (d) when the spec came from a decision record (a map's destination or tickets), decisions that contradict it or settle what it never settled. Quote the spec line for each finding. Under 300 words."
+4. Check the draft in a fresh context. This context wrote the spec, so it shares the spec's blind spots. Spawn one sub-agent with the draft, repo access, and the authoritative destination and fetched decision records from the map. Where records are passed as retrievable references instead of full text, include the tracker instructions needed to fetch them. Give it this brief: "Report: (a) places where the spec contradicts itself, or a user story conflicts with an implementation decision or Out of Scope; (b) implementation decisions that the current codebase cannot support as written, citing the file; (c) user stories that no implementation or testing decision covers; (d) when the spec came from a decision record (a map's destination or tickets), decisions that contradict it or settle what it never settled. Quote the spec line for each finding. Under 300 words."
+
+If subagents are unavailable, use a fresh session with the same draft, repo access, authoritative decision records or retrievable references and tracker instructions, and brief where possible. Otherwise review the draft yourself and disclose the lack of independent review before publishing.
 
 Fix the findings that have one clear fix. A finding that needs a decision goes to the user before you publish.
 
-5. Publish the spec to the project issue tracker. Apply the `ready-for-agent` triage label: it needs no further triage.
+5. Publish the spec to the project issue tracker. Apply the configured `ready-for-agent` role (a label on hosted trackers, `Status:` locally): it needs no further triage.
 
-When the spec came from a `wayfinder` map, start its body with `## Parent` and `#<map>`. After publishing, comment the spec's link on the map and close the map: the spec is its destination.
+When the spec came from a `wayfinder` map, start its body with `## Parent` and the configured tracker's canonical map reference: `#<number>` for a hosted issue map, or a usable Markdown path/link for a local map. After publishing, comment the spec's link on the map and close the map: the spec is its destination.
 
 <spec-template>
 
@@ -67,6 +69,8 @@ A list of implementation decisions that were made. This can include:
 When a provider and consumer evolve or deploy independently, name one authoritative contract, its owner, and how each side will be checked against it. Include actual serialization and consumer fixtures in the testing decision, with relevant error, null, mock, and feature-flag paths. For components changed and built atomically, an existing shared type can be that contract; require an additional schema or generator only for a concrete gap.
 
 Name modules and their interfaces, not source file paths or code snippets: those go stale fast. Two kinds of path are durable and belong in the spec: a document the spec builds on (a behavioural spec, an ADR), and the existing tests named as prior art.
+
+For an approved file-migration map, preserve its exact source and destination paths and all preserved path contracts in a dedicated `## Migration map` section. These are requirements, not optional implementation details; carry the complete approved map into the published spec so tickets and fresh implementation sessions can retrieve it. This is a conditional exception to the source-path rule above.
 
 Exception: if a prototype produced a snippet that encodes a decision more precisely than prose can (state machine, reducer, schema, type shape), inline it within the relevant decision and note briefly that it came from a prototype, citing its `prototype/<name>` branch. Trim to the decision-rich parts, not a working demo, just the important bits.
 

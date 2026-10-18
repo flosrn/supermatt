@@ -42,28 +42,32 @@ For a PR, the same states read against the attached code: `ready-for-agent` mean
 
 Every triaged issue should carry exactly one category role and one state role. If state roles conflict, flag it and ask the maintainer before doing anything else.
 
-These are canonical role names. The actual label strings used in the issue tracker may differ. The mapping is in `docs/agents/triage-labels.md`, and the tracker operations are in `docs/agents/issue-tracker.md`. If either is missing, tell the user to run `/setup-supermatt-skills` (`$setup-supermatt-skills` in Codex).
+These are canonical role names. The actual label strings used in the issue tracker may differ. The mapping is in `docs/agents/triage-labels.md`, and the tracker operations are in `docs/agents/issue-tracker.md`. Read both before proceeding. If either is missing or unreadable, stop and tell the user to run `/setup-supermatt-skills` in Claude linked installs or Cursor, `/supermatt:setup-supermatt-skills` from the Claude plugin, `$setup-supermatt-skills` in Codex, or `/skill:setup-supermatt-skills` in OMP. Resume only after both required docs exist and have been read.
 
 State transitions: an unlabeled issue normally goes to `needs-triage` first; from there it moves to `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`. `needs-info` returns to `needs-triage` once the reporter replies. The maintainer can override at any time; flag transitions that look unusual and ask before proceeding.
 
 ## Invocation
 
-The maintainer invokes `/triage` and describes what they want in natural language. Interpret the request and act. Examples:
+The maintainer invokes `/triage` in Claude linked installs or Cursor, `/supermatt:triage` from the Claude plugin, `$triage` in Codex, or `/skill:triage` in OMP, and describes what they want in natural language. Interpret the request and act. Examples:
 
 - "Show me anything that needs my attention"
 - "Let's look at #42" (issue or PR)
 - "Move #42 to ready-for-agent"
 - "What's ready for agents to pick up?"
 
-When the maintainer delegates ("I am away", "decide for me"), every point below that waits for direction or asks the maintainer takes your recommended option instead: record it as a decision in the brief or comment and continue. This covers follow-up issues too: file each one and triage it in the same run.
+When the maintainer explicitly delegates decisions for this run ("I am away", "decide for me"), record that request and the issue or queue scope. Under the [delegated triage contract](../../references/harnesses.md#delegated-triage-decisions), recommendation, selection, and outcome-confirmation waits within that scope use your recommended option instead: record each choice and reason in the brief or comment, then continue. This includes follow-up issues only within the delegated scope. Select `grilling`'s delegated mode when needed and pass that request and scope. Missing facts, out-of-scope decisions, and separate approval requirements remain unresolved; record the blocker and use `needs-info` or `ready-for-human` as appropriate, never `ready-for-agent`. Without explicit delegation, keep the interactive waits.
 
 ## Show what needs attention
 
-Query the issue tracker and present three buckets, oldest first:
+Use the configured listing operations, consuming every page, then obtain the same full fields as **Gather context** for every discovered issue or PR before classifying it. Preserve the reporter identity, creation timestamp, and every comment's author, body, and timestamps; a title/body-only projection is insufficient. Use the configured operations for custom trackers, supplementing incomplete list results with full reads. A failed or incomplete listing is not an empty bucket. If required metadata remains unavailable, report the affected items and the coverage gap rather than assigning invented values.
+
+Present three buckets, oldest creation timestamp first within each bucket across issues and PRs (ticket number breaks ties):
 
 1. **Unlabeled**: carries no triage role.
 2. **`needs-triage`**: evaluation in progress.
 3. **`needs-info` with reporter activity since the last triage notes**: needs re-evaluation.
+
+For the third bucket, find the latest `## Triage Notes` entry and compare comment creation timestamps: only a later comment by the original reporter counts. A newer maintainer comment or general item update does not. Missing reporter identity, timestamps, comments, or a triage-note baseline makes this classification unknown; report it separately rather than treating it as no reporter activity.
 
 When PRs are in scope, include external PRs in these buckets and tag each line `[PR]` or `[issue]`. Discovery surfaces only *external* PRs (the tracker config defines who counts as external), so a collaborator's in-flight PR is not triage work. This filter is discovery-only; an explicitly named PR is always triaged regardless of author.
 
@@ -73,13 +77,13 @@ Show counts and a one-line summary per item. Let the maintainer pick.
 
 ## Triage a specific issue or PR
 
-1. **Gather context.** Read `docs/agents/issue-tracker.md` first, in its own call. Then read the full issue or PR (body, comments, labels, author, dates; for a PR, the diff too) with that file's **Read an issue** command (**Read a PR** and the diff command for a PR), adding `author` and `createdAt` to its fields. Do not build a read command from memory: flag combinations that look right fail, such as `gh issue view --comments --json`. Parse any prior triage notes so you don't re-ask resolved questions. Explore the codebase using the project's domain glossary, respecting ADRs in the area. Run two checks against the codebase: (a) **redundancy**: search for an existing implementation of the requested behavior by domain concept (not just the request's wording), and report where you looked. If found, it's an already-implemented `wontfix` (step 5). (b) **prior rejection**: read `.out-of-scope/*.md` and surface any that resembles this request. Run both checks in a sub-agent that returns only what it found and where it looked.
+1. **Gather context.** Read `docs/agents/issue-tracker.md` first, in its own call. Then read the full issue or PR (body, comments, labels, author, dates; for a PR, the diff too) with that file's **Read an issue** command (**Read a PR** and the diff command for a PR). For GitHub JSON reads, request `title,state,body,comments,labels,author,createdAt` for either surface and remove any `--jq` projection so those values and comment metadata remain accessible. For other trackers, retain the equivalent full fields and all comment pages. Do not build a read command from memory: flag combinations that look right fail, such as `gh issue view --comments --json`. Parse any prior triage notes so you don't re-ask resolved questions. Explore the codebase using the project's domain glossary, respecting ADRs in the area. Run two checks against the codebase: (a) **redundancy**: search for an existing implementation of the requested behavior by domain concept (not just the request's wording), and report where you looked. If found, it's an already-implemented `wontfix` (step 5). (b) **prior rejection**: read `.out-of-scope/*.md` and surface any that resembles this request. Run both checks in a sub-agent that returns only what it found and where it looked.
 
 2. **Recommend.** Tell the maintainer your category and state recommendation with reasoning, plus a brief codebase summary relevant to the request (including whether it's already implemented). Wait for direction.
 
 3. **Verify the claim.** Before any grilling, check that the claim holds up. For a bug, reproduce it from the reporter's steps. For a PR, confirm the diff does what it claims: check it out, run the relevant tests or commands. Report what happened: confirmed (with code path), failed, or insufficient detail (a strong `needs-info` signal). A confirmed verification makes a much stronger agent brief. When verification disproves a statement in the issue or PR body, correct it where later readers look first: edit the body when the maintainer or an agent wrote it, and otherwise open the brief with the correction. Later readers, the PR writer too, read the body before the brief.
 
-4. **Grill (if needed).** If the request needs fleshing out, call the Skill tool twice, for "grilling" and "domain-modeling", and grill it into shape a round of questions at a time, sharpening domain terms and updating `GLOSSARY.md`/ADRs inline as decisions land.
+4. **Grill (if needed).** If the request needs fleshing out, load and follow the `grilling` and `domain-modeling` skills, each through the host's skill mechanism. Use `grilling`'s interactive mode unless this run has the explicit delegation recorded above; then pass it that delegation and scope for delegated mode. Sharpen domain terms and update `GLOSSARY.md` and ADRs inline as evidenced decisions land. Unresolved facts or decisions stay visible in the outcome and do not become implementation-ready requirements.
 
 5. **Apply the outcome:**
    - `ready-for-agent`: agree with the maintainer the seams the tests go through, then post an agent brief comment that records them ([AGENT-BRIEF.md](AGENT-BRIEF.md)).

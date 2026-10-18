@@ -2,9 +2,9 @@
 # Usage: directory-branch.sh TAG
 #
 # Pushes TAG's tree, minus the repository's dev-only files, as a new commit on
-# origin's directory branch. The Claude plugin directory tracks that branch, so
-# it only sees released versions, and never scans the scripts, tests, and CI
-# files that people who install the plugin don't need.
+# origin's directory branch. Plugin directories track that branch, so they only
+# see released versions and never scan scripts, tests, or CI files that plugin
+# users do not need.
 set -eu
 
 tag="$1"

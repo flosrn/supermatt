@@ -14,7 +14,7 @@ license: MIT
 
 Improve code structure without changing behavior. Works at three scopes: **project**, **file**, or **method**. Starts by assessing whether refactoring is even warranted: if the code is already clean, say so and stop.
 
-**Refactoring vs architecture:** this skill handles code-level improvements: complexity, duplication, naming, dead code, method extraction. If the assessment shows that the real problem is module boundaries, coupling between packages, or shallow modules that need deepening, say so. That is an architecture problem this skill won't fix: tell the user to run `/improve-architecture` (`$improve-architecture` in Codex).
+**Refactoring vs architecture:** this skill handles code-level improvements: complexity, duplication, naming, dead code, method extraction. If the assessment shows that the real problem is module boundaries, coupling between packages, or shallow modules that need deepening, say so. That is an architecture problem this skill won't fix: tell the user to run `/improve-architecture` in Claude linked installs or Cursor, `/supermatt:improve-architecture` from the Claude plugin, `$improve-architecture` in Codex, or `/skill:improve-architecture` in OMP.
 
 ## Philosophy
 
@@ -97,7 +97,7 @@ A finding that removes an indirection (a function where a value would do, a para
 
 **User override:** if the user provides a specific reason to refactor code rated Clean (e.g., "I know it looks fine but I want to extract this into smaller functions"), proceed with their request, but scope the changes strictly to what they asked for. Don't expand into a broader refactoring.
 
-**Architecture signal:** if the assessment shows problems that are really about module boundaries (tightly coupled packages, shallow modules, missing abstractions at the architectural level), say so: refactoring code inside a badly-bounded module won't fix the real problem. Tell the user to run `/improve-architecture` (`$improve-architecture` in Codex).
+**Architecture signal:** if the assessment shows problems that are really about module boundaries (tightly coupled packages, shallow modules, missing abstractions at the architectural level), say so: refactoring code inside a badly-bounded module won't fix the real problem. Tell the user to run `/improve-architecture` in Claude linked installs or Cursor, `/supermatt:improve-architecture` from the Claude plugin, `$improve-architecture` in Codex, or `/skill:improve-architecture` in OMP.
 
 ## Step 3: Plan
 
@@ -148,15 +148,15 @@ For the riskiest phase: [how to undo it]
 
 **Key principle:** the target state should have **less or equal** total code. If your plan adds net lines without removing complexity, reconsider. "Better organized but more code" is not a win: it's more entropy.
 
-Present the plan for approval (in Claude Code, through `ExitPlanMode`) and proceed only after approval.
+Present the plan through the host's native approval mechanism when exposed, otherwise in chat. Proceed only after explicit approval.
 
 ## Step 3.5: Verify test coverage
 
 **Before changing any code**, check that tests exist for the target:
 
 1. Search for test files covering the target code (look for test files matching the module/class name, grep for the function name in test directories).
-2. If tests exist, note which behaviors they cover. Proceed to Step 4.
-3. If tests are missing or sparse, **stop and tell the user.** Refactoring without tests risks silently changing business logic. Ask whether to write characterization tests first or proceed without them. To write them, call the Skill tool with "tdd" and follow its characterization tests, in their own `test:` commit.
+2. If tests exist, note which behaviors they cover and run the affected tests against the unchanged code. Record the command and result as the baseline. If it fails or flakes, stop and report the failure; resolve it or agree its handling with the user before editing. Do not attribute an existing failure to a refactor or use it as regression evidence. Proceed to Step 4 only with a usable baseline.
+3. If tests are missing or sparse, **stop and tell the user.** Refactoring without tests risks silently changing business logic. Ask whether to write characterization tests first or proceed without them. To write them, load and follow the `tdd` skill through the host's skill mechanism and use its characterization tests in their own `test:` commit.
 
 Judge coverage over the code you are about to change, not over the repository. A repo at 85% overall tells you nothing if the target sits in the untested 15%.
 
@@ -173,7 +173,7 @@ Do not skip this step. Refactoring means "change structure, preserve behavior", 
 3. **One concern at a time**: don't mix refactoring with feature work.
 4. **Bias toward deletion**: every refactoring is a chance to remove code. Ask: what does this make obsolete?
 5. **Tests are frozen**: do not edit test files to make them pass. A test that has to change is telling you the behavior changed, which means this is no longer a refactor. Mechanical renames and file moves are the only exception.
-6. **Start from a clean, committed baseline**: commit or stash unrelated work first, so a revert costs nothing.
+6. **Start from a clean, committed baseline**: commit or stash unrelated work first, then record the current commit as `<baseline>`. Any characterization tests from Step 3.5 must already be committed.
 7. **Commit each step separately, as `refactor:`, and never mix structural and behavioral change in one commit**: a move and an optimization are two commits even though both are structural.
 8. **Revert, don't debug forward**: when a step goes red, undo it and take a smaller one. The revert is free; the debugging session is not.
 
@@ -228,7 +228,7 @@ When refactoring a specific method for complexity:
 
 After refactoring:
 
-1. **Check that no test changed.** Diff against the baseline commit from ground rule 6, not the working tree: `git diff --name-only <baseline>..HEAD`, then a bare `git diff --name-only` for anything uncommitted. Characterization tests added in Step 3.5 belong in that list. If an existing test file was modified beyond a rename or a move, stop and say so: the behavioral contract was rewritten to match the new code, which hides exactly the failure this step exists to catch.
+1. **Check that no test changed.** Compare the baseline commit from ground rule 6 with the current tracked working-tree state: `git diff --name-only <baseline>` includes committed, staged, and unstaged changes. Characterization tests committed in Step 3.5 are already in the baseline; subsequent changes to them belong in that list and follow the same frozen-test rule. If an existing test file was modified beyond a rename or a move, stop and say so: the behavioral contract was rewritten to match the new code, which hides exactly the failure this step exists to catch.
 2. **Run all tests** that cover the refactored code. Read the actual output; a command that exited is not a suite that passed. If any fail, fix your refactoring, not the tests.
 3. **Confirm behavior is unchanged**: same inputs produce same outputs. If tests were written in Step 3.5, they serve as the proof.
 4. **Check the result**: re-evaluate the code against Step 2 criteria. The verdict should be **Clean** or **Minor**. If only Minor issues remain, note them but do not re-enter the refactoring loop.

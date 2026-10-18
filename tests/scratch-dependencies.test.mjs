@@ -4,8 +4,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const script = new URL("../skills/code-review/scripts/check-scratch-dependencies.mjs", import.meta.url);
+const script = fileURLToPath(new URL("../references/check-scratch-dependencies.mjs", import.meta.url));
 const runtimeArgs = process.versions.bun ? ["--no-env-file"] : [];
 
 test("scratch preflight detects lost ancestor dependencies before execution", (t) => {
@@ -18,7 +19,7 @@ test("scratch preflight detects lost ancestor dependencies before execution", (t
   mkdirSync(join(worktree, "node_modules"), { recursive: true });
   mkdirSync(join(scratch, "node_modules"), { recursive: true });
   writeFileSync(join(installation, "fixture-preload/index.js"), "throw new Error('Resolution must not execute the package');\n");
-  const run = (directory, ...packages) => spawnSync(process.execPath, [...runtimeArgs, script.pathname, directory, ...packages], { encoding: "utf8" });
+  const run = (directory, ...packages) => spawnSync(process.execPath, [...runtimeArgs, script, directory, ...packages], { encoding: "utf8" });
 
   assert.equal(run(worktree, "fixture-preload").status, 0);
   const missing = run(scratch, "fixture-preload");
@@ -34,7 +35,7 @@ test("scratch preflight detects lost ancestor dependencies before execution", (t
 });
 
 test("scratch preflight requires a directory and at least one package", () => {
-  const result = spawnSync(process.execPath, [...runtimeArgs, script.pathname], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, [...runtimeArgs, script], { encoding: "utf8" });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /Usage:/);
 });

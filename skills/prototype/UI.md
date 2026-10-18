@@ -79,9 +79,9 @@ return (
 );
 ```
 
-For sub-shape A (existing page): keep all the existing data fetching above the switcher; only the rendered subtree changes per variant.
+For sub-shape A (existing page): keep existing data fetching and the original render. Enter the switcher above only in development with an explicit supported `?variant=` value; otherwise render the original page. Defaulting to A is only for sub-shape B.
 
-For sub-shape B (new page): the throwaway route from sub-shape B above mounts the same switcher.
+For sub-shape B (new page): register and render the throwaway route only in development, where it mounts the same switcher and defaults to A. In production the route must be absent or return the framework's not-found response; hiding the switcher bar alone is insufficient.
 
 ### 4. Build the floating switcher
 

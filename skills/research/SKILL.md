@@ -4,7 +4,7 @@ description: Investigate a question against high-trust primary sources and captu
 license: MIT
 ---
 
-Spin up a **background agent** to do the research, so you keep working while it reads. If you already run as a subagent, do the research yourself.
+Spin up a **background agent** to do the research, so you keep working while it reads. If background delegation is unavailable, use a fresh session where possible; otherwise do the research yourself and report that no independent background agent was available. If you already run as a subagent, do the research yourself.
 
 Its job:
 
@@ -12,4 +12,4 @@ Its job:
 2. Write the findings to a single Markdown file, citing each material claim's source. Distinguish observed facts, inferences, and recommendations. Record dates, versions, and access scope when they affect the answer; an older manual does not establish current behavior. Explain conflicts between sources, what the evidence cannot establish, and which open questions could change the recommendation. Keep a search and exclusion log only when the user needs exhaustive coverage or a reproducible search.
 3. Save it where the caller asked (a path or a branch). Otherwise save it where the repo already keeps such notes; match the existing convention, and if there is none, put it somewhere sensible and say where.
 
-Before declaring completion, wait for the research to finish and read the saved report yourself. Check that it answers the question and cites each material claim. If the agents returned only chat findings or no file, write the report from their cited evidence, then read it back. Finish with the saved file's path; if saving is blocked, report the blocker rather than claiming completion.
+Before declaring completion, wait for any delegated research to finish and read the saved report yourself. Check that it answers the question and cites each material claim. If the agents returned only chat findings or no file, write the report from their cited evidence, then read it back. Finish with the saved file's path; if saving is blocked, report the blocker rather than claiming completion.

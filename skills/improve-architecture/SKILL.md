@@ -13,10 +13,10 @@ Explore a codebase, surface architectural friction, and propose **deepening oppo
 
 This skill is built on a shared vocabulary and informed by the project's domain model:
 
-- Call the Skill tool with "codebase-design" first. Use its terms exactly (**module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**, **information leakage**) and don't drift into "component," "service," "API," or "boundary." Its `RED-FLAGS.md` names structural defects, its `DEEPENING.md` holds the dependency categories and seam discipline, and its `DESIGN-IT-TWICE.md` holds the parallel interface design.
+- Load and follow the `codebase-design` skill through the host's skill mechanism first. Use its terms exactly (**module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**, **information leakage**) and don't drift into "component," "service," "API," or "boundary." Its `RED-FLAGS.md` names structural defects, its `DEEPENING.md` holds the dependency categories and seam discipline, and its `DESIGN-IT-TWICE.md` holds the parallel interface design.
 - The domain language in `GLOSSARY.md` gives names to good seams; ADRs record decisions this skill should not re-litigate. `docs/agents/domain.md` gives where both live (by default `GLOSSARY.md` and `docs/adr/` at the root).
 
-**Architecture vs refactoring:** this skill handles structural changes: module boundaries, interfaces, testability. If the problem is code-level (complexity, duplication, naming, dead code within a well-bounded module), that's refactoring: tell the user to run `/refactor` (`$refactor` in Codex). The same applies after an architectural change lands: cleaning up the new module's internals is a separate refactoring pass.
+**Architecture vs refactoring:** this skill handles structural changes: module boundaries, interfaces, testability. If the problem is code-level (complexity, duplication, naming, dead code within a well-bounded module), that's refactoring: tell the user to run `/refactor` in Claude linked installs or Cursor, `/supermatt:refactor` from the Claude plugin, `$refactor` in Codex, or `/skill:refactor` in OMP. The same applies after an architectural change lands: cleaning up the new module's internals is a separate refactoring pass.
 
 ## Guardrails
 
@@ -41,7 +41,7 @@ Everything below operates on the scoped area, not necessarily the whole reposito
 
 #### 1b. Map the structure
 
-Before exploring for friction, have a sub-agent produce a structural inventory of the scoped area and return only the map:
+Before exploring for friction, have a fresh read-only exploration subagent produce a structural inventory of the scoped area and return only the map. If no independent context is available, produce the map yourself and report that independence gap:
 
 - List all modules/packages in scope with approximate size (file count, rough line count)
 - Trace the dependency graph: which modules import which
@@ -52,7 +52,7 @@ This map is your baseline. It prevents incomplete analysis across multiple sessi
 
 #### 1c. Explore for friction
 
-Read the scoped hot spots yourself, guided by the map from 1b: the verdict, the candidates, and the interface design briefs (paths + key line ranges) all rest on code you have seen. Read one file per call, so no result goes over the output limit and has to be read a second time from a saved file. Send a sub-agent only for sweeps outside the hot spots. Name each friction with a `codebase-design` red flag where one fits, since naming the flag is half the diagnosis. Note where you experience friction:
+Read the scoped hot spots yourself, guided by the map from 1b: the verdict, the candidates, and the interface design briefs (paths + key line ranges) all rest on code you have seen. Read one file per call, so no result goes over the output limit and has to be read a second time from a saved file. Use fresh read-only exploration subagents only for sweeps outside the hot spots. When the host has no independent context, perform those sweeps sequentially and report the gap. Name each friction with a `codebase-design` red flag where one fits, since naming the flag is half the diagnosis. Note where you experience friction:
 
 - Where does understanding one concept require bouncing between many small files?
 - Where are modules **shallow**, with an interface nearly as complex as the implementation?
@@ -90,11 +90,11 @@ Produce a verdict:
 
 | Verdict | Meaning | Action |
 |---------|---------|--------|
-| **Healthy** | Sound architecture, minor friction only | Tell the user, name the friction, and **stop**. Suggest `/refactor` (`$refactor` in Codex) for code-level cleanup. |
+| **Healthy** | Sound architecture, minor friction only | Tell the user, name the friction, and **stop**. Suggest `/refactor` in Claude linked installs or Cursor, `/supermatt:refactor` from the Claude plugin, `$refactor` in Codex, or `/skill:refactor` in OMP for code-level cleanup. |
 | **Localized** | 1-2 areas have structural problems | Present only those candidates. Max 2 per session. |
 | **Systemic** | Widespread structural issues | Present ranked candidates. Recommend tackling 2-3 per session. |
 
-**Idempotency rule:** if this skill was recently run and the proposed changes were implemented, the verdict for that area must be Healthy. Do not re-refactor the refactored code. If it is still problematic for the *same* reasons, diagnose what went wrong instead of proposing another round.
+**Idempotency rule:** do not re-propose changes that were already implemented. Reassess the area against Step 2: if the earlier friction is resolved and no new structural problem is evidenced, report Healthy. If the same friction remains, diagnose what went wrong instead of proposing another round.
 
 **Recorded decisions:** a candidate that contradicts an ADR is surfaced only when the friction is real enough to reopen it: say which record it contradicts and why it is worth revisiting. Do not list every refactor an ADR forbids.
 
@@ -115,15 +115,15 @@ Present a numbered list of deepening opportunities, named in the `GLOSSARY.md` v
 
 **Cohesion check:** if a candidate's single-responsibility statement requires "and" more than once, split it into multiple candidates or reject it. The stronger form of the same test: if a complete-yet-simple description is hard to write at all, the design is wrong; the difficulty is the diagnosis, not a writing problem.
 
-End with the candidate you would tackle first and why. Do NOT propose interfaces yet. Ask the user which candidate to explore (if your harness has a multiple-choice question tool, such as `AskUserQuestion` in Claude Code, ask through it with one option per candidate).
+End with the candidate you would tackle first and why. Do NOT propose interfaces yet. Ask the user which candidate to explore through the host's live multiple-choice capability, one option per candidate where the schema permits, or in chat when no such capability is usable.
 
 ### Step 4: Grill and design
 
-Once the user picks a candidate, call the Skill tool with "grilling" to walk the decision tree with them: constraints, dependencies, the shape of the deepened module, what sits behind the seam, what tests survive, and the "what stays out" boundary from Step 3.
+Once the user picks a candidate, load and follow the `grilling` skill through the host's skill mechanism to walk the decision tree with them: constraints, dependencies, the shape of the deepened module, what sits behind the seam, what tests survive, and the "what stays out" boundary from Step 3.
 
-For the interface itself, follow `codebase-design`'s `DESIGN-IT-TWICE.md`: radically different interfaces from parallel sub-agents, each brief carrying the files (paths + key line ranges), the coupling pattern, the dependency category, and the "what stays out" boundary. **Reject any design that creates a god object** (multiple unrelated responsibilities behind one interface) and say why. Give your own recommendation: which design is strongest and why. Be opinionated.
+For the interface itself, follow `codebase-design`'s `DESIGN-IT-TWICE.md`: radically different interfaces from parallel independent subagents, each brief carrying the files (paths + key line ranges), the coupling pattern, the dependency category, and the "what stays out" boundary. If parallel independent contexts are unavailable, use sequential fresh sessions; if fresh context is also unavailable, report the independence gap. **Reject any design that creates a god object** (multiple unrelated responsibilities behind one interface) and say why. Give your own recommendation: which design is strongest and why. Be opinionated.
 
-Side effects happen inline as decisions crystallize; call the Skill tool with "domain-modeling" to keep the domain model current as you go:
+Side effects happen inline as decisions crystallize; load and follow the `domain-modeling` skill through the host's skill mechanism to keep the domain model current as you go:
 
 - **Naming a deepened module after a concept not in `GLOSSARY.md`?** Add the term. Create the file lazily if it doesn't exist.
 - **Sharpening a fuzzy term during the conversation?** Update `GLOSSARY.md` right there.
@@ -170,7 +170,7 @@ and any caller migration. Include estimated scope.
 
 Stay in this session, since the build needs the grilling as it happened, and tell the user the next step:
 
-- **The change takes more than one session**: `/to-spec`, then `/to-tickets`, then `/implement` per ticket (`$to-spec`, `$to-tickets`, `$implement` in Codex). The plan is the spec's input.
-- **It fits in this session**: `/implement` right here (`$implement` in Codex), with the plan as the spec. It writes the tests at the new interface first through `tdd`, then checks the change with `qa` and `code-review`.
+- **The change takes more than one session**: use `/to-spec`, `/to-tickets`, then `/implement` in Claude linked installs or Cursor; `/supermatt:to-spec`, `/supermatt:to-tickets`, then `/supermatt:implement` from the Claude plugin; `$to-spec`, `$to-tickets`, then `$implement` in Codex; or `/skill:to-spec`, `/skill:to-tickets`, then `/skill:implement` in OMP. The plan is the spec's input.
+- **It fits in this session**: use `/implement` in Claude linked installs or Cursor, `/supermatt:implement` from the Claude plugin, `$implement` in Codex, or `/skill:implement` in OMP, with the plan as the spec. It writes the tests at the new interface first through `tdd`, then checks the change with `qa` and `code-review`.
 
-To tackle another candidate later, the user runs `/improve-architecture <cluster>` in a fresh session.
+To tackle another candidate later, the user starts a fresh session with `/improve-architecture <cluster>` in Claude linked installs or Cursor, `/supermatt:improve-architecture <cluster>` from the Claude plugin, `$improve-architecture <cluster>` in Codex, or `/skill:improve-architecture <cluster>` in OMP.

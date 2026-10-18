@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadLocal, pick } from "../skills/orchestrate/scripts/next-issue.mjs";
 
 const issue = (number, { state = "open", labels = ["ready-for-agent"], body = "", author = "OWNER", ...extra } = {}) => ({
@@ -165,8 +166,8 @@ test("local CLI uses Markdown without calling gh and preserves paths with spaces
     ".scratch/my feature/issues/01-first.md": "# 01: First\nStatus: ready-for-agent\n",
     ".scratch/my feature/issues/02-next.md": "# 02: Next\nStatus: ready-for-agent\nBlocked by: 01\n",
   });
-  const script = new URL("../skills/orchestrate/scripts/next-issue.mjs", import.meta.url);
-  const args = [script.pathname, "--local", ".scratch", "ready-for-agent", "bug", "needs-triage"];
+  const script = fileURLToPath(new URL("../skills/orchestrate/scripts/next-issue.mjs", import.meta.url));
+  const args = [script, "--local", ".scratch", "ready-for-agent", "bug", "needs-triage"];
   const run = () => execFileSync(process.execPath, args, { cwd: root, env: { ...process.env, PATH: "" }, encoding: "utf8" });
   assert.equal(run(), ".scratch/my feature/issues/01-first.md\tFirst\tready\n");
   writeFileSync(join(root, ".scratch/my feature/issues/01-first.md"), "# First\nStatus: ready-for-agent\nClosed: 2026-10-12\n");

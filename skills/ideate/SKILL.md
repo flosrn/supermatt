@@ -12,7 +12,7 @@ Answer one question: **which ideas are worth building?** Generate many, critique
 
 Every idea carries a **basis**, the evidence a reader can check. An idea without one is slop, however plausible it sounds. Tag each basis:
 
-- `direct:` a line, file, or issue the agent actually read, quoted with its `file:line`.
+- `direct:` a file, issue, or commit the agent actually read, quoted with its `file:line`, issue reference, or commit identifier.
 - `external:` named prior art or a known pattern, with its source.
 - `reasoned:` a first-principles argument, written out in full.
 
@@ -22,13 +22,13 @@ Every idea carries a **basis**, the evidence a reader can check. An idea without
 
 The argument is the **focus**: a feature, a flow, a constraint, or nothing. Ideate at full ambition inside the focus, and keep the whole repo as the subject when there is none.
 
-When the subject cannot be identified (no argument and no clear project in the working directory), ask one question (through your harness's multiple-choice question tool if it has one, such as `AskUserQuestion` in Claude Code) with these options: a subject the user names, **Surprise me** (each frame picks the subject it finds most interesting), and **Cancel**. Leave solution direction, audience, and success criteria to `/grill-with-docs`.
+When the subject cannot be identified (no argument and no clear project in the working directory), ask one question through the host's live multiple-choice capability when available, otherwise in chat, with these options: a subject the user names, **Surprise me** (each frame picks the subject it finds most interesting), and **Cancel**. Follow the live schema and recommend the smallest option that fits. Leave solution direction, audience, and success criteria to `/grill-with-docs`.
 
 Done when the subject is named or the user picked Surprise me.
 
 ### 2. Ground
 
-Read the glossary and the ADRs (`docs/agents/domain.md` gives the layout; by default `GLOSSARY.md` and `docs/adr/` at the root), and the README. Then spawn one Explore subagent to map the subject: what exists, where it hurts, what recently changed (`git log`), open TODOs, and open issues in the repo's issue tracker (`docs/agents/issue-tracker.md` says where). It returns a **grounding summary** of at most 150 lines, with `file:line` pointers for every claim. If subagents are unavailable, perform this task and the later generation and verification tasks sequentially yourself, and report the lack of an independent verifier.
+Read the glossary and the ADRs (`docs/agents/domain.md` gives the layout; by default `GLOSSARY.md` and `docs/adr/` at the root), and the README. Then spawn one fresh read-only exploration subagent to map the subject: what exists, where it hurts, what recently changed (`git log`), open TODOs, and open issues in the repo's issue tracker (`docs/agents/issue-tracker.md` says where). It returns a **grounding summary** of at most 150 lines, with provenance for every claim: `file:line` for files, issue references for tracker evidence, and commit identifiers for history. If subagents are unavailable, use a sequential fresh session where possible. Otherwise perform this task and the later generation and verification tasks yourself, and report the lack of an independent verifier.
 
 Done when the grounding summary exists. If grounding fails (no repo, empty repo), say so and ideate from the user's description, with `reasoned:` and `external:` bases only.
 
@@ -68,9 +68,9 @@ Done when every merged idea is either ranked or carries a cut reason.
 Write `docs/ideation/YYYY-MM-DD-<topic>.md` (`open` as the topic when there is no focus), creating the directory if needed:
 
 - **Subject**: the focus, and the grounding summary cut to its key points.
-- **Ranked ideas**: for each survivor, the title, summary, basis, why it matters, size (S, M, or L), and a **Take it further** prompt in a fenced block. The prompt opens with the grill-with-docs command in the form this session invoked `ideate` with (`/grill-with-docs`, `/supermatt:grill-with-docs` from the Claude Code plugin, `$grill-with-docs` in Codex), then names the idea, its basis with the `file:line` pointers, and why it matters. A fresh session has no report and no grounding, so the prompt stands alone. `grill-with-docs` ships alongside this skill and only the user can invoke it, so your skill listing never shows it: write that command exactly as given here.
+- **Ranked ideas**: for each survivor, the title, summary, basis, why it matters, size (S, M, or L), and a **Take it further** prompt in a fenced block. The prompt opens with the grill-with-docs command in the form this session invoked `ideate` with: `/grill-with-docs` in Claude linked installs or Cursor, `/supermatt:grill-with-docs` from the Claude plugin, `$grill-with-docs` in Codex, or `/skill:grill-with-docs` in OMP. It then names the idea, reproduces its basis verbatim with the file, issue, commit, or external-source references, or complete first-principles argument, and says why it matters. A fresh session has no report and no grounding, so the prompt stands alone. `grill-with-docs` ships alongside this skill and is intended for user invocation; it may be absent from the model-facing skill listing. OMP hiding is not an authorization boundary. Keep this as a user handoff and write the applicable command exactly.
 - **Cut**: a table of every cut idea and its reason.
 
 ### 7. Present
 
-Print one line with the counts and the absolute path (`7 ranked, 31 cut → <path>`), then one line per survivor: `1. <title> · <basis type> · <size>`. Name the top pick in a sentence. Then stop: the user takes an idea into `/grill-with-docs` by pasting its **Take it further** prompt.
+Print one line with the counts and the absolute path (`7 ranked, 31 cut → <path>`), then one line per survivor: `1. <title> · <basis type> · <size>`. When at least one idea survives, name the top pick in a sentence; otherwise say no idea passed verification. Then stop: the user takes a surviving idea into `/grill-with-docs` by pasting its **Take it further** prompt.

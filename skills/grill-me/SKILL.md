@@ -5,4 +5,4 @@ disable-model-invocation: true
 license: MIT
 ---
 
-Call the Skill tool with "grilling".
+Load and follow the `grilling` skill through the host's skill mechanism.

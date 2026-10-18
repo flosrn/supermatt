@@ -1,8 +1,8 @@
 # ADR Format
 
-ADRs live in `docs/adr/` and use sequential numbering: `0001-slug.md`, `0002-slug.md`, etc.
+ADRs live in the directory resolved by the skill from `docs/agents/domain.md`, defaulting to `docs/adr/` only when no path is configured. Use sequential numbering: `0001-slug.md`, `0002-slug.md`, etc.
 
-Create the `docs/adr/` directory lazily: only when the first ADR is needed.
+Create that directory lazily: only when the first ADR is needed.
 
 ## Template
 
@@ -24,7 +24,7 @@ Only include these when they add genuine value. Most ADRs won't need them.
 
 ## Numbering
 
-Scan `docs/adr/` for the highest existing number and increment by one. In a multi-context layout, each context's ADR directory numbers on its own.
+Scan the resolved ADR directory for the highest existing number and increment by one. In a multi-context layout, each context's ADR directory numbers on its own.
 
 ## When to offer an ADR
 

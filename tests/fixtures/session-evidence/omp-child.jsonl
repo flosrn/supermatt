@@ -1,0 +1,2 @@
+{"type":"session","version":3,"id":"omp-child","timestamp":"2026-10-15T00:00:01.000Z","cwd":"/workspace/project"}
+{"type":"message","id":"child1","parentId":null,"message":{"role":"assistant","content":[{"type":"text","text":"OMP child answer"}]}}

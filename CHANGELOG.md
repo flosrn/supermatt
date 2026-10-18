@@ -4,25 +4,92 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- `babysit-pr`: watches one pull request until a human can merge it. It opens the PR when the branch has none and reuses the same PR on every resume, handles review feedback before CI and publishes a fix before replying to its thread, runs follow-up QA before pushing a fix that changes runtime behavior, recovers CI through `recover-ci`, updates the branch only when GitHub reports it behind or conflicting, and never merges. Follow-up QA fixes only fails the fix owns: a pre-existing fail outside the feedback is reported for you to decide, not fixed. A gate failure the base already has is reported as inherited, with the base run as evidence, instead of blocking. A state helper under `.git/supermatt/babysit-pr/` keeps the monitoring window, the recovery budget, and the handled feedback across resumes, reopens edited comments, drops evidence when the head moves, and treats a missing required check as not green. It reads required checks from branch protection and rulesets, and on a private repository whose plan has no rulesets, from branch protection alone. It ends on `ready`, `blocked`, `budget-exhausted`, or `closed`.
+- `recover-ci`: diagnoses a failed PR check or post-merge workflow, reruns a supported transient failure, and repairs a repository defect within two repair cycles and one transient rerun, with counters its caller holds. It returns its evidence and one outcome and has no merge authority. It runs from the caller's selected worktree and screens every outgoing repair commit for secrets before pushing.
+
 ### Fixed
 
-- `orchestrate`: runs typecheck and tests after its own lane history edits before advancing, sending failures and their output to the worker through `/fix-findings` before QA or review. Records each history edit and its check result in the friction log.
-- `qa`: runs a same-family CLI fallback in an isolated disposable copy when a fresh subagent cannot start, with no tracker access and Codex writes excluded from `/tmp` and the inherited `TMPDIR`. Protects copied source files and checks them and the real tree after the reader finishes, reporting any change as a failure of the QA run.
-- `fix-findings`: recommends a follow-up issue for pre-existing defects whose fixes require migrations, a new ADR, or a redesign beyond the branch's change. Creates the chosen follow-up with evidence and the proposed fix, and reports the finding as deferred while keeping branch-introduced defects in scope.
-- `ship-pr`: the merge command carries `--match-head-commit <checked-head>`, so a commit pushed after the CI gate is never merged unchecked. The pin was required in a later sentence but missing from the command an agent runs. Reads required checks through plan-independent branch metadata and treats the rulesets plan-upgrade 403 as established configuration without retrying gated endpoints, while keeping missing expected checks and other configuration failures blocked.
+- `ask-supermatt`: preserves same-session implementation for small builds and explains bounded orchestrator delegation; routes raw issues to triage based on readiness rather than authorship; reflects QA and research fallbacks when independent delegation is unavailable; documents valid jury votes, independently green tickets, file-free ideation, and coordinator-granted wayfinder claims; corrects the on-ramp count and distinguishes summary loss, context reset, and delegation; qualifies hosted blocking fallbacks and retains migration-map handoffs; routes shipping without a merge to `babysit-pr`, and names `recover-ci` as the CI recovery both shipping skills share.
+- `code-review`: requires runtime artifacts to match the reviewed working-tree source, dependencies, and configuration; handles option-like untracked filenames, rejects diff collection errors, and uses shared scratch containment and dependency preflights; quotes scratch-copy paths and rejects symlinks escaping the copy before editing or execution; includes untracked file contents and staged-content changes in before-and-after repository integrity checks, recursively records ordinary nested Git repositories, rejects linked nested metadata, and isolates Git repository selection from inherited hook environment variables.
+- `codebase-design`: bounds alternative-design workers by available capacity and preserves the distinct briefs when only sequential or shared-context work is available.
+- `commit`: inspects staged, unstaged, and untracked changes before an initial commit without requiring `HEAD`; enumerates files inside new directories before credential screening.
+- `diagnosing-bugs`: preserves the missing-regression-seam exception in its commit checklist; preserves the symptom assertion when comparing against stashed work and treats missing harnesses as inconclusive; requires confirmation of newly discovered test seams before reproduction tests as well as regression tests.
+- `domain-modeling`: honors configured glossary, map, and ADR paths, including legacy names, without creating duplicate documentation.
+- `fix-findings`: reads each repository's applicable instructions before its first edit; recommends a follow-up issue for pre-existing defects whose fixes require migrations, a new ADR, or a redesign beyond the branch's change, creates the chosen follow-up with evidence and the proposed fix, and reports the finding as deferred while keeping branch-introduced defects in scope.
+- `grilling`: looks up facts directly when subagents are unavailable and reports the missing independent context; supports explicitly delegated triage decisions without weakening ordinary human-answer or separate approval requirements.
+- `ideate`: reports a zero-survivor result without inventing a top pick; preserves deliberate user handoff without treating OMP catalog hiding as authorization; carries file, issue, commit, external, and reasoned provenance into standalone handoffs.
+- `implement`: confirms newly reached refactor and review-fix seams; persists accepted decisions to the issue or available specification and carries that evidence into follow-up verification; supports tracker-specific parent-ticket readiness and blocker checks, stops on missing configuration, and retrieves approved migration maps.
+- `improve-architecture`: bases repeat-run verdicts on current evidence instead of requiring Healthy after prior changes; supplies host-specific commands when revisiting a candidate.
+- `improve-file-structure`: links directly to the Next.js project-structure Markdown reference; uses the RubyGems Markdown reference for gem layout guidance; preserves approved move maps through published specs and fresh-session tickets.
+- `improve-tests`: separates Minitest-supported profilers from RSpecDissect and identifies factory cascades from total versus top-level calls; reassesses remaining waste without forcing Lean and distinguishes Bun clock changes from timer advancement; documents stale-cache risks for transforms with external inputs; vets missing tools before recommending them and requires approval before profiling edits.
+- `jury`: validates choice membership, confidence bounds, and required fields in both voting rounds; reports an unavailable jury when no blind votes succeed and preserves the blind vote when no review votes succeed; requires checked supporting reasons when review votes resolve tied blind choices.
+- `orchestrate`: permits only its listed user-invoked worker commands within the explicitly delegated run, preserving approval and safety gates; attaches lane scope and prior evidence to every instruction prompt and uses normal model-side QA and review composition for spec verification; checks every answer form before approval; requires complete spec and ticket verification coverage and retains all review findings; limits worktree-removal approval to worktrees created by the current run; states follow-up verification requirements directly and leaves CI recovery to the explicitly invoked shipping skill, which recovers through `recover-ci`; aligns triage answer-round limits and moves worker details behind a direct resource pointer; runs typecheck and tests after its own lane history edits before advancing, sending failures and their output to the worker through `/fix-findings` before QA or review, and records each history edit and its check result in the friction log.
+- `pr`: distinguishes observed results from illustrative tests and reports unavailable before-and-after evidence without inventing execution.
+- `prototype`: preserves the original page unless a supported variant is explicitly selected in development; excludes new throwaway routes and their variants from production.
+- `qa`: preserves command arguments byte-for-byte when launching terminal scenarios, including trailing newlines; supports fresh-session or current-context verification when subagents are unavailable, with an explicit independence gap; quotes terminal example paths and environment values, and keeps launch scripts inside the run's private scratch directory; creates the base-export directory before extracting a comparison build; runs a same-family CLI fallback in an isolated disposable copy when a fresh subagent cannot start, with no tracker access and Codex writes excluded from `/tmp` and the inherited `TMPDIR`, protects copied source files, and checks them and the real tree after the reader finishes, reporting any change as a failure of the QA run.
+- `refactor`: records the committed baseline after characterization tests and checks only subsequent test changes; includes staged test edits in the frozen-test check; handles whitespace and option-like filenames in the hotspot line-count recipe; runs affected tests before editing and distinguishes pre-existing failures from regressions.
+- `research`: supports fresh-session or direct research without waiting for a nonexistent background worker.
+- `resolving-merge-conflicts`: scopes staging to conflict resolutions and preserves unrelated work; permits whole-file staging only when no unrelated edits share the file and checks the staged delta before continuation; handles only active merges or rebases and stops before editing standalone conflict markers.
+- `retro`: restricts child transcript evidence to the active parent branch and reports unresolved associations; searches normalized session evidence without delegation when necessary and reports the missing independent reader; accepts verifiable Claude Code, Codex, and OMP exports outside discovery roots; matches exact session identity, rejects escaping child symlinks, and excludes malformed or unreadable inactive OMP children without discarding valid active evidence; stops discovery at each candidate's first complete identity while fully validating selected transcripts; follows nested OMP children without an arbitrary depth limit and retains nested Claude tool-error content, with regression coverage.
+- `setup-supermatt-skills`: preserves existing PR and MR triage preferences when regenerating tracker configuration; fetches every GitHub and GitLab listing page and required comment page; checks GitLab authors against inherited and invited project membership before classifying external MRs, keeping failed or incomplete lookups unknown; retains metadata for attention ordering and reporter replies, and defines implementation-child readiness and blocker resolution for GitHub, GitLab, and local tickets; honors label-reset answers and preserves configured, legacy, and custom domain paths; defines session-owned claims granted serially by one coordinator when trackers lack exclusive acquisition.
+- `ship-pr`: shares scratch dependency checks without reaching into another skill and performs repair verification through model-invoked skills; scans every outgoing commit for secrets, including values removed in later commits, and repeats screening before repair pushes; scopes GitHub commands and hooks to the selected shipping worktree and skips empty commits on resumed branches; recovers failed PR checks and post-merge runs through `recover-ci` with the counters from its shipping record, leaving `CI.md` only the post-merge repair branch, merge hold, and follow-up PR; carries `--match-head-commit <checked-head>` in the merge command itself; reads required checks through plan-independent branch metadata and treats the rulesets plan-upgrade 403 as established configuration without retrying gated endpoints.
+- `tdd`: preserves bytes outside exact mutation replacements, rejects missing separators, and prints baseline build and test diagnostics; limits cleanup guarantees to the test process group and documents detached-process ownership.
+- `teach`: supports resource research without subagents while retaining only the shortlist in the lesson.
+- `to-spec`: preserves the review brief and authoritative decision records through fresh-session or self-review fallbacks; discloses missing independent review before publication; uses canonical local or hosted map references; stops on missing configuration and publishes approved migration maps as path requirements.
+- `to-tickets`: requires every published expand, migrate, or contract ticket to remain independently green; requires the canonical readiness role even with a custom label override; stops on missing configuration and links each migration ticket to its authoritative move-map rows.
+- `triage`: preserves full issue and PR metadata, including attention-discovery ordering and reporter activity, uses host-specific invocation, and reserves space for truncation markers with a fallback for descriptions without a word boundary; stops on missing configuration and keeps bug rejections out of the enhancement-only knowledge base; records bounded delegated decisions while keeping unavailable facts, out-of-scope choices, and separate approvals unresolved.
+- `wayfinder`: checks named ticket eligibility before claiming and classifies out-of-scope answers before resolving them; requires exclusive session ownership or grants from one recorded coordinator before work; defers glossary and ADR writes until HITL answer confirmation while allowing ticket claims, throwaway prototypes, and prerequisite Task work; bounds research and challenge workers by available capacity, supports sequential or direct work, and keeps tracker resolution with the coordinator; maintains additions, pruning, and graduated fog after chart-time research; keeps AFK ticket resolution independent of human confirmation.
+- `writing-for-agents`: documents the bounded orchestrator exception without changing skill invocation policies; loads the shared harness contract directly in the skill-writing branch.
+
+## [0.22.0] - 2026-10-17
+
+### Added
+
+- `setup-supermatt-skills`: writes and documents `docs/agents/cross-model.json`, preserving valid rerun settings and collecting only the selected adapters' supported model and effort values.
+
+### Changed
+
+- Harness contract: validates repository peer settings, keeps `auto` on hardened Claude and Codex adapters, requires runtime confirmation for explicit Cursor and OMP calls, and defines capability-aware fallback and reporting.
+- `code-review`: applies the repository peer policy to readers and validators, supports four explicit adapters with their actual isolation limits, keeps process output streams separate, prepares the external validator's complete evidence bundle, and makes `host-only` avoid every external peer subprocess.
+- `jury`: applies the same repository peer policy to vote and review seats, keeps process output streams separate, uses host seats on fallback, and reports configured adapter details and exact failures.
+- `ask-supermatt`: routes setup, review, and jury through the repository peer policy.
+
+### Fixed
+
+- `codebase-design`: loads both references required for alternative-interface design directly from the main skill.
+- `refactor`: replaces the missing *Out of the Tar Pit* reference with a working PDF.
+- `retro`: resolves OMP XDG session roots and persisted active-leaf markers using OMP's current layout and replay semantics.
 
 ## [0.21.0] - 2026-10-15
 
 ### Added
 
-- `babysit-pr`: watches one pull request until a human can merge it. It opens the PR when the branch has none and reuses the same PR on every resume, handles review feedback before CI and publishes a fix before replying to its thread, runs follow-up QA before pushing a fix that changes runtime behavior, recovers CI through `recover-ci`, updates the branch only when GitHub reports it behind or conflicting, and never merges. Follow-up QA fixes only fails the fix owns: a pre-existing fail outside the feedback is reported for you to decide, not fixed. A gate failure the base already has is reported as inherited, with the base run as evidence, instead of blocking. A state helper under `.git/supermatt/babysit-pr/` keeps the monitoring window, the recovery budget, and the handled feedback across resumes, reopens edited comments, drops evidence when the head moves, and treats a missing required check as not green. It reads required checks from branch protection and rulesets, and on a private repository whose plan has no rulesets, from branch protection alone. It ends on `ready`, `blocked`, `budget-exhausted`, or `closed`.
-- `recover-ci`: diagnoses a failed PR check or post-merge workflow, reruns a supported transient failure, and repairs a repository defect within two repair cycles and one transient rerun, with counters its caller holds. It returns its evidence and one outcome and has no merge authority.
+- Plugin packaging: ships a versionless Cursor manifest beside the Claude Code and Codex adapters, keeps the canonical flat 39-skill tree, and retains it in release projections.
+- Harness contract: defines human invocation, model-side composition, capability fallbacks, explicit-only limits, and active-model family resolution for Claude Code, Codex, Cursor, and OMP.
 
 ### Changed
 
-- `ship-pr`: recovers failed PR checks and post-merge runs through `recover-ci` with the counters from its shipping record. `CI.md` keeps only the post-merge repair: the repair branch, the merge hold, and the follow-up PR.
-- `orchestrate`: points its ship phase at `recover-ci` and the post-merge repair.
-- `ask-supermatt`: routes shipping without a merge to `babysit-pr`, and names `recover-ci` as the CI recovery both shipping skills share.
+- `ask-supermatt`: routes all user-reachable flows with Claude Code, Codex, Cursor, and OMP invocation forms and four-host orchestration guidance.
+- `code-review`: selects an installed Claude or Codex peer from authoritative active-model family metadata instead of the harness name, and makes no cross-family claim for unknown metadata.
+- `jury`: uses the shared active-model resolver and labels an unverified external seat without claiming model-family independence.
+- `orchestrate`: adds Cursor workers, keeps Cursor and OMP model IDs provider-safe, uses native skill notation, and preserves authoritative Herdr session references.
+- `grilling`: adapts to each host's live question capability and uses chat when none is available.
+- `ideate`: uses host question capabilities and fresh read-only exploration contexts without assuming a named subagent type.
+- `prototype`: uses host question capabilities and reports when fresh independent context is unavailable.
+- `setup-supermatt-skills`: uses native host questions or the same choices in chat.
+- `improve-architecture`: uses host question capabilities and fresh read-only exploration contexts.
+- `improve-tests`: removes the Claude-only limitation, uses native multi-select and plan approval when available, and requires explicit chat approval otherwise.
+- `refactor`: uses native plan approval when available and explicit chat approval otherwise.
+- `to-tickets`: requests fresh read-only exploration without assuming a named subagent type.
+- `writing-for-agents`: points skill dependencies and invocation policy to the shared four-host contract.
+- `codebase-design`, `commit`, `diagnosing-bugs`, `fix-findings`, `grill-me`, `grill-with-docs`, `handoff`, `implement-spec`, `implement`, `improve-file-structure`, `ship-pr`, `tdd`, `to-spec`, `triage`, `wayfinder`, and `what-would-you-do`: replace literal Skill-tool and two-host command assumptions with the host skill mechanism and applicable four-host invocation forms.
+
+### Fixed
+
+- `retro`: normalizes failed tool results and verified Claude Code, Codex, Cursor, and OMP session evidence, preserves distinct failed retries with identical output, follows only the active OMP branch, includes verified child and compaction records, validates every parent and child transcript against the requested workspace, and fails closed on malformed or mismatched transcripts.
+- Plugin validation: checks matching Claude Code, Codex, and Cursor package names, the single version authority, canonical skill discovery, and directory projection coverage.
 
 ## [0.20.2] - 2026-10-15
 
@@ -635,7 +702,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Claude Code and Codex marketplaces for the plugin and its 25 engineering and productivity skills.
 
-[unreleased]: https://github.com/svyatov/supermatt/compare/v0.21.0...HEAD
+[unreleased]: https://github.com/svyatov/supermatt/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/svyatov/supermatt/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/svyatov/supermatt/compare/v0.20.2...v0.21.0
 [0.20.2]: https://github.com/svyatov/supermatt/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/svyatov/supermatt/compare/v0.20.0...v0.20.1
