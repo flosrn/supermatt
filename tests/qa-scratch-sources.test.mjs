@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
+// A hook in a linked worktree exports an absolute GIT_DIR, which would aim every git command below at the real repo.
+for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
+
 const script = new URL("../skills/qa/scripts/scratch-sources.mjs", import.meta.url);
 const runtimeArgs = process.versions.bun ? ["--no-env-file"] : [];
 
