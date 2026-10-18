@@ -4,11 +4,12 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rm
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 // A hook in a linked worktree exports an absolute GIT_DIR, which would aim every git command below at the real repo.
 for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
 
-const script = new URL("../skills/qa/scripts/scratch-sources.mjs", import.meta.url);
+const script = fileURLToPath(new URL("../skills/qa/scripts/scratch-sources.mjs", import.meta.url));
 const runtimeArgs = process.versions.bun ? ["--no-env-file"] : [];
 
 function fixture(t, build) {
@@ -29,7 +30,7 @@ function fixture(t, build) {
   git("init", "-q");
   build(repo, git);
   cpSync(repo, scratch, { recursive: true, verbatimSymlinks: true, filter: (source) => source !== join(repo, ".git") });
-  const run = (mode) => spawnSync(process.execPath, [...runtimeArgs, script.pathname, mode, repo, scratch, dir], { encoding: "utf8" });
+  const run = (mode) => spawnSync(process.execPath, [...runtimeArgs, script, mode, repo, scratch, dir], { encoding: "utf8" });
   return { root, repo, dir, scratch, run };
 }
 
@@ -217,7 +218,7 @@ test("prepare writes no manifest when the repository cannot be listed", (t) => {
   const notRepo = join(root, "not-a-repo");
   mkdirSync(notRepo);
 
-  const result = spawnSync(process.execPath, [...runtimeArgs, script.pathname, "prepare", notRepo, scratch, dir], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, [...runtimeArgs, script, "prepare", notRepo, scratch, dir], { encoding: "utf8" });
   assert.notEqual(result.status, 0, result.stdout);
   // Empty manifests would let a later verify pass with nothing checked.
   assert.ok(!existsSync(join(dir, "sources.lst")));
@@ -261,14 +262,14 @@ test("prepare protects present regular files and lists deletions apart; verify r
 });
 
 test("scratch sources helper requires a mode and three paths", () => {
-  const result = spawnSync(process.execPath, [...runtimeArgs, script.pathname, "prepare"], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, [...runtimeArgs, script, "prepare"], { encoding: "utf8" });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /Usage:/);
 });
 
 test("verify without a manifest directory is a usage error, not a difference", (t) => {
   const { repo, scratch } = fixture(t, () => {});
-  const result = spawnSync(process.execPath, [...runtimeArgs, script.pathname, "verify", repo, scratch], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, [...runtimeArgs, script, "verify", repo, scratch], { encoding: "utf8" });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /Usage:/);
 });
@@ -286,6 +287,32 @@ test("verify with an unreadable manifest is a setup error, not a difference", (t
   const result = run("verify");
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /sources\.lst/);
+});
+
+test("verify reports each entry it cannot read as a difference", { skip: process.getuid?.() === 0 && "root reads unreadable entries" }, (t) => {
+  const { scratch, run } = fixture(t, (repo, git) => {
+    writeFileSync(join(repo, "a.txt"), "a\n");
+    mkdirSync(join(repo, "locked"));
+    writeFileSync(join(repo, "locked/keep.txt"), "keep\n");
+    writeFileSync(join(repo, "locked/gone.txt"), "gone\n");
+    git("add", ".");
+    git("commit", "-qm", "init");
+    unlinkSync(join(repo, "locked/gone.txt"));
+  });
+  assert.equal(run("prepare").status, 0);
+
+  // The reader locked one copied file and one copied directory.
+  chmodSync(join(scratch, "a.txt"), 0o000);
+  chmodSync(join(scratch, "locked"), 0o000);
+  let result;
+  try {
+    result = run("verify");
+  } finally {
+    chmodSync(join(scratch, "locked"), 0o755);
+    chmodSync(join(scratch, "a.txt"), 0o644);
+  }
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(result.stdout.trim().split("\n").sort(), ["unreadable a.txt (EACCES)", "unreadable locked/gone.txt (EACCES)", "unreadable locked/keep.txt (EACCES)"]);
 });
 
 test("prepare protects the in-copy file a source reaches through a linked directory inside the copy", (t) => {
@@ -311,7 +338,7 @@ test("prepare protects the in-copy file a source reaches through a linked direct
 
 test("scratch sources helper rejects an unknown mode", (t) => {
   const { repo, dir, scratch } = fixture(t, () => {});
-  const result = spawnSync(process.execPath, [...runtimeArgs, script.pathname, "check", repo, scratch, dir], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, [...runtimeArgs, script, "check", repo, scratch, dir], { encoding: "utf8" });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /Usage:/);
 });
@@ -431,7 +458,7 @@ test("a prepare that cannot list the repository removes the lists of an earlier 
   const notRepo = join(root, "not-a-repo");
   mkdirSync(notRepo);
 
-  const failed = spawnSync(process.execPath, [...runtimeArgs, script.pathname, "prepare", notRepo, scratch, dir], { encoding: "utf8" });
+  const failed = spawnSync(process.execPath, [...runtimeArgs, script, "prepare", notRepo, scratch, dir], { encoding: "utf8" });
   assert.equal(failed.status, 2, failed.stdout);
   assert.ok(!existsSync(join(dir, "sources.lst")));
   assert.ok(!existsSync(join(dir, "deleted.lst")));

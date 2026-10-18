@@ -15,7 +15,8 @@
 //
 // verify <repo> <scratch> <dir>: compares each path in sources.lst between the
 // repository and the copy (type, file bytes, link target) and confirms each path
-// in deleted.lst is still absent from the copy. Prints one line per difference.
+// in deleted.lst is still absent from the copy. Prints one line per difference;
+// an entry it cannot read on either side is a difference too.
 //
 // Both lists are NUL-delimited. Exit 0 on success, 1 on a rejected link or a
 // difference, 2 on usage or setup errors (a repository git cannot list, or a
@@ -103,26 +104,29 @@ if (mode === "prepare") {
   console.log(`${protect.length} files protected, ${sources.length} sources listed, ${deleted.length} deletions listed`);
 } else {
   let differences = 0;
-  const report = (line) => {
-    differences += 1;
-    console.log(line);
-  };
   const kind = (stat) => (stat.isSymbolicLink() ? "link" : stat.isFile() ? "file" : stat.isDirectory() ? "directory" : "other");
-  for (const path of readList("sources.lst")) {
+  const compare = (path) => {
     const original = lstatOrNull(join(repo, path));
     const copied = lstatOrNull(join(scratch, path));
-    if (!original || !copied) {
-      report(`missing ${path} (${original ? "copy" : "repository"})`);
-    } else if (kind(original) !== kind(copied)) {
-      report(`changed ${path} (${kind(original)} became ${kind(copied)})`);
-    } else if (original.isSymbolicLink() && readlinkSync(join(repo, path)) !== readlinkSync(join(scratch, path))) {
-      report(`changed ${path} (link target)`);
-    } else if (original.isFile() && !readFileSync(join(repo, path)).equals(readFileSync(join(scratch, path)))) {
-      report(`changed ${path} (content)`);
+    if (!original || !copied) return `missing ${path} (${original ? "copy" : "repository"})`;
+    if (kind(original) !== kind(copied)) return `changed ${path} (${kind(original)} became ${kind(copied)})`;
+    if (original.isSymbolicLink() && readlinkSync(join(repo, path)) !== readlinkSync(join(scratch, path))) return `changed ${path} (link target)`;
+    if (original.isFile() && !readFileSync(join(repo, path)).equals(readFileSync(join(scratch, path)))) return `changed ${path} (content)`;
+    return null;
+  };
+  const check = (path, difference) => {
+    let line;
+    try {
+      line = difference(path);
+    } catch (error) {
+      line = `unreadable ${path} (${error.code ?? error.message})`;
     }
-  }
-  for (const path of readList("deleted.lst")) {
-    if (lstatOrNull(join(scratch, path))) report(`recreated ${path}`);
-  }
+    if (line) {
+      differences += 1;
+      console.log(line);
+    }
+  };
+  for (const path of readList("sources.lst")) check(path, compare);
+  for (const path of readList("deleted.lst")) check(path, (path) => (lstatOrNull(join(scratch, path)) ? `recreated ${path}` : null));
   process.exitCode = differences > 0 ? 1 : 0;
 }
