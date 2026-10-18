@@ -34,6 +34,9 @@ class Failure extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 class Usage extends Error {}
+// A failed Tern query during `agent prompt`, carrying the composer note the
+// caller needs; any other error is returned unchanged.
+const withNote = (e, note) => e.code === "tern_failed" ? new Failure(e.code, `${e.message}; ${note}`) : e;
 
 // The caller's deadline for the wait in progress, which a retried read never
 // outlasts.
@@ -361,16 +364,26 @@ const isOmp = (proc) => !!proc?.argv?.length && basename(proc.argv[0]) === "omp"
 // Internal to an agent object: the surface view it was read with. A symbol key
 // stays out of the JSON a command prints, and object spread copies it.
 const SURFACE = Symbol("surface");
+// Only process-query failures whose pane still exists may be tolerated by
+// launch readiness and the post-keys reread; inspect failures stay unmarked.
+const PROCESS_QUERY_FAILED = Symbol("process query failed");
 
 // The agent in a pane right now, or undefined when its foreground is not omp.
 // An omp `agent start` launched is read from its surface record (`record`, or
 // the one its name holds); any other omp, the orchestrator's own pane among
-// them, only from Tern's working flag.
+// them, only from Tern's working flag. A pane the fresh inspect after a failed
+// process query no longer shows is dropped from `snap` too, so the caller treats
+// it as absent from inspect and keeps its name.
 function agentIn(pane, snap = snapshot(), record) {
   const info = snap.panes.get(pane);
   if (!info) return undefined;
   let fg;
-  try { ({ fg } = foreground(pane)); } catch (e) { if (e.code === "timeout") throw e; return undefined; }
+  try { ({ fg } = foreground(pane)); } catch (e) {
+    if (e.code === "timeout") throw e;
+    if (!snapshot().panes.has(pane)) { snap.panes.delete(pane); return undefined; }
+    e[PROCESS_QUERY_FAILED] = true;
+    throw e;
+  }
   if (!isOmp(fg)) return undefined;
   const named = names().find((n) => n.pane === pane && n.pid === fg.pid);
   const surfaceView = record || named?.record ? view(record || named.record) : undefined;
@@ -582,8 +595,14 @@ const commands = {
     let found;
     try {
       found = poll(Date.now() + timeout, () => {
-        const a = agentIn(pane, snapshot(), record);
-        return a && (a.agent_status === "idle" || a.agent_status === "blocked") ? a : undefined;
+        const snap = snapshot();
+        try {
+          const a = agentIn(pane, snap, record);
+          return a && (a.agent_status === "idle" || a.agent_status === "blocked") ? a : undefined;
+        } catch (e) {
+          if (!e[PROCESS_QUERY_FAILED]) throw e;
+          return undefined;
+        }
       });
     } catch (e) {
       if (e.code === "timeout") throw new Failure("timeout", `omp in pane ${pane} showed no composer ready for a prompt within ${timeout}ms (surface record ${record})`);
@@ -606,13 +625,23 @@ const commands = {
     if (before.composer) throw new Failure("agent_not_ready", `agent ${who}'s composer already holds unsent text; ${NOTHING_TYPED}; clear it with agent send-keys ${who} ctrl+u, one line per press, until agent read shows no "> " line`);
     tern("send", agent.pane_id, "paste", positional[1]);
     // omp shows the paste in its composer: the text, or a chip for a long one.
-    const pasted = awaitTypable(agent, ECHO_MAX_MS, (s) => !!s.composer);
-    assertTypable(agent, pasted.composer ? TEXT_UNSENT : PASTE_UNSEEN);
+    let pasted;
+    try {
+      pasted = awaitTypable(agent, ECHO_MAX_MS, (s) => !!s.composer);
+      assertTypable(agent, pasted.composer ? TEXT_UNSENT : PASTE_UNSEEN);
+    } catch (e) {
+      throw withNote(e, pasted?.composer ? `${TEXT_UNSENT}; read the pane before prompting again` : PASTE_UNSEEN);
+    }
     if (!pasted.composer) throw new Failure("agent_prompt_stalled", `agent ${who} showed no paste in its composer within ${ECHO_MAX_MS}ms; ${PASTE_UNSEEN}`);
     tern("send", agent.pane_id, "keys", "Enter");
     // An emptied composer means omp took the prompt. A dialog or an exit right
     // after the Enter means the same: the composer was gone or empty for it.
-    const sent = awaitTypable(agent, SUBMIT_MAX_MS, (s) => !s.composer, true);
+    let sent;
+    try {
+      sent = awaitTypable(agent, SUBMIT_MAX_MS, (s) => !s.composer, true);
+    } catch (e) {
+      throw withNote(e, PASTE_UNSEEN);
+    }
     if (sent.composer) throw new Failure("agent_prompt_stalled", `agent ${who} kept the prompt in its composer after Enter; ${TEXT_UNSENT}`);
     if (!flags.wait) return { agent };
     // Herdr's gate: a prompt sent to an agent that is not working must show
@@ -628,10 +657,14 @@ const commands = {
         }, deadline ?? Infinity);
       } catch (e) {
         if (e.code === "timeout" && Date.now() < (deadline ?? Infinity)) throw new Failure("agent_prompt_stalled", `agent ${who} showed no activity within ${PROMPT_GATE_MS}ms of the prompt`);
-        throw e;
+        throw withNote(e, PASTE_UNSEEN);
       }
     }
-    return { agent: settle(agent, until, deadline, true) };
+    try {
+      return { agent: settle(agent, until, deadline, true) };
+    } catch (e) {
+      throw withNote(e, PASTE_UNSEEN);
+    }
   },
   "agent wait"(args) {
     const { flags, positional } = parse(args, { until: "list", timeout: "value" });
@@ -669,7 +702,7 @@ const commands = {
       try {
         while (Date.now() < end && current(agent).agent_status === "blocked") sleep(50);
       } catch (e) {
-        if (e.code !== "agent_state_hidden" && e.code !== "agent_not_found") throw e;
+        if (!e[PROCESS_QUERY_FAILED] && e.code !== "agent_state_hidden" && e.code !== "agent_not_found") throw e;
       }
     }
     return { pane_id: agent.pane_id, keys };
