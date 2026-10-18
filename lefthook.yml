@@ -22,6 +22,7 @@ pre-push:
   jobs:
     - name: tests
       glob: "{scripts,tests,skills}/*"
-      run: for t in tests/*.test.sh; do sh "$t" || exit 1; done && bun test tests/
+      # A hook in a linked worktree exports an absolute GIT_DIR, which would aim every fixture repo in the tests at the real repo.
+      run: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR sh -c 'for t in tests/*.test.sh; do sh "$t" || exit 1; done && bun test tests/'
     - name: plugin-validate
       run: claude plugin validate --strict . && claude plugin validate --strict ./skills
