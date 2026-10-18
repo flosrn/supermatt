@@ -458,9 +458,10 @@ test("OMP ID lookup isolates inherited session roots and identities", (t) => {
   const selected = join(sessionRoot, "omp-session.jsonl");
   copy("omp-main.jsonl", selected);
 
-  // Cover direct roots, agent/profile roots, XDG profiles, and the other hosts' layouts.
+  // Cover direct roots, agent/profile roots, XDG default and profile roots, and the other hosts' layouts.
   copy("omp-main.jsonl", join(collisionRoot, "omp-session.jsonl"));
   copy("omp-main.jsonl", join(collisionRoot, "sessions", "omp-session.jsonl"));
+  copy("omp-main.jsonl", join(collisionRoot, "omp", "sessions", "omp-session.jsonl"));
   copy("omp-main.jsonl", join(collisionRoot, "omp", "profiles", collisionRoot, "sessions", "omp-session.jsonl"));
   copy("claude-main.jsonl", join(collisionRoot, "projects", "claude-session.jsonl"));
   copy("codex-main.jsonl", join(collisionRoot, "sessions", "codex-session.jsonl"));
