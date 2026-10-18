@@ -370,7 +370,7 @@ function agentIn(pane, snap = snapshot(), record) {
   const info = snap.panes.get(pane);
   if (!info) return undefined;
   let fg;
-  try { ({ fg } = foreground(pane)); } catch { return undefined; }
+  try { ({ fg } = foreground(pane)); } catch (e) { if (e.code === "timeout") throw e; return undefined; }
   if (!isOmp(fg)) return undefined;
   const named = names().find((n) => n.pane === pane && n.pid === fg.pid);
   const surfaceView = record || named?.record ? view(record || named.record) : undefined;
