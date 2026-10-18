@@ -51,7 +51,7 @@ function tern(...args) {
     const failed = new Failure("tern_failed", (r.stderr || `tern ${args[0]} exited ${r.status}`).trim());
     if (!retryable || r.signal || !/os error 35|Resource temporarily unavailable/.test(r.stderr || "")) throw failed;
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw deadline < budget ? timedOut() : failed;
+    if (remaining <= 0) throw readsUntil <= budget ? timedOut() : failed;
     sleep(Math.min(delay, remaining));
     delay = Math.min(delay * 2, 1000);
   }

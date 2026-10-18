@@ -983,6 +983,13 @@ test("a wait with --timeout stops retrying a busy daemon at its own timeout", (t
   assert.equal(w.sleeps().reduce((sum, ms) => sum + ms, 0), 1000);
 });
 
+test("a wait whose --timeout ends with the retry budget reports timeout", (t) => {
+  const w = worker(t, { fakeTime: true });
+  w.edit((x) => { x.failure = { command: "inspect", skip: 1, remaining: 1000, message: "os error 35" }; });
+  const r = w.run("agent", "wait", "app-work-1-1", "--until", "working", "--timeout", "60000");
+  assert.equal(r.error?.code, "timeout", r.stderr);
+});
+
 test("a busy daemon at the prompt gate does not read as a prompt that never landed", (t) => {
   const w = worker(t, { fakeTime: true });
   // Resolving, the paste and the Enter take four reads; the fifth is the gate's.
