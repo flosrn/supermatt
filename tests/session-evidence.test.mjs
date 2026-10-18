@@ -154,6 +154,46 @@ test("OMP follows the active branch and includes associated child transcripts", 
   assert.equal(output.sessions.flatMap(({ records }) => records).filter(({ kind }) => kind === "tool-error").length, 1);
 });
 
+test("OMP accepts skill-prompt-only user input and skips unrelated custom messages", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const main = join(sessionRoot, "-workspace-project/session.jsonl");
+  copy("omp-skill-prompt.jsonl", main);
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project", "--session", main], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).sessions[0].records, [
+    { line: 4, kind: "user", text: "OMP skill prompt marker\nSkill command instructions" },
+    { line: 5, kind: "assistant", text: "OMP skill answer" },
+  ]);
+});
+
+test("OMP rejects userless sessions with unrelated custom messages", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const main = join(sessionRoot, "-workspace-project/session.jsonl");
+  mkdirSync(dirname(main), { recursive: true });
+  writeFileSync(main, [
+    { type: "session", version: 3, id: "omp-userless-session", cwd: "/workspace/project" },
+    { type: "custom_message", id: "custom1", parentId: null, customType: "notification", content: "OMP unrelated custom message" },
+    { type: "message", id: "a1", parentId: "custom1", message: { role: "assistant", content: [{ type: "text", text: "OMP userless answer" }] } },
+    { type: "model_usage", id: "usage1", parentId: "a1", activeLeafId: "a1", purpose: "late", api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop" },
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project", "--session", main], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unsupported OMP transcript schema/);
+  assert.equal(result.stdout, "");
+});
+
 test("OMP accepts sessions from its XDG data root", (t) => {
   const home = workspace(t);
   const xdgData = join(home, "xdg-data");
