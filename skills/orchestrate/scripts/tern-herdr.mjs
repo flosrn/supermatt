@@ -36,10 +36,20 @@ class Failure extends Error {
 class Usage extends Error {}
 
 function tern(...args) {
-  const r = spawnSync("tern", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  if (r.error) throw new Failure("tern_failed", `tern ${args[0]}: ${r.error.message}`);
-  if (r.status !== 0) throw new Failure("tern_failed", (r.stderr || `tern ${args[0]} exited ${r.status}`).trim());
-  return r.stdout;
+  const retryable = ["inspect", "process", "capture", "--version"].includes(args[0]);
+  const deadline = Date.now() + 60_000;
+  let delay = 100;
+  while (true) {
+    const r = spawnSync("tern", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (r.error) throw new Failure("tern_failed", `tern ${args[0]}: ${r.error.message}`);
+    if (r.status === 0) return r.stdout;
+    const remaining = deadline - Date.now();
+    if (!retryable || r.signal || !/os error 35|Resource temporarily unavailable/.test(r.stderr || "") || remaining <= 0) {
+      throw new Failure("tern_failed", (r.stderr || `tern ${args[0]} exited ${r.status}`).trim());
+    }
+    sleep(Math.min(delay, remaining));
+    delay = Math.min(delay * 2, 1000);
+  }
 }
 const ternJson = (...args) => JSON.parse(tern(...args));
 

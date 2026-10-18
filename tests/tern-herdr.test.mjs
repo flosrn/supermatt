@@ -36,6 +36,10 @@ const a = process.argv.slice(2);
 w.calls.push(a);
 const save = () => fs.writeFileSync(file, JSON.stringify(w));
 const fail = (m) => { save(); process.stderr.write("tern " + a[0] + ": " + m + "\\n"); process.exit(1); };
+if (w.failure && a[0] === w.failure.command && w.failure.remaining > 0) {
+  w.failure.remaining -= 1;
+  fail(w.failure.message);
+}
 const pane = (id) => w.panes[id] || fail("no block " + id);
 const out = (v) => { save(); process.stdout.write(typeof v === "string" ? v : JSON.stringify(v, null, 2) + "\\n"); process.exit(0); };
 const write = (o, msg) => { if (o.record) fs.appendFileSync(o.record, JSON.stringify({ t: Date.now(), params: null, ...msg }) + "\\n"); };
@@ -196,20 +200,33 @@ const recordLine = (t, dir, verb, body) => `${JSON.stringify({ t, dir, verb, par
 const DIALOG = [["add", "u", "e", null, { id: "u", k: "col", p: { role: "omp.editor.ask" } }], ["del", "j"]];
 
 function world(t, panes, extra = {}) {
-  const { env: testEnv = {}, ...state } = extra;
+  const { env: testEnv = {}, fakeTime = false, ...state } = extra;
   const dir = mkdtempSync(join(tmpdir(), "tern-herdr-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, "tern"), FAKE_TERN);
   chmodSync(join(dir, "tern"), 0o755);
   const file = join(dir, "world.json");
   const stateDir = join(dir, "state");
+  const clockFile = join(dir, "clock.json");
+  const clockModule = join(dir, "clock.cjs");
+  if (fakeTime) writeFileSync(clockModule, `
+    let now = 0;
+    const sleeps = [];
+    Date.now = () => now;
+    Atomics.wait = (_array, _index, _value, ms) => {
+      now += ms;
+      sleeps.push(ms);
+      require("node:fs").writeFileSync(${JSON.stringify(clockFile)}, JSON.stringify(sleeps));
+      return "timed-out";
+    };
+  `);
   writeFileSync(file, JSON.stringify({ panes, next: 100, calls: [], ...state }));
   const env = { PATH: `${dir}:${process.env.PATH}`, FAKE_TERN_WORLD: file, SUPERMATT_TERN_HERDR_DIR: stateDir, TERN_PANE: "13", ...testEnv };
   const read = () => JSON.parse(readFileSync(file, "utf8"));
   return {
     stateDir,
     run(...args) {
-      const r = spawnSync(process.execPath, [cli, ...args], { env, encoding: "utf8", timeout: 20_000 });
+      const r = spawnSync(process.execPath, [...(fakeTime ? ["--require", clockModule] : []), cli, ...args], { env, encoding: "utf8", timeout: 20_000 });
       let json;
       try { json = JSON.parse(r.stdout); } catch {}
       let error;
@@ -218,6 +235,7 @@ function world(t, panes, extra = {}) {
     },
     read,
     calls: () => read().calls,
+    sleeps: () => JSON.parse(readFileSync(clockFile, "utf8")),
     edit(fn) { const w = read(); fn(w); writeFileSync(file, JSON.stringify(w)); },
     // Appends a frame of `ops` for surface `sf` to the record of the omp in
     // `pane`, acknowledged unless `acked` is false, `t` ms after now.
@@ -811,6 +829,146 @@ test("a failing tern command surfaces as tern_failed with tern's own message", (
   const r = w.run("pane", "run", "999", "ls");
   assert.equal(r.code, 1);
   assert.deepEqual(r.error, { code: "tern_failed", message: "tern run: no block 999" });
+});
+
+test("a read recovers after two os error 35 failures", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    failure: { command: "inspect", remaining: 2, message: "os error 35" },
+  });
+  const r = w.run("agent", "list");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.result.agents[0].pane_id, "13");
+  assert.equal(w.calls().filter((c) => c[0] === "inspect").length, 3);
+});
+
+test("a read recovers after Resource temporarily unavailable failures", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    failure: { command: "inspect", remaining: 2, message: "Resource temporarily unavailable" },
+  });
+  const r = w.run("agent", "list");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.result.agents[0].pane_id, "13");
+  assert.equal(w.calls().filter((c) => c[0] === "inspect").length, 3);
+});
+
+test("persistent EAGAIN fails after the sixty-second retry budget", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    fakeTime: true,
+    failure: { command: "inspect", remaining: 1000, message: "os error 35" },
+  });
+  const r = w.run("agent", "list");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern inspect: os error 35" });
+  const sleeps = w.sleeps();
+  assert.deepEqual(sleeps.slice(0, 4), [100, 200, 400, 800]);
+  assert.ok(sleeps.every((ms) => ms > 0 && ms <= 1000));
+  assert.equal(sleeps.reduce((sum, ms) => sum + ms, 0), 60_000);
+  assert.equal(w.calls().length, sleeps.length + 1);
+});
+
+test("a non-EAGAIN read failure is reported without retrying", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    fakeTime: true,
+    failure: { command: "inspect", remaining: 2, message: "permission denied" },
+  });
+  const r = w.run("agent", "list");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern inspect: permission denied" });
+  assert.deepEqual(w.calls(), [["inspect", "--json"]]);
+});
+
+test("EAGAIN from send keys is never retried", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    fakeTime: true,
+    failure: { command: "send", remaining: 1, message: "os error 35" },
+  });
+  const r = w.run("agent", "send-keys", "13", "enter");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern send: os error 35" });
+  assert.equal(sends(w).length, 1);
+});
+
+test("EAGAIN from a prompt paste is never retried", (t) => {
+  const w = worker(t, { fakeTime: true });
+  w.edit((x) => { x.failure = { command: "send", remaining: 1, message: "Resource temporarily unavailable" }; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "Do this once");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern send: Resource temporarily unavailable" });
+  assert.deepEqual(sends(w), [["send", "50", "paste", "Do this once"]]);
+});
+
+test("EAGAIN from pane run is never retried", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    fakeTime: true,
+    failure: { command: "run", remaining: 1, message: "os error 35" },
+  });
+  const r = w.run("pane", "run", "13", "echo once");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern run: os error 35" });
+  assert.deepEqual(w.calls(), [["run", "13", "echo once"]]);
+});
+
+test("EAGAIN from pane split is never retried", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    fakeTime: true,
+    failure: { command: "split", remaining: 1, message: "Resource temporarily unavailable" },
+  });
+  const r = w.run("pane", "split", "13", "--direction", "right");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern split: Resource temporarily unavailable" });
+  assert.equal(w.calls().filter((c) => c[0] === "split").length, 1);
+});
+
+test("EAGAIN from pane close is never retried", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    fakeTime: true,
+    failure: { command: "close", remaining: 1, message: "os error 35" },
+  });
+  const r = w.run("pane", "close", "13");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern close: os error 35" });
+  assert.deepEqual(w.calls(), [["close", "13"]]);
+});
+
+test("EAGAIN from tab rename is never retried", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    fakeTime: true,
+    failure: { command: "rename", remaining: 1, message: "os error 35" },
+  });
+  const r = w.run("tab", "rename", "13", "Once");
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.error, { code: "tern_failed", message: "tern rename: os error 35" });
+  assert.equal(w.calls().filter((c) => c[0] === "rename").length, 1);
+});
+
+test("a process read recovers after EAGAIN", (t) => {
+  const w = world(t, { 13: orchestrator() }, {
+    failure: { command: "process", remaining: 2, message: "os error 35" },
+  });
+  const r = w.run("agent", "get", "13");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.result.agent.pid, 2);
+  assert.equal(w.calls().filter((c) => c[0] === "process").length, 3);
+});
+
+test("a capture read recovers after EAGAIN", (t) => {
+  const w = world(t, { 13: { ...orchestrator(), scrollback: "Captured chat\n" } }, {
+    failure: { command: "capture", remaining: 2, message: "Resource temporarily unavailable" },
+  });
+  const r = w.run("agent", "read", "13");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.stdout, "Captured chat\n");
+  assert.equal(w.calls().filter((c) => c[0] === "capture").length, 3);
+});
+
+test("a version read recovers after EAGAIN", (t) => {
+  const w = world(t, {}, {
+    failure: { command: "--version", remaining: 2, message: "os error 35" },
+  });
+  const r = w.run("integration", "status");
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /tern 0\.9\.2/);
+  assert.equal(w.calls().length, 3);
 });
 
 test("renaming an agent to the name it already holds succeeds", (t) => {
