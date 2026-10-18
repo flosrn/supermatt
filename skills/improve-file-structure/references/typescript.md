@@ -6,7 +6,7 @@ TypeScript models the runtime or bundler's module rules; validate a move against
 
 Angular recommends feature-area directories and keeping related source, tests, templates, and styles together. This is Angular guidance, not a universal TypeScript layout. It offers useful evidence for feature grouping when a project's current structure scatters related work. Source: [Angular style guide](https://angular.dev/style-guide#project-structure).
 
-Next.js reserves files and directories for routing, while allowing several organization strategies and colocated non-route files. Check the project's router and version before moving route files, layouts, or private folders. Source: [Next.js project structure](https://nextjs.org/docs/app/getting-started/project-structure).
+Next.js reserves files and directories for routing, while allowing several organization strategies and colocated non-route files. Check the project's router and version before moving route files, layouts, or private folders. Source: [Next.js project structure](https://nextjs.org/docs/app/getting-started/project-structure.md).
 
 ## Apply to the project
 

@@ -98,8 +98,10 @@ When a skill description exceeds 1024 characters, it is truncated at exactly
 that end mid-word (e.g. "Use when the user wants to confi").
 
 **Desired behavior:**
-Truncation should break at the last word boundary before 1024 characters
-and append "..." to indicate truncation.
+Truncation should break at the last word boundary at or before 1021 characters
+and append "..." to indicate truncation, keeping the total at most 1024 characters.
+If no word boundary exists in that prefix, keep the first 1021 characters
+and append "...".
 
 **Key interfaces:**
 - Inspection of `SkillMetadata` confirms its `description` field accepts a string,
@@ -111,9 +113,11 @@ and append "..." to indicate truncation.
 - The frontmatter parser: SKILL.md text in, `SkillMetadata` out
 
 **Acceptance criteria:**
-- [ ] Descriptions under 1024 chars are unchanged
+- [ ] Descriptions of at most 1024 chars are unchanged
 - [ ] Descriptions over 1024 chars are truncated at the last word boundary
-      before 1024 chars
+      at or before 1021 chars when such a boundary exists
+- [ ] A single-token description over 1024 chars uses its first 1021 chars
+      followed by "...", for a total of 1024 chars
 - [ ] Truncated descriptions end with "..."
 - [ ] The total length including "..." does not exceed 1024 chars
 

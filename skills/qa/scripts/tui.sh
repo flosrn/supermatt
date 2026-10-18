@@ -55,15 +55,12 @@ start() {
   [ $# -ge 4 ] || usage
   session=$1 cols=$2 rows=$3
   shift 3
-  launch="$(mktemp "${TMPDIR:-/tmp}/tui-launch.XXXXXX")" || return 1
+  launch="$(mktemp "$TMUX_TMPDIR/tui-launch.XXXXXX")" || return 1
   {
     echo 'rm -f "$0"'
     echo 'stty oxtabs 2>/dev/null || stty tab3'
     printf exec
-    for arg; do
-      printf " '%s'" "$(printf '%s' "$arg" | LC_ALL=C sed "s/'/'\\\\''/g")"
-    done
-    echo
+    perl -e 'for (@ARGV) { s/\x27/\x27\\\x27\x27/g; print " \x27$_\x27" } print "\n"' -- "$@"
   } > "$launch" || { rm -f "$launch"; return 1; }
   quoted_launch=$(printf '%s' "$launch" | LC_ALL=C sed "s/'/'\\\\''/g")
   if tmux new-session -d -s "$session" -x "$cols" -y "$rows" -c "$PWD" 'sleep 86400' &&

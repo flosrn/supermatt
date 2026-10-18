@@ -1,0 +1,2 @@
+{"type":"session","version":3,"id":"omp-abandoned-child","timestamp":"2026-10-15T00:00:01.000Z","cwd":"/workspace/project"}
+{"type":"message","id":"error1","parentId":null,"message":{"role":"toolResult","content":[{"type":"text","text":"OMP failed tool"}],"isError":true}}

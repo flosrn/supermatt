@@ -77,7 +77,7 @@ During triage (Step 1: Gather context), read all files in `.out-of-scope/`. When
 
 The maintainer may:
 
-- **Confirm**: the new issue gets added to the existing file's "Prior requests" list, then closed
+- **Confirm**: if the new issue is classified as an enhancement rejected as `wontfix`, add it to the existing file's "Prior requests" list, then close it. For a bug, keep the historical decision as context, leave the knowledge base unchanged, and follow the normal bug outcome.
 - **Reconsider**: the out-of-scope file gets deleted or updated, and the issue proceeds through normal triage
 - **Disagree**: the issues are related but distinct, proceed with normal triage
 

@@ -157,11 +157,11 @@ You may use one of these, you may use several, it is unlikely you will use all o
 
 ### Evidence
 
-Concrete evidence that the change works. Show a before and after.
+Concrete evidence that the change works. Show a before and after when both were captured. For a rewrite, preserve the supplied evidence and its limits; rewriting the description does not establish that checks ran. If a before state or executable check is unavailable or not applicable, say which evidence is missing and why, report only observed results, and leave the verification gap explicit.
 
 Screenshots are S-tier, when the environment is set up for it and the change is visual.
 
-Execution-based evidence is A-tier. Test results, console output. Show the exact test that now fails and passes, using pseudocode.
+Execution-based evidence is A-tier. Report the actual test commands, results, and checked revision. A failing-before/passing-after claim needs observations of both runs. Pseudocode may explain the tested behavior when labeled illustrative; it is not an executed test or proof of a result.
 
 ### Merge danger
 

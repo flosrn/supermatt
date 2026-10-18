@@ -8,7 +8,7 @@ compatibility: Terminal QA requires tmux, Perl, and a POSIX shell. Web QA uses w
 
 QA checks the running program against what was requested; tests check the code against what its author expected. A scenario passes only on a result you **observed** in the running program. A green suite, a read of the code, or an exit status on its own is not an observation.
 
-QA hunts for the fail. The author of a change grades it too kindly, so when this session wrote the change, run QA in a fresh subagent: give it the diff, the request, and this skill, and tell it to find where the change breaks.
+QA hunts for the fail. The author of a change grades it too kindly, so when this session wrote the change, run QA in a fresh subagent: give it the diff, the request, and this skill, and tell it to find where the change breaks. If subagents are unavailable, use a fresh session where possible; otherwise run QA here and report that it was not independent.
 
 QA runs before `code-review`: once QA shows the change does what was asked, the review can spend itself on how the code is written and how it fails.
 
@@ -38,7 +38,7 @@ A **scenario** is one thing a user does and the result they should then see: the
 
 Above the scenarios, list the change's invariants under **Never and always**: what must never happen (data lost, a file left half-written, a secret in a log) and what must always hold (the terminal restored, the old data still readable). Check them after every scenario, the unhappy ones most of all.
 
-For a change meant to keep behavior (a refactor), the expected result is the base build's screen. Export the base commit with `git archive <base> | tar -x -C "$DIR/base"` and build it there with a private dependency directory and generated caches. Prepare dependencies with the base's lockfile and repository commands inside the export. Before comparing a scenario, confirm the base renders its normal screen; a server URL that answers with a runner error is a blocked comparison, with its startup evidence. A `git worktree` shares `.git/hooks` with the main checkout, so a dependency install in one runs the old commit's `prepare` script and rewrites the main checkout's hooks. Drive both builds with the same keys, from folders with the same name and the same seeded state, and diff the captures. Mask only what changes on every run, such as a clock.
+For a change meant to keep behavior (a refactor), the expected result is the base build's screen. Create the export directory and export the base commit with `mkdir -p "$DIR/base" && git archive <base> | tar -x -C "$DIR/base"` and build it there with a private dependency directory and generated caches. Prepare dependencies with the base's lockfile and repository commands inside the export. Before comparing a scenario, confirm the base renders its normal screen; a server URL that answers with a runner error is a blocked comparison, with its startup evidence. A `git worktree` shares `.git/hooks` with the main checkout, so a dependency install in one runs the old commit's `prepare` script and rewrites the main checkout's hooks. Drive both builds with the same keys, from folders with the same name and the same seeded state, and diff the captures. Mask only what changes on every run, such as a clock.
 
 Done when every requirement and every changed user-reachable path maps to at least one scenario.
 

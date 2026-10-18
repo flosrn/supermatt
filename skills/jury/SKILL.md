@@ -1,6 +1,6 @@
 ---
 name: jury
-description: "Put a question or decision to a jury of 3 or 5 subagents: blind independent votes, one anonymized review round, and one committed verdict with the vote, the dissent, and the first action."
+description: "Put a question or decision to a jury of 3 or 5 subagents: blind independent votes, one anonymized review round, and a verdict with the vote, dissent, and first action when at least one blind vote succeeds."
 argument-hint: "<question or decision> [5 for a five-seat panel]"
 disable-model-invocation: true
 compatibility: Requires independent subagents. Uses the repository peer policy to keep every seat on the host or select a capability-aware Claude, Codex, Cursor Agent, or OMP adapter.
@@ -9,7 +9,7 @@ license: MIT
 
 # Jury
 
-One model asked once gives one line of reasoning, and asking it to debate itself mostly makes it agree with itself. A jury gets independence from separate subagents that vote blind, and it gets correction from one review round where every vote change must name its reason. You are the foreman: you frame, dispatch, check facts, and deliver one verdict. There is always a verdict.
+One model asked once gives one line of reasoning, and asking it to debate itself mostly makes it agree with itself. A jury gets independence from separate subagents that vote blind, and it gets correction from one review round where every vote change must name its reason. You are the foreman: you frame, dispatch, check facts, and deliver one verdict when at least one blind vote succeeds.
 
 ## Step 1: Gate
 
@@ -63,7 +63,7 @@ Square-bracketed pairs are conditional notation. Omit them for null values, and 
 
 Immediately before each Cursor or OMP vote and review process, obtain the harness contract's interactive confirmation. Declined or unavailable confirmation replaces that seat with a host subagent. Cursor Ask mode prevents agent edits but still inherits user and repository rules, MCP, plugins, executable hooks, and persistent sessions. OMP receives no repository tools. For OMP, append every cited text source needed to assess the brief to the prompt exactly once between matching nonce-delimited `BEGIN` and `END` lines. If required evidence does not fit, replace the OMP seat with a host seat and record incomplete external coverage.
 
-Read the answer from `vote.md`, never from process output. Accept the external seat only when the process exits zero, the answer is nonempty, and the answer contains `CHOICE`. On timeout, nonzero status, empty output, missing evidence, usage limit, authentication failure, or rejected configured value, read `peer.log`, replace it with a host subagent using the same lens, and record the configured CLI, model, effort, and exact failure for the Panel line. An explicit mode never tries another external CLI.
+Read the answer from `vote.md`, never from process output. Accept the external seat only when the process exits zero and the answer contains a usable vote block as defined below. On timeout, nonzero status, empty or malformed output, missing evidence, usage limit, authentication failure, or rejected configured value, read `peer.log`, replace it with a host subagent using the same lens, and record the configured CLI, model, effort, and exact failure for the Panel line. An explicit mode never tries another external CLI.
 
 The juror prompt:
 
@@ -82,7 +82,9 @@ WOULD CHANGE MY MIND: <the one finding that would flip your choice>
 RISKIEST ASSUMPTION: <the assumption your choice depends on most>
 ```
 
-Seats may return one at a time as background notifications. Wait for every seat without writing a message for each arrival, and treat a completion notice for a seat you already have as nothing to answer. Retry a seat that fails or returns no `CHOICE` once, then drop it and note the drop. Tally the choices. This is the **blind vote**.
+A usable block has exactly one of each field required by that round. `CHOICE` is an option label from the brief or `none:` followed by a nonempty better framing. `CONFIDENCE` is a number from 0 through 100. In a blind vote, `REASONS` contains one to three reasons, each supported by a fact or source reference; `WOULD CHANGE MY MIND` and `RISKIEST ASSUMPTION` are nonempty. In a review vote, `REVIEW` gives every supplied position a strongest and weakest point, and `EVERYONE MISSED` is nonempty (an explicit "none" is valid). `CHANGED FROM MAJORITY BECAUSE` supplies an argument grounded in the supplied fact checks or a checked fact when the choice differs from the unique most common blind choice. If the blind top count is tied, every review choice requires such a reason; "none" is valid only when matching a unique most common blind choice. Validate host and external answers before using them; a missing, duplicate, or malformed required field makes the seat failed.
+
+Seats may return one at a time as background notifications. Wait for every seat without writing a message for each arrival, and treat a completion notice for a seat you already have as nothing to answer. Retry a host seat that fails or returns an unusable block once, including a host replacement for a failed external seat, then drop it and note the drop. If no valid blind votes remain, report "Jury unavailable: no valid blind votes", list the exact failures, and stop without a verdict. Otherwise, tally the choices. This is the **blind vote**.
 
 If the blind vote is unanimous and every confidence is 70 or higher, go to Step 6.
 
@@ -113,14 +115,14 @@ REVIEW: <for each position, its strongest point and its weakest point>
 EVERYONE MISSED: <what no position considered>
 CHOICE: <one option label, or "none: <a better framing>">
 CONFIDENCE: <0-100>
-CHANGED FROM MAJORITY BECAUSE: <if your choice differs from the most common choice above, the argument or checked fact that decided it; otherwise "none">
+CHANGED FROM MAJORITY BECAUSE: <if the blind top count is tied or your choice differs from its unique most common choice, the argument grounded in the supplied fact checks or checked fact that decided it; otherwise "none">
 ```
 
-Tally the choices. This is the **review vote**.
+Apply Step 4's retry-and-drop rule to review seats. If no valid review votes remain, record "review unavailable: no valid review votes" and the exact failures, then use the blind vote in Step 6. Otherwise, tally the choices. This is the **review vote**.
 
 ## Step 6: Verdict
 
-The review vote decides, or the blind vote when Step 5 was skipped. The blind vote stands instead when the review majority differs from it and no reviewer names the argument or fact behind the change: a change with no reason is agreement, not evidence.
+The review vote decides, or the blind vote when Step 5 was skipped or produced no valid review votes. A review result may replace a unique blind winner or resolve tied blind leaders only when a reviewer choosing that result supplies a checked supporting reason. Otherwise retain the blind tally and apply the tie-break below: a change with no reason is agreement, not evidence.
 
 You may overrule the majority only with a checked fact that defeats its main reason. Say so in the verdict. On a tie, pick the option whose main reason survived the fact checks. If that still ties, pick the option that is cheaper to undo.
 
@@ -146,7 +148,7 @@ Why:
 1. <reason, with its source>
 
 Dissent: <the strongest case for the option that lost, in its best form>
-Everyone missed: <from the reviews, or "review skipped: unanimous blind vote">
+Everyone missed: <from the reviews, "review skipped: unanimous blind vote", or "review unavailable: no valid review votes">
 Riskiest assumption: <assumption>. Test: <the cheapest check>. If it fails: <the option the verdict flips to>.
 First action: <one concrete step>
 

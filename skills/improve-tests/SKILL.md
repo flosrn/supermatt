@@ -28,7 +28,7 @@ Every step applies these. Findings cite them by name.
 2. **Never remove the only guard of a claim we own.** Every deletion names where its claim stays covered, or why the claim is not ours (library behavior, trivial code).
 3. **Keep list.** These stay unless the user says otherwise: regression tests tied to a bug or incident, contract tests at a service boundary, tests of error text or formats that consumers rely on, property and invariant tests, tests on money, auth, and permission paths.
 4. **Speed never buys a weaker claim.** A lever that makes a test fast by removing what it proves (stubbing the database in a test whose claim is the query) is a deletion. Treat it as one, with the evidence a deletion needs.
-5. **No new dependencies without asking.** A profiler or mutation tool the project does not have gets proposed, not added. If the user agrees, load and follow the `dependency-vetting` skill through the host's skill mechanism and vet it first.
+5. **No new dependencies without asking.** Before proposing a specific profiler or mutation tool the project does not have, load and follow the `dependency-vetting` skill through the host's skill mechanism. Obtain separate user approval before adding the vetted tool.
 
 ## Process
 
@@ -84,7 +84,7 @@ Each finding carries its payoff: seconds saved from the baseline timings, or, fo
 | **Localized** | A few files or one lever hold most of the waste | Present only those candidates. |
 | **Systemic** | Waste spreads across the suite: a whole level duplicates another, one setup pattern runs everywhere | Present ranked candidates. Recommend the top 3-5 batches for this session. |
 
-**Idempotency rule:** on a suite this skill already trimmed, with the plan implemented, the verdict is Lean.
+**Idempotency rule:** on an unchanged suite already assessed and trimmed, do not re-propose completed or rejected cuts without new evidence.
 
 **User override:** if the user names a specific cut on a Lean suite, scope strictly to it.
 
@@ -131,4 +131,4 @@ When a batch goes red, revert it and diagnose from the reverted state, then retr
    - per suite: wall time, test count, and file count, before and after
    - per batch: what changed, the measured saving, where the removed claims live now
    - what stayed and why: keep-list tests, rejected batches
-4. Re-run the Step 4 assessment on the changed areas: the verdict is Lean. If waste remains for the same reasons, diagnose why the cuts missed. Do not start a second round of the same cuts.
+4. Re-run the Step 4 assessment on the changed areas and report the evidence-based verdict. If previously accepted waste remains, explain why; do not automatically start another round.

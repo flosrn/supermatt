@@ -18,6 +18,8 @@ You are the orchestrator. You do not write code. You pick issues, drive workers 
 
 Repeat until a stop condition is met. Never ask the user anything, through a question tool or otherwise: answer every question and dialog as below.
 
+Before dispatching, read the [orchestrator dispatch contract](../../references/harnesses.md#orchestrator-dispatch). This explicit invocation delegates only its listed worker commands within this run. Use [Send the prompt](WORKER.md#dispatch-preamble) for every instruction prompt: it attaches the assigned issue, worktree, phase, approval scope, and relevant prior evidence at dispatch. Keep the called skills' invocation policies unchanged; park when a required human approval is outside the delegated scope.
+
 ## Setup
 
 1. Run `test "${HERDR_ENV:-}" = 1`. If it fails, say you are not inside herdr and stop.
@@ -56,49 +58,7 @@ Before dispatching concurrent lanes, read [Parallel resources](../../references/
 - The ship slot: one lane at a time runs from Sync through CI recovery, post-merge workflow verification, and Close out. A lane that reaches Sync while another holds the slot waits for it. A failed or blocked default-branch workflow sets a separate merge hold; releasing a parked lane's slot does not clear that hold. Other lanes may finish work through Refactor, but start no new issue and perform no Sync or merge while the hold remains. If recovery parks, retain those waiting lanes for inspection and stop once every other busy lane reaches that boundary.
 - When every lane is idle or parked, stop (see Stop conditions).
 
-## Worker
-
-Claude Code sessions use these models and efforts:
-
-| Session | Phases | Model | Effort |
-|---|---|---|---|
-| V | verify | `opus` | `xhigh` |
-| T | triage | `opus` | `high` |
-| A | implement, the QA and review restarts in step 3, fix | `sonnet` | `high` |
-| B | refactor, ship | `opus` | `high` |
-| C | retro | `opus` | `high` |
-
-Codex sessions use these models and reasoning efforts:
-
-| Session | Phases | Model | Effort |
-|---|---|---|---|
-| V | verify | `gpt-6-astra` | `high` |
-| T | triage | `gpt-6-astra` | `high` |
-| A | implement, QA restart in step 3 | `gpt-6.1-sol` | `medium` |
-| A | review restart in step 3, fix | `gpt-6-astra` | `high` |
-| B | refactor, ship | `gpt-6-astra` | `high` |
-| C | retro | `gpt-6-astra` | `high` |
-
-For Cursor and OMP, read the current session's authoritative model ID into ACTIVE_MODEL and pass that exact ID to every new worker. If authoritative metadata does not expose it, omit `--model` and record that the harness default is inherited. Never infer a model from provider family. Cursor receives no effort flag. OMP uses these phase-specific thinking levels:
-
-| Session | Phases | Thinking |
-|---|---|---|
-| V, T, B, C | verify, triage, refactor, ship, retro | `high` |
-| A | implement, QA restart | `medium` |
-| A | review restart, fix | `high` |
-
-Select the Claude or Codex row, or the OMP thinking row, for every launch and restart. In Codex, Cursor, and OMP, defer the review inside `/implement` to the fresh review worker in step 3. If Codex findings reach step 4 from a Sol worker, restart on the fix row before prompting `/fix-findings`; include each finding's full text, prior reports and checked commits, and the issue reference, since the fresh session has no record of them.
-
-For OMP, resolve OMP_WORKER_CONFIG to the absolute path of [omp-worker.yml](omp-worker.yml) beside this skill, not relative to WT. This read-only launch overlay disables configured auto-resume without changing user or project settings. A missing or invalid overlay is a launch failure. `--no-prewalk` prevents an automatic model handoff. Retain normal skill discovery and permission controls; add no auto-approval, resume, or continue flags.
-
-- **Start the worker**: run `herdr pane run PANE "cd WT"` with WT shell-quoted, then use the matching recipe. Claude: `herdr agent start "$WORKER" --kind claude --pane "$PANE" -- --model "$MODEL" --effort "$EFFORT"`. Codex: `herdr agent start "$WORKER" --kind codex --pane "$PANE" -- --model "$MODEL" -c "model_reasoning_effort=$EFFORT"`. Cursor: `herdr agent start "$WORKER" --kind cursor --pane "$PANE" --` plus `--model "$ACTIVE_MODEL"` only when known. OMP: `herdr agent start "$WORKER" --kind omp --pane "$PANE" --` plus `--model "$ACTIVE_MODEL"` only when known, then `--thinking "$THINKING" --no-prewalk --config "$OMP_WORKER_CONFIG"`. If the active OMP model rejects the thinking level, retry once without `--thinking` and record the fallback. Shell-quote every substituted path and value. Then run `herdr pane report-metadata PANE --source orchestrate --display-agent "worker L"`. If `agent start` returns `agent_pane_busy` or says the name is in use, wait three seconds and retry up to five times. If it returns `agent_not_ready`, answer the visible startup dialog.
-- **Stop the worker**: read `herdr agent get WORKER` `.result.agent.agent_session`. Retain every Herdr-reported session ID or path in SESSIONS. A `kind: path` value must be absolute and is retained directly. For Claude and Codex IDs, also retain the transcript path under SESSION_ROOT when found. For Cursor, never manufacture a transcript path from an ID. Capture evidence before `herdr agent prompt WORKER "/exit"`. The pane and recorded transcripts remain.
-- **Restart the worker**: stop it and confirm its harness process has exited, then start it. Use a fresh launch, not `/restart`.
-- **Show phase P**: at the start of each phase below, set the lane's phase to `DISPLAY P` and run `herdr tab rename "$HERDR_TAB_ID" "<each busy lane's phase, joined by ' | '>"`.
-- **Wait for the worker**: run every `herdr agent prompt ... --wait` as a background command, so the other lanes go on meanwhile. When it returns, run `herdr agent wait WORKER --until idle --until done --until blocked` in the background and let it notify you. The wait can return `done` between two turns while sub-agents are still running, so then run `sleep 15` and `herdr agent get WORKER`: if it is `working`, wait for the worker again. If the worker is `blocked`, answer the dialog (see Answer a dialog) and wait for the worker again.
-- **Read the worker's reply**: check its current state with `herdr agent get WORKER`. Use `herdr agent read WORKER --source visible --lines <n>` while it is working, blocked, or unknown; use `--source recent-unwrapped` for history only after it settles at idle or done. Capturing alternate-screen history can require scrolling, which Herdr refuses while a worker is active. If a history read returns `agent_not_idle` because the state changed, read with `--source visible` and continue; this read-mode mismatch is recoverable and does not park the lane.
-  After an OMP worker's first completed turn, require `.result.agent.agent_session` with `kind: path` and an absolute value, then retain it in SESSIONS. After a Cursor worker's first completed turn, require an authoritative Herdr session ID or path; a path must be absolute. A missing or invalid reference parks the lane with the exact evidence gap. Session creation is lazy, so do not require a reference before the first turn.
-  If the pane does not show the reply, read a reported `kind: path` transcript directly. Otherwise locate only Claude or Codex IDs under SESSION_ROOT: Claude Code uses `<session>.jsonl`; Codex rollout filenames include the session ID in dated subdirectories. For OMP, take the last assistant text from `type: "message"` records with `message.role: "assistant"`, joining only text content blocks and skipping thinking, tool calls, and the physical title record. For a Cursor ID without a path, do not derive storage during orchestration. When no matching readable transcript exists, ask the idle worker to write its last reply to a temporary file and return the path.
+Before the first worker launch, read [WORKER.md](WORKER.md) for every host's model and effort policy, launch and restart recipes, and session evidence handling. Apply it to all worker phases below, including spec verification and triage.
 
 ## Answers
 
@@ -129,12 +89,14 @@ herdr agent read WORKER --source recent-unwrapped --lines 40
 
 - BUSY=yes: run `sleep 60` in the background, then ask again. If BUSY is still yes after 30 minutes, park the lane.
 - QUESTION is not NONE: answer it (see Answer a question).
-- QA=NONE with no reusable lane result: run `git -C WT log --format=%s origin/DEFAULT..HEAD`. If every subject has the type `refactor`, the branch changes nothing a user can see: QA is `skipped, refactor only`. Otherwise show phase `qa`, restart the worker, prompt it with `/qa origin/DEFAULT REF` (`--wait`, no timeout), and wait for the worker. Ask it the same five-line question.
-- REVIEW=NONE with no reusable lane result: show phase `review`, restart the worker, prompt it with `/code-review` (`--wait`, no timeout), and wait for the worker. Ask it the same five-line question.
+- Missing, incomplete, or invalidated QA coverage, including QA=NONE with no reusable lane result: run `git -C WT log --format=%s origin/DEFAULT..HEAD`. If every subject has the type `refactor` and the actual diff confirms no user-visible behavior change, QA may be `skipped, refactor only`, with that justification recorded. Otherwise show phase `qa`, restart the worker, prompt it with `/qa origin/DEFAULT REF` (`--wait`, no timeout), passing prior reports, checked commits, and the intervening diff so it completes only missing or affected coverage. Wait for the worker and ask it the same five-line question.
+- Missing, incomplete, or invalidated review coverage, including REVIEW=NONE with no reusable lane result: show phase `review`, restart the worker, prompt it with `/code-review` (`--wait`, no timeout), passing prior reports, checked commits, and the intervening diff for follow-up coverage. Wait for the worker and ask it the same five-line question.
+
+**Coverage gate:** inspect the full reports, not just the five-line reply or the presence of a verdict. Every required QA scenario and every review axis (Standards, Spec, Adversarial) must have current, complete evidence or an explicit, evidence-backed not-applicable justification. A missing report, unavailable check, blocked or untested scenario, or incomplete axis is a coverage gap, never N/A; no findings does not mean complete coverage. Preserve justified N/A cases and unaffected evidence under the reuse rules above. Complete missing or invalidated checks as above within the delegated approval scope; if a prerequisite is unavailable or any gap remains after follow-up, park with the exact unresolved coverage and what it needs. Route open failures and findings through Fix findings and reapply this gate on the resulting head. Advance only with complete coverage and no unresolved failures or findings.
 
 ### 4. Fix findings
 
-If UNFIXED is not NONE, show phase `fix`, prompt the current worker with `/fix-findings <the UNFIXED value>` (`--wait`), the prior reports and their checked commits, and instructions to use [implement's follow-up verification](../implement/SKILL.md#follow-up-verification). Wait for the worker. Then ask the five-line question again, and answer any open question. A finding that `/fix-findings` settled with no edit, because the option it applied (its own recommendation, or what the issue asks for) keeps the code as it is, counts as fixed. If UNFIXED still names a finding that is open, park the lane. Then prompt `/commit` (`--wait`) and wait for the worker, so the tree is clean for session B.
+If UNFIXED is not NONE, show phase `fix`, prompt the current worker with `/fix-findings <the UNFIXED value>` (`--wait`), the prior reports and their checked commits, and instructions to verify behavior-changing fixes test-first, run affected QA, and obtain independent review of the fix commits, carrying prior reports and checked commits forward. Test-only fixes need affected tests and independent review, not repeated QA of unchanged runtime behavior. Wait for the worker. Then ask the five-line question again, and answer any open question. A finding that `/fix-findings` settled with no edit, because the option it applied (its own recommendation, or what the issue asks for) keeps the code as it is, counts as fixed. If UNFIXED still names a finding that is open, park the lane. Then prompt `/commit` (`--wait`) and wait for the worker, so the tree is clean for session B. Reapply Check the worker's coverage gate before advancing.
 
 ### 5. Refactor (session B)
 
@@ -148,11 +110,11 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
 
 1. Show phase `sync`. Run `git -C WT fetch origin && git -C WT rebase origin/DEFAULT`. If it rebased clean, go to Ship.
 2. It stopped on conflicts: add `DISPLAY rebase conflicts in <files>` to the friction log, prompt the current worker with `/resolving-merge-conflicts` (`--wait`, no timeout), and wait for the worker. The rebase is done when `git -C WT status` no longer reports a rebase in progress and `git -C WT status --porcelain` prints nothing. If it is not, park the lane.
-3. The resolved code is code that no QA pass ran: prompt `/qa origin/DEFAULT REF` (`--wait`, no timeout), wait for the worker, and ask the five-line question from step 3. If its QA line has a fail, park the lane. That QA line replaces the one from step 3 in Ship.
+3. The resolved code is code that no QA pass ran: prompt `/qa origin/DEFAULT REF` (`--wait`, no timeout), passing prior reports, checked commits, and the conflict-resolution diff. Wait for the worker and ask the five-line question from step 3. If its QA report has a fail, park the lane. Otherwise apply Check the worker's coverage gate, including review of the resolved changes. Retain the resulting reports and checked commits for Ship.
 
 ### 7. Ship
 
-1. Show phase `ship`. Prompt the current worker with `/ship-pr QA of this branch stands: <the QA line from Sync, or else from step 3>` (`--wait`, no timeout), including the prior QA/review reports and checked commits, current resource assignment, and any existing shipping record. First apply Check the worker's evidence-reuse rules to the final head after Refactor and Sync, including a clean rebase: complete affected follow-up QA and review when changes invalidate their coverage, and pass the resulting reports. Session B otherwise has no record of session A's QA. Let it complete its bounded CI recovery through `recover-ci`, including the [post-merge repair](../ship-pr/CI.md) follow-up PRs and post-merge verification; keep the ship slot throughout. A failed check during that procedure is progress to diagnose, not an immediate park condition.
+1. Before dispatching, apply Check the worker's coverage gate to the final head after Refactor and Sync, including a clean rebase. Only when it passes, show phase `ship` and prompt the current worker with `/ship-pr QA of this branch stands: <the current QA verdict>` (`--wait`, no timeout), including the resulting QA/review reports and checked commits, current resource assignment, and any existing shipping record. Session B otherwise has no record of session A's QA. Let the explicitly invoked ship-pr skill complete its bounded CI recovery through `recover-ci`, including the [post-merge repair](../ship-pr/CI.md) follow-up PRs and post-merge verification; keep the ship slot throughout. A failed check during that procedure is progress to diagnose, not an immediate park condition.
 2. Read its report and shipping record. Retain all original/repair PR URLs, branch names, merge and checked commits, run IDs/attempts, recovery counters, and the latest QA/review reports in lane state. Show phase `repair` while recovery is active. A new session or dispatch carries the same record and budget, never a fresh allowance. Record each diagnosis, rerun, repair and outcome in the friction log. Set the default-branch merge hold as soon as a failed or blocked post-merge workflow is reported.
 3. Independently confirm each reported merge with `gh pr view <url> --json state,mergedAt,mergeCommit` and the reported CI outcomes with `gh`. Proceed only when the original and any repair PRs are MERGED and the applicable post-merge workflows at the latest repair merge (the original merge when no repair was needed) have succeeded, or configuration proves none apply. A verified repair resolves the historical failure; retain its failed run without requiring a rerun or changing its recorded result. Clear the merge hold only with that evidence for current DEFAULT. If the worker returned only the original merge result, have it finish post-merge verification with the existing record. Park when CI recovery stops with an unresolved failure or blocker, or a push/merge is refused. Preserve successful merges separately from failed recovery; do not restart an exhausted repair loop.
 
@@ -190,7 +152,7 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
 
 ## Stop conditions
 
-Park the lane when: triage left a bug untriaged, a spec found gaps on its second verification, `/implement` made no commits, a question stays open after three answer rounds, a dialog stays open after two answers, the worker asks to run an unsafe action, findings stay unfixed after `/fix-findings`, a rebase stays unfinished after `/resolving-merge-conflicts` or its QA fails, CI recovery stops with an unresolved failure or blocker, a push or merge is refused, the read-only retrospective changes files, a worktree with changes refuses removal, or a herdr, gh, or git control command about the lane fails outside a handled recovery path. A nonzero CI check result follows CI recovery instead of this command-failure stop.
+Park the lane when: triage left a bug untriaged, a spec found gaps on its second verification, `/implement` made no commits, a question stays open after three answer rounds (five in session T), a dialog stays open after two answers, the worker asks to run an unsafe action, findings stay unfixed after `/fix-findings`, Check the worker's coverage gate cannot be completed, a rebase stays unfinished after `/resolving-merge-conflicts` or its QA fails, CI recovery stops with an unresolved failure or blocker, a push or merge is refused, the read-only retrospective changes files, a worktree with changes refuses removal, or a herdr, gh, or git control command about the lane fails outside a handled recovery path. A nonzero CI check result follows CI recovery instead of this command-failure stop.
 
 Stop the run when every lane is idle or parked (including lanes retained at the merge hold after another lane's recovery stopped): the queue has nothing left that no lane holds, or the operator paused. Stop it at once when a Setup step fails or a herdr command about the run itself fails. On stop, close the panes of idle lanes, and leave the panes and worktrees of parked lanes open, so the operator can inspect them.
 

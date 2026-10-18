@@ -94,7 +94,7 @@ Produce a verdict:
 | **Localized** | 1-2 areas have structural problems | Present only those candidates. Max 2 per session. |
 | **Systemic** | Widespread structural issues | Present ranked candidates. Recommend tackling 2-3 per session. |
 
-**Idempotency rule:** if this skill was recently run and the proposed changes were implemented, the verdict for that area must be Healthy. Do not re-refactor the refactored code. If it is still problematic for the *same* reasons, diagnose what went wrong instead of proposing another round.
+**Idempotency rule:** do not re-propose changes that were already implemented. Reassess the area against Step 2: if the earlier friction is resolved and no new structural problem is evidenced, report Healthy. If the same friction remains, diagnose what went wrong instead of proposing another round.
 
 **Recorded decisions:** a candidate that contradicts an ADR is surfaced only when the friction is real enough to reopen it: say which record it contradicts and why it is worth revisiting. Do not list every refactor an ADR forbids.
 
@@ -173,4 +173,4 @@ Stay in this session, since the build needs the grilling as it happened, and tel
 - **The change takes more than one session**: use `/to-spec`, `/to-tickets`, then `/implement` in Claude linked installs or Cursor; `/supermatt:to-spec`, `/supermatt:to-tickets`, then `/supermatt:implement` from the Claude plugin; `$to-spec`, `$to-tickets`, then `$implement` in Codex; or `/skill:to-spec`, `/skill:to-tickets`, then `/skill:implement` in OMP. The plan is the spec's input.
 - **It fits in this session**: use `/implement` in Claude linked installs or Cursor, `/supermatt:implement` from the Claude plugin, `$implement` in Codex, or `/skill:implement` in OMP, with the plan as the spec. It writes the tests at the new interface first through `tdd`, then checks the change with `qa` and `code-review`.
 
-To tackle another candidate later, the user runs `/improve-architecture <cluster>` in a fresh session.
+To tackle another candidate later, the user starts a fresh session with `/improve-architecture <cluster>` in Claude linked installs or Cursor, `/supermatt:improve-architecture <cluster>` from the Claude plugin, `$improve-architecture <cluster>` in Codex, or `/skill:improve-architecture <cluster>` in OMP.

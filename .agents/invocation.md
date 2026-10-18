@@ -17,7 +17,7 @@ Every skill carries `agents/openai.yaml` beside its `SKILL.md`. It holds Codex p
 
 An operative dependency says: **load and follow the `<name>` skill through the host's skill mechanism**. Preserve the named skill, arguments, order, and completion criteria. A host without a model-side loader reads the installed `SKILL.md` as specified by the harness contract. Never use a deep cross-skill file reference or silently skip a dependency.
 
-Only model-invoked skills can be dependencies. When a user-invoked skill is a precondition, tell the human to run it with the applicable form from the harness contract.
+Only model-invoked skills can normally be dependencies. The sole exception is the bounded [orchestrator dispatch contract](../references/harnesses.md#orchestrator-dispatch): an explicit human `orchestrate` invocation delegates its listed worker commands for that run without changing their invocation policies. Outside that exception, when a user-invoked skill is a precondition, tell the human to run it with the applicable form from the harness contract.
 
 Router prose names skills for a human to choose and does not invoke them.
 

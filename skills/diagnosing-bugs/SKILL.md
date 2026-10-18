@@ -28,6 +28,8 @@ If the redacted output is not enough to diagnose the bug, say so and ask the use
 
 Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give up.**
 
+Before writing a feedback-loop test, use a seam named in the spec or issue or explicitly confirmed by the user. Obtain confirmation for a newly discovered seam first, including when the test is only a temporary reproduction. While approval is pending, use a non-test reproduction such as a direct CLI or HTTP call. The Phase 5 gate applies here too.
+
 ### Ways to construct one, in roughly this order
 
 1. **Failing test** at whatever seam reaches the bug: unit, integration, e2e.
@@ -88,11 +90,12 @@ Confirm the environment is the one you think it is: the right branch, dependenci
 
 **A dirty tree is a suspect.** When `git status` shows uncommitted work that could reach the failing code, test it before you suspect committed code:
 
-1. `git stash push -u -m "diagnosing-bugs: without WIP"`. If it prints `No local changes to save`, nothing was stashed: skip to Minimise.
-2. Re-run the loop.
-3. Restore that exact entry, whatever the result: `git stash pop --index stash@{n}`, where `n` is the index of the `diagnosing-bugs: without WIP` entry in `git stash list`. On a conflict, show the user the output and the stash ref; leave the resolution to them.
+1. Preserve the reproduction harness and its fixtures outside the worktree, with the same symptom assertion runnable against this checkout after stashing. If that is not possible, compare in a disposable worktree with only the harness changes applied instead and skip steps 2-4; require the same assertion to execute there too. Do not remove or overwrite main-worktree changes to construct the comparison.
+2. `git stash push -u -m "diagnosing-bugs: without WIP"`. If it prints `No local changes to save`, nothing was stashed: skip to Minimise.
+3. Re-run the preserved loop against the stashed checkout. Confirm the identical symptom assertion is present and actually executes. A missing test, fixture, dependency, or skipped assertion is an inconclusive comparison, not green.
+4. Restore that exact entry, whatever the result (including a failed or inconclusive run): `git stash pop --index stash@{n}`, where `n` is the index of the `diagnosing-bugs: without WIP` entry in `git stash list`. On a conflict, show the user the output and the stash ref; leave the resolution to them.
 
-Loop goes green without the WIP: the user's own edit is the cause, and the fix belongs in their uncommitted work. Loop stays red: the WIP is ruled out.
+The identical assertion goes green without the WIP: the uncommitted changes cause the difference; locate the responsible edit without attributing agent-created harness changes to the user. Loop stays red: the WIP is ruled out. An inconclusive comparison rules out nothing.
 
 ### Minimise
 
@@ -159,7 +162,7 @@ A correct seam is one where the test exercises the **real bug pattern** as it oc
 
 If a correct seam exists:
 
-1. Load and follow the `tdd` skill through the host's skill mechanism, then turn the minimised repro into its failing test at that seam. The seam you found and showed the user here counts as pre-agreed.
+1. A seam is pre-agreed only if the spec or issue names it or the user explicitly confirmed it. Obtain confirmation for a newly discovered seam before writing tests. Then load and follow the `tdd` skill through the host's skill mechanism and turn the minimised repro into its failing test at that seam.
 2. Apply the fix, and only the fix. A refactor bundled in hides which change turned the loop green.
 3. Re-run the Phase 1 feedback loop against the original (un-minimised) scenario.
 
@@ -185,6 +188,6 @@ Required before declaring done:
 - [ ] All `[DEBUG-...]` instrumentation removed (`grep` the prefix)
 - [ ] Throwaway debug harnesses deleted (or moved to a clearly-marked debug location)
 - [ ] The full test suite passes
-- [ ] The regression test and the fix are committed, and the commit message states the hypothesis that turned out correct, so the next debugger learns
+- [ ] The fix is committed, together with the regression test when a correct seam exists; otherwise the missing seam is reported as above. The commit message states the hypothesis that turned out correct, so the next debugger learns.
 - [ ] The fix passes QA, unless an outer flow (such as `implement`) runs QA on this diff itself: write the bug report or captured symptom to a file in the OS temporary directory, then load and follow the `qa` skill through the host's skill mechanism, with the commit you recorded in Phase 5 as the fixed point and that file as the request. A fail is a symptom the fix left behind: take it back to Phase 3.
 - [ ] The fix is reviewed, unless an outer flow (such as `implement`) reviews this diff itself: load and follow the `code-review` skill through the host's skill mechanism, with the commit you recorded in Phase 5 as the fixed point and, as the spec, the bug report file (write it now if the QA step was skipped). Fix every verified finding, at every severity, in the same turn, and commit the fixes. When the aggregate carries one, send the aggregate together with the first fix's tool call: a message with no tool call ends the turn and leaves the fixes to the user.

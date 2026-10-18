@@ -122,4 +122,4 @@ Good interfaces make testing natural:
 
 - **Naming what's wrong with a module**, see [RED-FLAGS.md](RED-FLAGS.md): named signs of shallow and leaky modules, and how to read them together.
 - **Deepening a cluster given its dependencies**, see [DEEPENING.md](DEEPENING.md): dependency categories, seam discipline, and replace-don't-layer testing.
-- **Exploring alternative interfaces**, load [DESIGN-IT-TWICE.md](DESIGN-IT-TWICE.md) and [DEEPENING.md](DEEPENING.md): spin up parallel sub-agents to design the interface several radically different ways, then compare on depth, locality, seam placement, and dependency category.
+- **Exploring alternative interfaces**, load [DESIGN-IT-TWICE.md](DESIGN-IT-TWICE.md) and [DEEPENING.md](DEEPENING.md): design the interface several radically different ways, using the workflow's delegation fallbacks, then compare on depth, locality, seam placement, and dependency category.

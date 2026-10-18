@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { parseArgs } from "node:util";
 
 const HOSTS = new Set(["claude", "codex", "cursor", "omp"]);
@@ -13,7 +14,7 @@ function fail(message) {
 
 function inside(root, path) {
   const rel = relative(realpathSync(root), realpathSync(path));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
 }
 
 function text(content) {
@@ -37,6 +38,35 @@ function jsonl(path) {
       fail(`malformed JSONL at ${path}:${index + 1}`);
     }
   });
+}
+
+function* jsonlPrefix(path) {
+  const descriptor = openSync(path, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  let line = 0;
+  try {
+    let size;
+    do {
+      size = readSync(descriptor, buffer, 0, buffer.length, null);
+      pending += size ? decoder.write(buffer.subarray(0, size)) : decoder.end();
+      let end;
+      while ((end = pending.indexOf("\n")) !== -1 || (!size && pending.length)) {
+        const source = end === -1 ? pending : pending.slice(0, end);
+        pending = end === -1 ? "" : pending.slice(end + 1);
+        line++;
+        if (!source.trim()) continue;
+        try {
+          yield JSON.parse(source);
+        } catch {
+          fail(`malformed JSONL at ${path}:${line}`);
+        }
+      }
+    } while (size);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function files(path, accept, depth = 3) {
@@ -73,11 +103,14 @@ function cursorSession(path) {
   const directory = dirname(path);
   const sessions = [{ path, records: cursorRecords(path, true) }];
   for (const child of files(join(directory, "subagents"), (file) => extname(file) === ".jsonl")) {
-    sessions.push({ path: child, records: cursorRecords(child) });
+    if (!inside(directory, child)) fail(`path is outside the verified Cursor session root: ${child}`);
+    const canonical = realpathSync(child);
+    sessions.push({ path: canonical, records: cursorRecords(canonical) });
   }
   for (const summary of files(join(directory, "compaction"), () => true)) {
+    if (!inside(directory, summary)) fail(`path is outside the verified Cursor session root: ${summary}`);
     const value = readFileSync(summary, "utf8").trim();
-    if (value) sessions.push({ path: summary, records: [{ line: 1, kind: "summary", text: value }] });
+    if (value) sessions.push({ path: realpathSync(summary), records: [{ line: 1, kind: "summary", text: value }] });
   }
   return sessions;
 }
@@ -101,8 +134,7 @@ function activeEntries(entries) {
   return entries.filter(({ value }) => !value?.id || active.has(value.id));
 }
 
-function ompRecords(path, main = false, cwd) {
-  const entries = jsonl(path);
+function ompRecords(path, main = false, cwd, entries = jsonl(path)) {
   const header = entries.find(({ value }) => value?.type === "session")?.value;
   if (!header || resolve(header.cwd) !== cwd) fail(`unsupported or mismatched OMP transcript at ${path}`);
   const records = [];
@@ -123,13 +155,89 @@ function ompRecords(path, main = false, cwd) {
   return records;
 }
 
-function ompSession(path, cwd) {
-  const sessions = [{ path, records: ompRecords(path, true, cwd) }];
-  const children = path.slice(0, -extname(path).length);
-  for (const child of files(children, (file) => extname(file) === ".jsonl" && !basename(file).startsWith("."))) {
-    sessions.push({ path: child, records: ompRecords(child, false, cwd) });
+function ompChildIds(entries) {
+  const calls = new Set();
+  for (const { value } of entries) {
+    if (value?.type !== "message" || value.message?.role !== "assistant" || !Array.isArray(value.message.content)) continue;
+    for (const call of value.message.content) {
+      if (call?.type === "toolCall" && call.name === "task" && typeof call.id === "string") calls.add(call.id);
+    }
   }
-  return sessions;
+  const ids = new Set();
+  for (const { value } of entries) {
+    const message = value?.message;
+    if (value?.type !== "message" || message?.role !== "toolResult" || !calls.has(message.toolCallId)) continue;
+    // OMP task results and async progress persist allocated IDs, not requested names.
+    for (const list of [message.details?.results, message.details?.progress]) {
+      if (!Array.isArray(list)) continue;
+      for (const result of list) {
+        if (typeof result?.id === "string") ids.add(result.id);
+      }
+    }
+  }
+  return ids;
+}
+
+function ompSession(path, cwd, gaps) {
+  const root = path.slice(0, -extname(path).length);
+  const candidates = files(root, (file) => extname(file) === ".jsonl" && !basename(file).startsWith("."), Infinity);
+  const entries = new Map([[path, jsonl(path)]]);
+  const names = new Map();
+  const readErrors = new Map();
+  for (const child of candidates) {
+    let canonical;
+    try {
+      canonical = realpathSync(child);
+    } catch (error) {
+      readErrors.set(child, error);
+      names.set(child, child);
+      continue;
+    }
+    if (!inside(root, canonical)) fail(`path is outside the verified OMP child root: ${child}`);
+    names.set(child, canonical);
+  }
+  const sessions = new Map();
+  const visited = new Map();
+  const visit = (parent, included) => {
+    const states = visited.get(parent) ?? new Set();
+    if (states.has(included)) return;
+    states.add(included);
+    visited.set(parent, states);
+    if (!entries.has(parent)) {
+      try {
+        if (readErrors.has(parent)) throw readErrors.get(parent);
+        entries.set(parent, jsonl(parent));
+      } catch (error) {
+        if (included) throw error;
+        gaps.push(`OMP child ${parent}: inactive branch transcript excluded; ${error.message}`);
+        return;
+      }
+    }
+    const journal = entries.get(parent);
+    if (included) sessions.set(parent, { path: parent, records: ompRecords(parent, parent === path, cwd, journal) });
+    const active = included ? ompChildIds(activeEntries(journal)) : new Set();
+    for (const id of ompChildIds(journal)) {
+      if (!/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(id)) {
+        if (active.has(id)) gaps.push(`OMP child ${id}: invalid allocated task ID; association was not established`);
+        continue;
+      }
+      const localRoot = parent.slice(0, -extname(parent).length);
+      const matches = [...new Set([names.get(join(root, `${id}.jsonl`)), names.get(join(localRoot, `${id}.jsonl`))].filter(Boolean))];
+      if (matches.length !== 1) {
+        if (active.has(id)) gaps.push(`OMP child ${id} from ${parent}: unique transcript association was not established`);
+        continue;
+      }
+      visit(matches[0], active.has(id));
+    }
+  };
+  visit(path, true);
+  for (const child of new Set(names.values())) {
+    if (!visited.has(child)) {
+      const error = readErrors.get(child);
+      gaps.push(`OMP child ${child}: parent task branch association was not established; transcript excluded${error ? `; ${error.message}` : ""}`);
+    }
+  }
+  return [...sessions.values()];
 }
 
 function failedOutput(value) {
@@ -175,6 +283,10 @@ function codexToolError(item) {
 function genericRecords(path, host, main, cwd) {
   const records = [];
   const entries = jsonl(path);
+  if (host === "claude" && !entries.some(({ value }) =>
+    ["user", "assistant"].includes(value?.type) && ["user", "assistant"].includes(value.message?.role))) {
+    fail(`unsupported claude transcript schema at ${path}`);
+  }
   const workspaces = host === "claude"
     ? entries.flatMap(({ value }) => typeof value?.cwd === "string" ? [value.cwd] : [])
     : entries.flatMap(({ value }) => value?.type === "session_meta" && typeof value.payload?.cwd === "string" ? [value.payload.cwd] : []);
@@ -190,7 +302,7 @@ function genericRecords(path, host, main, cwd) {
     const content = message?.content;
     if (Array.isArray(content)) {
       for (const result of content.filter(({ type, is_error, isError } = {}) => type === "tool_result" && (is_error || isError))) {
-        const output = text([result]);
+        const output = text(result.content);
         if (output) records.push({ line, kind: "tool-error", text: output });
       }
     }
@@ -234,22 +346,50 @@ function rootList(host, cwd) {
 }
 
 function requestedFile(host, request, roots, cwd) {
+  const verified = (path) => existsSync(path) && roots.some((root) => existsSync(root) && inside(root, path));
   if (isAbsolute(request)) {
     const candidate = existsSync(request) && statSync(request).isDirectory()
       ? join(request, `${basename(request)}.jsonl`)
       : request;
     if (!existsSync(candidate)) fail(`cannot identify requested ${host} session: ${request}`);
-    const root = roots.find((item) => existsSync(item) && inside(item, candidate));
-    if (!root) fail(`path is outside the verified ${host === "cursor" ? "Cursor workspace" : host.toUpperCase()} root: ${request}`);
+    if (host === "cursor" && !verified(candidate)) fail(`path is outside the verified Cursor workspace root: ${request}; exported logs lack workspace metadata`);
     return realpathSync(candidate);
   }
   if (host === "cursor") {
-    const matches = roots.map((root) => join(root, request, `${request}.jsonl`)).filter(existsSync);
+    const matches = roots.map((root) => join(root, request, `${request}.jsonl`)).filter(verified);
     if (matches.length !== 1) fail(`cannot identify requested Cursor session: ${request}`);
     return realpathSync(matches[0]);
   }
-  const matches = roots.flatMap((root) => files(root, (path) => extname(path) === ".jsonl" && basename(path).includes(request), 3));
-  const exact = matches.filter((path) => host !== "omp" || jsonl(path).some(({ value }) => value?.type === "session" && resolve(value.cwd) === cwd));
+  const candidates = new Set(roots.flatMap((root) => files(root, (path) => extname(path) === ".jsonl", 3)));
+  const exact = [...new Set([...candidates].filter((path) => {
+    if (!verified(path)) return false;
+    const named = basename(path) === `${request}.jsonl`;
+    try {
+      let identified = false;
+      let fallback = false;
+      for (const value of jsonlPrefix(path)) {
+        const item = host === "codex" ? (value?.type === "session_meta" ? value.payload : null)
+          : host === "omp" ? (value?.type === "session" ? value : null) : value;
+        if (!item) continue;
+        const id = host === "claude" ? item.sessionId : item.id;
+        if (item.isSidechain === true) {
+          if (typeof id === "string") return false;
+          continue;
+        }
+        if (typeof id === "string") {
+          identified = true;
+          // The first complete identity ends discovery; selected transcripts are still parsed in full.
+          if (typeof item.cwd === "string") return id === request && resolve(item.cwd) === cwd;
+        } else if (named && typeof item.cwd === "string" && resolve(item.cwd) === cwd) {
+          fallback = true;
+        }
+      }
+      return !identified && fallback;
+    } catch (error) {
+      if (named) throw error;
+      return false;
+    }
+  }).map((path) => realpathSync(path)))];
   if (exact.length !== 1) fail(`cannot identify requested ${host} session: ${request}`);
   return realpathSync(exact[0]);
 }
@@ -266,19 +406,22 @@ function evidence(host, cwd, requests) {
   const selected = requests.length ? requests : metadata ? [metadata] : [];
   if (!selected.length) return { host, sessions: [], gaps: [`current ${host} session identity is unavailable; full history was not established`] };
   const paths = [...new Set(selected.map((request) => requestedFile(host, request, roots, cwd)))];
+  const gaps = [];
   const sessions = paths.flatMap((path) => {
     if (host === "cursor") return cursorSession(path);
-    if (host === "omp") return ompSession(path, cwd);
+    if (host === "omp") return ompSession(path, cwd, gaps);
     const found = [{ path, records: genericRecords(path, host, true, cwd) }];
     if (host === "claude") {
       const childRoot = path.slice(0, -extname(path).length);
       for (const child of files(join(childRoot, "subagents"), (file) => extname(file) === ".jsonl")) {
-        found.push({ path: child, records: genericRecords(child, host, false, cwd) });
+        if (!inside(childRoot, child)) fail(`path is outside the verified Claude child root: ${child}`);
+        const canonical = realpathSync(child);
+        found.push({ path: canonical, records: genericRecords(canonical, host, false, cwd) });
       }
     }
     return found;
   });
-  return { host, sessions, gaps: [] };
+  return { host, sessions, gaps };
 }
 
 try {
