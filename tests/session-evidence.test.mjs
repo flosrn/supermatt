@@ -21,10 +21,20 @@ function copy(from, to) {
   cpSync(fixture(from), to);
 }
 
+// Host session stores and identities must not leak into fixture subprocesses.
+const sessionEnvKeys = [
+  "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "OMP_SESSION_DIR", "OMP_SESSION_ROOT",
+  "PI_SESSION_DIR", "OMP_PROFILE", "PI_PROFILE", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
+  "OMP_SESSION_PATH", "PI_CODING_AGENT_SESSION_FILE", "OMP_SESSION_ID", "CLAUDE_SESSION_ID",
+  "CODEX_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_SESSION_ID",
+];
+
 function run(args, env = {}) {
+  const isolatedEnv = { ...process.env };
+  for (const key of sessionEnvKeys) delete isolatedEnv[key];
   return spawnSync(process.execPath, [script, ...args], {
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: { ...isolatedEnv, ...env },
   });
 }
 
@@ -439,6 +449,58 @@ test("requested malformed and unidentified sessions fail closed", (t) => {
   const missing = run(["--host", "cursor", "--cwd", "/workspace/project", "--session", "missing"], { HOME: home });
   assert.notEqual(missing.status, 0);
   assert.match(missing.stderr, /cannot identify requested Cursor session/);
+});
+
+test("OMP ID lookup isolates inherited session roots and identities", (t) => {
+  const home = workspace(t);
+  const collisionRoot = join(home, "inherited");
+  const sessionRoot = join(home, "fixture-sessions");
+  const selected = join(sessionRoot, "omp-session.jsonl");
+  copy("omp-main.jsonl", selected);
+
+  // Cover direct roots, agent/profile roots, XDG default and profile roots, and the other hosts' layouts.
+  copy("omp-main.jsonl", join(collisionRoot, "omp-session.jsonl"));
+  copy("omp-main.jsonl", join(collisionRoot, "sessions", "omp-session.jsonl"));
+  copy("omp-main.jsonl", join(collisionRoot, "omp", "sessions", "omp-session.jsonl"));
+  copy("omp-main.jsonl", join(collisionRoot, "omp", "profiles", collisionRoot, "sessions", "omp-session.jsonl"));
+  copy("claude-main.jsonl", join(collisionRoot, "projects", "claude-session.jsonl"));
+  copy("codex-main.jsonl", join(collisionRoot, "sessions", "codex-session.jsonl"));
+
+  const inherited = {
+    PI_CODING_AGENT_DIR: collisionRoot,
+    PI_CODING_AGENT_SESSION_DIR: collisionRoot,
+    OMP_SESSION_DIR: collisionRoot,
+    OMP_SESSION_ROOT: collisionRoot,
+    PI_SESSION_DIR: collisionRoot,
+    OMP_PROFILE: collisionRoot,
+    PI_PROFILE: collisionRoot,
+    XDG_DATA_HOME: collisionRoot,
+    CLAUDE_CONFIG_DIR: collisionRoot,
+    CODEX_HOME: collisionRoot,
+    OMP_SESSION_PATH: "outside-session",
+    PI_CODING_AGENT_SESSION_FILE: "outside-session",
+    OMP_SESSION_ID: "outside-session",
+    CLAUDE_SESSION_ID: "outside-session",
+    CODEX_SESSION_ID: "outside-session",
+    CODEX_THREAD_ID: "outside-session",
+    CURSOR_SESSION_ID: "outside-session",
+  };
+  const original = new Map(Object.keys(inherited).map((key) => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, inherited);
+    const result = run(["--host", "omp", "--cwd", "/workspace/project", "--session", "omp-session"], {
+      HOME: home,
+      PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).sessions[0].path, realpathSync(selected));
+  } finally {
+    for (const [key, value] of original) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 for (const [host, rootPath, envKey] of [
