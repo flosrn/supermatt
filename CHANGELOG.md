@@ -4,8 +4,6 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-## [0.22.1] - 2026-10-19
-
 ### Added
 
 - `babysit-pr`: watches one pull request until a human can merge it. It opens the PR when the branch has none and reuses the same PR on every resume, handles review feedback before CI and publishes a fix before replying to its thread, runs follow-up QA before pushing a fix that changes runtime behavior, recovers CI through `recover-ci` without pausing its watch while a rerun runs, updates the branch only when GitHub reports it behind or conflicting, and never merges. Follow-up QA fixes only the failures the feedback fix caused: a pre-existing failure outside the feedback is reported for you to decide, not fixed. A gate failure the base already has is reported as inherited, with the base run as evidence, instead of blocking. It fetches and pushes through the PR's own head and base remotes, a contributor's fork included, and merges the fetched base commit rather than a tracking ref a partial clone may lack. A state helper under `.git/supermatt/babysit-pr/` keeps each PR's monitoring window, recovery budget, and handled feedback across resumes, even when two PRs share a head branch name, reopens edited comments, drops evidence when the head moves, and treats a missing required check as not green. It counts every job of a workflow run, so a passing job cannot hide a failing one of the same name, and a rerun attempt replaces only the attempt before it. Of two reports of one status at the same moment, the failing one stands, whatever their order. It reads required checks from branch protection and rulesets, and on a private repository whose plan has no rulesets, from branch protection alone. It loads its dependencies through the host's skill mechanism. It ends on `ready`, `blocked`, `budget-exhausted`, or `closed`.
@@ -705,8 +703,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Claude Code and Codex marketplaces for the plugin and its 25 engineering and productivity skills.
 
-[unreleased]: https://github.com/svyatov/supermatt/compare/v0.22.1...HEAD
-[0.22.1]: https://github.com/svyatov/supermatt/compare/v0.22.0...v0.22.1
+[unreleased]: https://github.com/svyatov/supermatt/compare/v0.22.0...HEAD
 [0.22.0]: https://github.com/svyatov/supermatt/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/svyatov/supermatt/compare/v0.20.2...v0.21.0
 [0.20.2]: https://github.com/svyatov/supermatt/compare/v0.20.1...v0.20.2
