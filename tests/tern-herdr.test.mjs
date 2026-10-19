@@ -399,6 +399,15 @@ test("the orchestrator renames its own pane, and list shows the name with Tern's
   assert.equal(w.run("agent", "get", "app-orch-1").json.result.agent.agent_session.value, "/s/orch.jsonl");
 });
 
+test("an omp Tern resumes from its versioned binary is the orchestrator's agent", (t) => {
+  const resumed = { pid: 2, name: "18.12.1", argv: ["/Users/u/Library/Application Support/Tern/omp/versions/18.12.1", "--resume", "/s/orch.jsonl"], cwd: "/repo" };
+  const w = world(t, { 13: { ...orchestrator(), foreground: resumed } });
+  const r = w.run("agent", "get", "13");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.result.agent.agent, "omp");
+  assert.equal(r.json.result.agent.agent_session.value, "/s/orch.jsonl");
+});
+
 test("agent get on an unknown target fails with Herdr's error shape", (t) => {
   const w = world(t, { 13: orchestrator() });
   const r = w.run("agent", "get", "nobody");

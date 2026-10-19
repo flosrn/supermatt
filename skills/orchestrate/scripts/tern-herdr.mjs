@@ -359,7 +359,10 @@ function foreground(pane) {
   const proc = ternJson("process", pane, "--json");
   return { child: proc.child, fg: proc.foreground };
 }
-const isOmp = (proc) => !!proc?.argv?.length && basename(proc.argv[0]) === "omp";
+// omp launched from a shell is `omp`; an omp Tern resumes runs the versioned
+// binary its symlink points to, `<Tern support>/omp/versions/<version>`.
+const OMP_VERSION_BINARY = /\/omp\/versions\/[^/]+$/;
+const isOmp = (proc) => !!proc?.argv?.length && (basename(proc.argv[0]) === "omp" || OMP_VERSION_BINARY.test(proc.argv[0]));
 
 // Internal to an agent object: the surface view it was read with. A symbol key
 // stays out of the JSON a command prints, and object spread copies it.
