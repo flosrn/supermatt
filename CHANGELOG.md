@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- `refactor`: hands branch-assessment readers a written branch diff so read-only subagents need no Git access.
+- `ship-pr`: hands delegated history readers per-commit evidence with a readable text pass for content that Git attributes mark binary; requires the delegating session to screen unreadable blobs or blocks shipping.
+
 ## [0.23.0] - 2026-10-18
 
 ### Added
