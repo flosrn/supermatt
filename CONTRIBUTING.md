@@ -63,7 +63,7 @@ sh tests/directory-branch.test.sh
 bun test tests/
 ```
 
-`bun test tests/` runs the JavaScript tests, including orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`.
+`bun test tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`.
 
 ### Codex-only discovery and behavioral evaluation
 
@@ -95,7 +95,7 @@ This rechecks trace integrity and mechanical assertions against the matching cor
 
 ## Rules for a change
 
-[AGENTS.md](./AGENTS.md) states what an acceptable change must satisfy. Read it before you edit a skill. It covers the skill layout, the README entry, the `ask-supermatt` router, the version bump, the `CHANGELOG.md` entry, and the ban on em dashes.
+[AGENTS.md](./AGENTS.md) states what an acceptable change must satisfy. Read it before you edit a skill. It covers the skill layout, the README entry, the `ask-supermatt` router, the maintainer-controlled release policy, the Unreleased `CHANGELOG.md` entry, and the ban on em dashes.
 
 ## Open a pull request
 
@@ -104,6 +104,12 @@ This rechecks trace integrity and mechanical assertions against the matching cor
 3. Open the pull request against `main` and fill in the template.
 
 Pull requests are squash merged.
+
+## Releases
+
+Ordinary changes keep the plugin version unchanged and their changelog entries under Unreleased. Only an explicit maintainer release request starts a release. Follow the version and changelog rules in [AGENTS.md](./AGENTS.md): the Claude manifest holds the only version, and new skills or features require a minor bump.
+
+After the release PR passes its checks and merges, the maintainer runs `sh scripts/release.sh` on a clean, up-to-date `main`. It creates and pushes the signed tag, publishes the GitHub Release from that version's changelog section, and updates the `directory` branch used by the plugin directory. `sh scripts/release.sh -n` previews the tag and notes after the release PR merges. The release projection omits the root `scripts/`, `tests/`, and `.github/` directories; bundled helpers inside `skills/` remain available. Do not edit `directory` by hand.
 
 ## Who decides
 

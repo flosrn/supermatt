@@ -17,7 +17,7 @@ RUN is `bun` when `command -v bun` finds it, else `node`. STATE is `RUN <this sk
 
 ## 1. Find the PR
 
-Run `STATE open`, adding `--pr <number>` when the argument names a PR (a URL gives its number) and `--duration <d>` when it gives one (`90m`, `8h`, at most seven days). Keep the printed `stateFile` as FILE.
+Run `STATE open`, adding `--pr <number-or-URL>` when the argument names a PR. Pass a URL intact: the helper verifies its repository and host against the selected repository before binding state. A mismatch stops the run; use the intended repository's checkout before trying again. Add `--duration <d>` when the argument gives one (`90m`, `8h`, at most seven days). Keep the printed `stateFile` as FILE.
 
 The duration counts only when `resumed` is false. A resume keeps the original deadline and recovery counters: when the user passed a different duration on a resume, say that it was ignored. Only an explicit request from the user to watch longer runs `STATE extend --state FILE --duration <d>`.
 

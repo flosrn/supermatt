@@ -189,11 +189,12 @@ const viewPr = (gh, repo, number) =>
 
 // The open PR this branch's owner or the viewer pushed, or null when there is none.
 function discover(gh, repo, branch) {
-  // `--head` matches the branch name only, so a fork's PR with the same name would match.
-  // This branch's PR is pushed by the repository's owner or by the viewer, from a fork.
-  const owners = new Set([repo.split("/")[0], gh(["api", "user", "--jq", ".login"]).trim()]);
-  const openPrs = JSON.parse(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "number,url,state,headRefName,headRepositoryOwner"]))
-    .filter((p) => owners.has(p.headRepositoryOwner?.login));
+  // Qualify each head owner and read every page: a CLI list's default limit can hide this
+  // branch's PR behind unrelated forks with the same branch name.
+  const owners = new Set([repo.split("/")[0], gh(["api", "user", "--jq", ".login"]).trim()].map((owner) => owner.toLowerCase()));
+  const openPrs = [...owners].flatMap((owner) => JSON.parse(gh([
+    "api", `repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=100`, "--paginate", "--slurp",
+  ])).flat());
   if (openPrs.length > 1) throw new Error(`several open PRs for ${branch}: ${openPrs.map((p) => p.number).join(", ")}`);
   return openPrs[0]?.number ?? null;
 }
@@ -218,7 +219,18 @@ function attach(discovery, seed, pr) {
 // resume keeps them, whatever duration it passes. Each PR keeps its own record, so naming
 // another PR with the same head branch name never touches the first one's.
 export function open({ dir, gh = realGh, repo, branch, pr = null, duration = DEFAULT_DURATION, now = Date.now() }) {
-  if (pr != null) branch = viewPr(gh, repo, pr).headRefName;
+  let requested;
+  if (pr != null && !Number.isInteger(Number(pr))) {
+    try { requested = new URL(pr); } catch { throw new Error(`--pr must be a PR number or URL: ${pr}`); }
+    const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/.exec(requested.pathname);
+    if (!match || match[1].toLowerCase() !== repo.toLowerCase()) throw new Error(`PR URL does not match selected repository ${repo}: ${pr}`);
+    pr = Number(match[2]);
+  } else if (pr != null) pr = Number(pr);
+  if (pr != null) {
+    const selected = viewPr(gh, repo, pr);
+    if (requested && requested.origin !== new URL(selected.url).origin) throw new Error(`PR URL host does not match selected repository ${repo}: ${requested.href}`);
+    branch = selected.headRefName;
+  }
   mkdirSync(dir, { recursive: true });
   const discovery = branchFile(dir, repo, branch);
   return locked(discovery, () => {
@@ -240,7 +252,7 @@ export class BudgetExhausted extends Error {}
 
 // Records one CI recovery spend before it is acted on. Refuses past the budget.
 export function spend(file, kind, { note = "", now = Date.now() } = {}) {
-  if (!(kind in LIMITS)) throw new Error(`unknown spend: ${kind} (repair or rerun)`);
+  if (!Object.hasOwn(LIMITS, kind)) throw new Error(`unknown spend: ${kind} (repair or rerun)`);
   return update(file, (state) => {
     const field = kind === "repair" ? "repair_cycles_used" : "transient_reruns_used";
     if (state.recovery[field] >= LIMITS[kind]) throw new BudgetExhausted(`${kind} budget exhausted (${LIMITS[kind]} used)`);
@@ -401,7 +413,7 @@ function actionsJobs(gh, repo, runs) {
 const PLAN_WITHOUT_RULESETS = /Upgrade to GitHub Pro or make this repository public/;
 function branchRules(gh, repo, branch) {
   try {
-    return JSON.parse(gh(["api", `repos/${repo}/rules/branches/${encodeURIComponent(branch)}`]));
+    return JSON.parse(gh(["api", `repos/${repo}/rules/branches/${encodeURIComponent(branch)}`, "--paginate", "--slurp"])).flat();
   } catch (err) {
     if (PLAN_WITHOUT_RULESETS.test(String(err?.stderr ?? "") + String(err?.message ?? ""))) return [];
     throw err;
@@ -466,9 +478,6 @@ export function evaluate(state, seen, now) {
     state.ready_candidate = null;
   }
   state.handled ??= {};
-  // A resolved thread is feedback only when this babysitter handled it and it changed since:
-  // a reply or edit after the resolve. Threads others resolved stay closed.
-  const pending = seen.feedback.filter((f) => state.handled[f.id]?.fingerprint !== f.fingerprint && (!f.resolved || state.handled[f.id]));
   // Count each reopen of a thread, so a park can tell a resolve that followed it.
   state.threads ??= {};
   for (const f of seen.feedback.filter((x) => x.kind === "thread")) {
@@ -479,6 +488,14 @@ export function evaluate(state, seen, now) {
       known.resolved = f.resolved;
     }
   }
+  // A handled thread can reopen without a comment change. Keep that reopen pending until
+  // handled records it; needs-human threads retain their park-and-resolve lifecycle below.
+  const pending = seen.feedback.filter((f) => {
+    const h = state.handled[f.id];
+    const reopened = f.kind === "thread" && h && h.disposition !== "needs-human"
+      && state.threads[f.id].reopens > (h.reopens ?? 0);
+    return (h?.fingerprint !== f.fingerprint || reopened) && (!f.resolved || h);
+  });
   // A needs-human item stays parked until its thread is resolved after it was parked: it was
   // open when parked, or it was reopened since.
   const parked = seen.feedback.filter((f) => {
@@ -588,7 +605,7 @@ export function ciResult(file, { key, outcome, now = Date.now() }) {
 }
 
 const USAGE = `Usage:
-  babysit-state.mjs open [--pr N] [--duration 8h] [--repo OWNER/REPO] [--branch NAME]
+  babysit-state.mjs open [--pr N|URL] [--duration 8h] [--repo OWNER/REPO] [--branch NAME]
   babysit-state.mjs bind --state FILE --pr N
   babysit-state.mjs snapshot --state FILE
   babysit-state.mjs handled --state FILE --id ID --fingerprint FP --disposition fixed|answered|declined|no-action|needs-human
@@ -604,8 +621,8 @@ function main(argv) {
     outcome: { type: "string" }, note: { type: "string" },
   } });
   const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
-  const pr = values.pr == null ? null : Number(values.pr);
-  if (pr != null && !Number.isInteger(pr)) throw new Error(`--pr must be a PR number: ${values.pr}`);
+  const pr = values.pr == null ? null : command === "open" ? values.pr : Number(values.pr);
+  if (command !== "open" && pr != null && !Number.isInteger(pr)) throw new Error(`--pr must be a PR number: ${values.pr}`);
   if (command !== "open" && !values.state) throw new Error(`--state FILE is required\n${USAGE}`);
   switch (command) {
     case "open": {

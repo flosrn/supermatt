@@ -24,7 +24,6 @@
 
 > [!NOTE]
 > This is Flo's fork of [svyatov/supermatt](https://github.com/svyatov/supermatt). Its `main` is upstream `main` plus fixes waiting to go upstream and a few personal patches, titled `(personal patch, not for upstream)`. `git log --first-parent upstream/main..main` lists them. Below is upstream's README, edited only where those commits change a skill.
-
 - **Claude Code, Codex, Cursor, and OMP.** Each host loads the same canonical 41-skill tree through a package adapter or documented compatibility fallback.
 - **41 skills.** 32 for engineering and 9 for productivity, listed below.
 - **Peer review is repository-controlled.** `docs/agents/cross-model.json` can keep `code-review` and `jury` entirely on current-host readers, automatically select a hardened Claude or Codex peer, or explicitly select Claude, Codex, Cursor Agent, or OMP with supported model and effort values.
@@ -116,6 +115,9 @@ flowchart LR
   tickets -->|whole spec| implementSpec["implement-spec<br>parallel worktrees, one branch<br>tdd, qa, then code-review"]
   implement --> ship["refactor, ship-pr<br>clean up, merge"]
   implementSpec --> ship
+  implement --> babysit["babysit-pr<br>handle feedback and CI"]
+  implementSpec --> babysit
+  babysit --> ready(["ready for human merge"])
   ship --> done(["merged, closed issue"])
   done --> retro["retro<br>review the session"]
 ```
@@ -125,6 +127,8 @@ flowchart LR
 3. `to-tickets` splits the spec into independently green tickets. Skip it when the work fits in one session.
 4. Use `implement` for each ticket, or `implement-spec` for the whole spec on one integration branch. Both build through `tdd`, check the running program with `qa`, and finish with `code-review`; `implement-spec` checks the combined result across tickets.
 5. `refactor` cleans up the branch without changing behavior, and `ship-pr` repairs CI within bounded attempts through `recover-ci`, merges only on green checks, and verifies post-merge workflows. Failed post-merge workflows use follow-up repair PRs. To stop short of the merge, `babysit-pr` opens the PR when needed, handles review feedback and CI, and leaves a ready PR for you to merge.
+
+`babysit-pr` accepts a PR number or full URL and an optional duration, such as `$babysit-pr 96 90m` in Codex. It needs an authenticated `gh` CLI and Bun or Node.js 18.17 or later. The default watch lasts eight hours; resuming the same PR keeps its original deadline and recovery budget. A run reports `ready`, `blocked`, `budget-exhausted`, or `closed`. See its [instructions](./skills/babysit-pr/SKILL.md) for extending a watch and handling blockers.
 
 Run `retro` before clearing the session, or provide a verified session ID or path later. It reads local Claude Code, Codex, Cursor, and OMP transcript evidence and reports gaps instead of guessing from the newest file. After a bug fix, use it to identify what would have prevented the bug; use `improve-architecture` when the finding is a missing test seam.
 
@@ -139,16 +143,16 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 ### Skills check their own work
 
 - `code-review` adds a third axis, **Adversarial**: how does the change fail in production? Its brief also runs security, public contract, migration, reliability, and concurrency checks where they apply. `docs/agents/cross-model.json` selects current-host readers only, automatic hardened Claude or Codex peers, or an explicit adapter. Cursor and OMP disclose their weaker isolation and require runtime confirmation. Findings carry P0-P3 severities and quoted evidence, and the reader that did not raise a P0, P1, or P2 finding validates it before the verdict. Upstream reviews on two axes, Standards and Spec.
-- `to-spec` checks the draft spec in a fresh-context sub-agent before it publishes it.
+- `to-spec` checks the draft spec in a fresh subagent or session when available; otherwise it reviews in the current context and discloses the missing independent review before publishing.
 - `tdd` checks that each test goes red for the reason it names, runs affected-seam checks during cycles and the full required gate for completed work, ends with a mutation check, and flags change-detector tests.
 - `diagnosing-bugs` asks what you already tried, rules out the environment and uncommitted work, and fixes nothing until the causal chain has no gaps. It escalates to you after 2-3 dead hypotheses or 3 failed fixes.
 - `improve-architecture` assesses the codebase first and stops when it is healthy. It finds hot spots by change count over the last year, maps the structure before it looks for friction, visits every module in the map, and skips modules that are shallow by design. `refactor` and `improve-tests` gate on an assessment the same way.
 - `qa`, new in SuperMatt, runs the changed program the way its user would (a terminal program in tmux, a web app in a browser) and checks every requested behavior before `code-review` reads the code.
-- `ideate`, new in SuperMatt, has a fresh sub-agent try to refute each idea before it ranks the survivors.
+- `ideate`, new in SuperMatt, has a fresh subagent or session try to refute each idea before it ranks the survivors. When neither is available, it performs the check itself and reports the lack of an independent verifier; if no idea passes, it reports no survivors.
 
 ### Skills hand off to each other
 
-- `implement` completes the full required gate before committing each finished behavior, reuses checks whose inputs are unchanged, runs `qa` in a fresh sub-agent and fixes every fail test-first, then passes the spec to `code-review`. Follow-ups check the fix diff and affected behavior. Every verified finding is fixed or raised as a question; the issue stays open until merge.
+- `implement` completes the full required gate before committing each finished behavior, reuses checks whose inputs are unchanged, runs `qa` in a fresh subagent or session when available and fixes every fail test-first, then passes the spec to `code-review`. When fresh context is unavailable, QA reports the independence gap. Follow-ups check the fix diff and affected behavior. Every verified finding is fixed or raised as a question; the issue stays open until merge.
 - `implement-spec`, adapted from upstream v1.3.1, builds a whole spec through native subagents in ticket worktrees and integrates it into one branch for a single PR. It runs QA and review on the combined spec, serializes merges, and keeps issues open until shipping. Use it for one feature reviewed together; use `orchestrate` to ship a queue of issues separately through Herdr.
 - `diagnosing-bugs` writes the regression test through `tdd` and reviews the fix with `code-review`, using the bug report as the spec.
 - Test seams agreed in `to-spec` or `triage` travel through `to-tickets` into `implement` and `tdd`, so no skill asks about them twice.

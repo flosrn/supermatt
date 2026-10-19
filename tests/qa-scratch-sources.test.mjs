@@ -120,6 +120,21 @@ test("verify reports a source link the copy pointed elsewhere", (t) => {
   assert.deepEqual(drift(run("verify")), ["changed inside-link (link target)"]);
 });
 
+test("verify detects lost executable bits while accepting source write protection", (t) => {
+  const { scratch, run } = fixture(t, (repo, git) => {
+    writeFileSync(join(repo, "run.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    chmodSync(join(repo, "run.sh"), 0o755);
+    git("add", ".");
+    git("commit", "-qm", "init");
+  });
+  assert.equal(run("prepare").status, 0);
+  assert.equal(statSync(join(scratch, "run.sh")).mode & 0o777, 0o555);
+  assert.equal(run("verify").status, 0);
+
+  chmodSync(join(scratch, "run.sh"), 0o444);
+  assert.deepEqual(drift(run("verify")), ["changed run.sh (executable bits)"]);
+});
+
 test("verify reports a source that disappeared from the repository, not from the copy", (t) => {
   const { repo, run } = prepared(t);
   unlinkSync(join(repo, "twin.txt"));
@@ -180,6 +195,24 @@ test("prepare follows a link chain to its last hop and rejects it when that hop 
   assert.match(result.stderr, /first-hop -> .*outside\/file\.txt/);
   assertUntouched(outside);
   assert.ok(writable(join(scratch, "kept.txt")), "a rejected preparation protects nothing");
+});
+
+test("prepare rejects a link chain with a dangling final target outside the copy", (t) => {
+  const { root, dir, scratch, run } = fixture(t, (repo, git) => {
+    writeFileSync(join(repo, ".gitignore"), "second-hop\n");
+    writeFileSync(join(repo, "kept.txt"), "kept\n");
+    symlinkSync("second-hop", join(repo, "first-hop"));
+    git("add", ".");
+    git("commit", "-qm", "init");
+  });
+  symlinkSync(join(root, "missing.txt"), join(scratch, "second-hop"));
+
+  const result = run("prepare");
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /first-hop -> .*missing\.txt/);
+  assert.ok(writable(join(scratch, "kept.txt")), "a rejected preparation protects nothing");
+  assert.ok(!existsSync(join(dir, "sources.lst")));
+  assert.ok(!existsSync(join(dir, "deleted.lst")));
 });
 
 test("prepare lists a dangling link that stays inside the copy as a source", (t) => {

@@ -13,7 +13,7 @@ A single tracked unit of work inside an **Issue tracker**: a bug, task, spec, or
 _Avoid_: ticket, except for a **Ticket** or a **Decision ticket** (below), or when quoting external systems that call them tickets
 
 **Ticket**:
-An **Issue** produced by `to-tickets`: one tracer-bullet slice of a spec, with its blocking edges. `implement` builds it and closes it.
+An **Issue** produced by `to-tickets`: one tracer-bullet slice of a spec, with its blocking edges, built by `implement` and closed only after its commits reach the default branch. Within `implement-spec`, a dependent ticket can start when its blockers' verified commits reach the integration branch, while their issues stay open until shipping.
 
 **Decision ticket**:
 A `wayfinder` unit: a child **Issue** of a `wayfinder:map` holding a *question* whose resolution is a decision, not a slice of a build to execute. The **decision** qualifier is what keeps it distinct from a **Ticket**; `wayfinder` introduces the term, then uses "ticket".

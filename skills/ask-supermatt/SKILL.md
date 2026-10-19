@@ -49,7 +49,7 @@ The limit is the **[smart zone](https://www.aihero.dev/ai-coding-dictionary/smar
 
 A starting situation that generates work, then merges onto the main flow.
 
-- **No idea yet, and you want candidates** → **`/ideate`**. It grounds itself in the repo when available, otherwise in external sources and explicit reasoning, generates ideas through six frames, has a fresh subagent try to refute each one, and writes the ranked **survivors** to `docs/ideation/`. Each survivor carries a standalone prompt with its original evidence that takes it into **`/grill-with-docs`** in a fresh session, where the main flow starts. It finds *what* to build; `/grill-with-docs` shapes the one you pick.
+- **No idea yet, and you want candidates** → **`/ideate`**. It grounds itself in the repo when available, otherwise in external sources and explicit reasoning, generates ideas through six frames, and has a fresh subagent or session try to refute each one. When fresh context is unavailable, it performs the check itself and reports the missing independent verifier. It writes the ranked **survivors** to `docs/ideation/`, or reports that no idea passed. Each survivor carries a standalone prompt with its original evidence that takes it into **`/grill-with-docs`** in a fresh session, where the main flow starts. It finds *what* to build; `/grill-with-docs` shapes the one you pick.
 
 - **Bugs and requests piling up** → **`/triage`**. It moves issues through triage roles and produces agent-ready issues, which **`/implement`** later picks up. When you explicitly delegate decisions, it records its choices within your issue or queue scope; missing facts and separate approval gates still block dependent work.
 

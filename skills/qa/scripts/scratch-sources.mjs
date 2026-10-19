@@ -14,8 +14,8 @@
 // it would act on files outside the copy.
 //
 // verify <repo> <scratch> <dir>: compares each path in sources.lst between the
-// repository and the copy (type, file bytes, link target) and confirms each path
-// in deleted.lst is still absent from the copy. Prints one line per difference;
+// repository and the copy (type, executable bits, file bytes, link target) and
+// confirms each path in deleted.lst is still absent. Prints one line per difference;
 // an entry it cannot read on either side is a difference too.
 //
 // Both lists are NUL-delimited. Exit 0 on success, 1 on a rejected link or a
@@ -64,8 +64,13 @@ if (mode === "prepare") {
   const realOrLexical = (path) => {
     try {
       return realpathSync(path);
-    } catch {
-      return join(realOrLexical(dirname(path)), basename(path));
+    } catch (error) {
+      if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error;
+      const parent = realOrLexical(dirname(path));
+      const candidate = join(parent, basename(path));
+      return lstatOrNull(candidate)?.isSymbolicLink()
+        ? realOrLexical(resolve(parent, readlinkSync(candidate)))
+        : candidate;
     }
   };
 
@@ -111,6 +116,7 @@ if (mode === "prepare") {
     if (!original || !copied) return `missing ${path} (${original ? "copy" : "repository"})`;
     if (kind(original) !== kind(copied)) return `changed ${path} (${kind(original)} became ${kind(copied)})`;
     if (original.isSymbolicLink() && readlinkSync(join(repo, path)) !== readlinkSync(join(scratch, path))) return `changed ${path} (link target)`;
+    if (original.isFile() && (original.mode & 0o111) !== (copied.mode & 0o111)) return `changed ${path} (executable bits)`;
     if (original.isFile() && !readFileSync(join(repo, path)).equals(readFileSync(join(scratch, path)))) return `changed ${path} (content)`;
     return null;
   };
