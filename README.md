@@ -34,14 +34,14 @@
 In Claude Code, type:
 
 ```text
-/plugin marketplace add svyatov/supermatt
+/plugin marketplace add flosrn/supermatt
 /plugin install supermatt@supermatt
 ```
 
 In Codex, run:
 
 ```bash
-codex plugin marketplace add svyatov/supermatt
+codex plugin marketplace add flosrn/supermatt
 codex plugin add supermatt@supermatt
 ```
 
@@ -54,7 +54,7 @@ agent --plugin-dir .
 In OMP, run:
 
 ```text
-omp plugin marketplace add svyatov/supermatt
+omp plugin marketplace add flosrn/supermatt
 omp plugin install supermatt@supermatt
 ```
 
