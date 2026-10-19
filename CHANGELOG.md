@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- `qa`: accepts Node built-ins in the shared scratch dependency preflight, including built-in-only checks, while preserving package resolution and missing-package failures.
+
 ## [0.23.0] - 2026-10-18
 
 ### Added
