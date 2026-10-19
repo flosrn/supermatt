@@ -1,0 +1,6 @@
+{"type":"title","v":1,"title":"Skill prompt fixture"}
+{"type":"session","version":3,"id":"omp-skill-prompt-session","timestamp":"2026-10-15T00:00:00.000Z","cwd":"/workspace/project"}
+{"type":"custom_message","id":"custom1","parentId":null,"customType":"notification","content":"OMP unrelated custom message"}
+{"type":"custom_message","id":"u1","parentId":"custom1","customType":"skill-prompt","content":[{"type":"text","text":"OMP skill prompt marker"},{"type":"text","text":"Skill command instructions"}]}
+{"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":[{"type":"text","text":"OMP skill answer"}]}}
+{"type":"model_usage","id":"usage1","parentId":"a1","activeLeafId":"a1","purpose":"late","api":"test","provider":"test","model":"test","usage":{},"stopReason":"stop"}
