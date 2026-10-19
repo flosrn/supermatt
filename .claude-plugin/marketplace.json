@@ -2,9 +2,9 @@
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "supermatt",
   "owner": {
-    "name": "Leonid Svyatov"
+    "name": "Florian Séran"
   },
-  "description": "The best of Matt Pocock's Skills, Superpowers, and Compound Engineering. One complete, simple, supercharged SDLC system for your coding agent.",
+  "description": "The best of Matt Pocock's Skills, Superpowers, and Compound Engineering. One complete, simple, supercharged SDLC system for your coding agent. (fork flosrn)",
   "plugins": [
     {
       "name": "supermatt",
