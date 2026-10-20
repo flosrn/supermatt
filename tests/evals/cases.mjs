@@ -159,6 +159,20 @@ export const cases = [
     rubric: ["A and B are not dispatched concurrently on the same mutable resources merely because their files differ.", "The plan either assigns verified distinct databases, ports and build output or serializes their conflicting operations.", "C remains eligible for independent work, and the merge slot is distinct from resource ownership."],
   },
   {
+    id: "worktree-setup-source", skill: "implement-spec", unchanged: true,
+    files: {
+      "docs/agents/worktree-setup.md": "# Worktree setup\n\nRun these from the worktree root, in order:\n\n1. `bun install --frozen-lockfile`\n2. `git submodule update --init --recursive`\n",
+      "AGENTS.md": "# App\n\n## Setup\n\nRun `npm ci`, then `npm run build:icons`.\n",
+      "README.md": "# App\n\n## Development\n\n`npm install`, then `npm run dev`.\n",
+      "other-repo.md": "A separate implement-spec run works on a second repository, /Users/dev/tools. Its files that mention anything beyond source code, in full:\n\nAGENTS.md:\n```\n# Tools\nUse conventional commits. Run `just test` before committing.\n```\n\nREADME.md:\n```\n# Tools\nInternal scripts for release automation.\n```\n\nIt has no CONTRIBUTING.md and no docs/agents directory.\n",
+    },
+    prompt: "Apply only the worktree creation and preparation parts of the skill. For this repository, report the commands the coordinator runs in each new worker worktree before dispatching into it, in order, with their source. Then do the same for the repository in other-repo.md, and say what the coordinator records in its task graph and whether it dispatches. Do not create worktrees, run anything beyond reading these files, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "This repository's worker worktrees run exactly docs/agents/worktree-setup.md's commands, in order, from the worktree root (bun install --frozen-lockfile, then git submodule update --init --recursive), before dispatch, and none of the commands in AGENTS.md or README.md.",
+      "For /Users/dev/tools, the task graph records that no setup was found (no setup document, and none in AGENTS.md, README, or CONTRIBUTING), and the coordinator dispatches without setup instead of inventing an install or treating `just test` as setup.",
+    ],
+  },
+  {
     id: "worktree-confinement-spec", skill: "implement-spec", unchanged: true,
     files: {
       "run.md": "Spec #12. The host's subagents start in the coordinator's working directory.\nCoordinator starting checkout: /Users/dev/app, branch main. It is the repository's main checkout, shared with other sessions.\nIntegration worktree: /Users/dev/wt/spec-12, branch feat/spec-12.\nTicket #13: worktree /Users/dev/wt/ticket-13, branch ticket-13, starting commit 1a2b3c4. Edits src/intake/parse.ts.\nTicket #14: worktree /Users/dev/wt/ticket-14, branch ticket-14, starting commit 1a2b3c4. Edits src/intake/handoff.ts and its tests; its worker usually dispatches a test-writing subagent.\n",
