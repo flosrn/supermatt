@@ -211,8 +211,8 @@ $ git worktree remove /Users/dev/wt/spec-12-t13
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t13 submodule absorbgitdirs
 (no output)
-$ git -C /Users/dev/wt/spec-12-t13 submodule foreach --recursive --quiet 'git rev-parse --absolute-git-dir'
-/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant
+$ find /Users/dev/wt/spec-12-t13 -name HEAD -type f
+(no output)
 
 ## /Users/dev/wt/spec-12-t14, branch ticket-14 (the worker moved the vendor/parlant pin)
 $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
@@ -231,8 +231,8 @@ $ git worktree remove /Users/dev/wt/spec-12-t14
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t14 submodule absorbgitdirs
 (no output)
-$ git -C /Users/dev/wt/spec-12-t14 submodule foreach --recursive --quiet 'git rev-parse --absolute-git-dir'
-/Users/dev/app/.git/worktrees/spec-12-t14/modules/vendor/parlant
+$ find /Users/dev/wt/spec-12-t14 -name HEAD -type f
+(no output)
 
 ## /Users/dev/wt/spec-12-t15, branch ticket-15 (the worker ran git submodule deinit vendor/parlant)
 $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
@@ -253,7 +253,7 @@ $ git worktree remove /Users/dev/wt/spec-12-t15
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t15 submodule absorbgitdirs
 (no output)
-$ git -C /Users/dev/wt/spec-12-t15 submodule foreach --recursive --quiet 'git rev-parse --absolute-git-dir'
+$ find /Users/dev/wt/spec-12-t15 -name HEAD -type f
 (no output)
 
 ## /Users/dev/wt/spec-12-t16, branch ticket-16
@@ -275,8 +275,8 @@ $ git worktree remove /Users/dev/wt/spec-12-t16
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t16 submodule absorbgitdirs
 (no output)
-$ git -C /Users/dev/wt/spec-12-t16 submodule foreach --recursive --quiet 'git rev-parse --absolute-git-dir'
-/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant
+$ find /Users/dev/wt/spec-12-t16 -name HEAD -type f
+(no output)
 `,
     },
     prompt: "Apply only the hand-off and clean-up part of the skill to state.md. For each worker worktree, decide whether the coordinator removes it now and give the exact command it runs. For each worktree it keeps, name the failing check and any commit that removal would lose. Do not run git, contact a tracker, launch agents, or edit files in this scoped probe.",
@@ -330,6 +330,7 @@ fatal: working trees containing submodules cannot be moved or removed
       "The listing of each repository's commits does not exclude commits that only a tag in that repository holds: no --tags (or other tag ref) on the excluded side, since such a tag goes with the worktree.",
       "A listed commit counts as held elsewhere when the main worktree's corresponding repository has it in a ref or a reflog, not only when a ref there contains it.",
       "vendor/kit's repository at /Users/dev/wt/spec-12-t23/.cache/kit, inside the worktree but outside its modules directory, is found (for example by resolving each submodule's git directory) and either checked or keeps the worktree: git submodule absorbgitdirs leaves an existing gitfile in place, and the forced removal would delete that repository.",
+      "The commands also search the worktree directory itself for Git repositories of any name (for example find /Users/dev/wt/spec-12-t23 -name HEAD -type f, then git rev-parse on each directory), since a repository that a deinitialized or removed submodule left there is visible to no submodule command, and any repository found keeps the worktree.",
     ],
   },
   {
