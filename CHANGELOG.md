@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- `implement-spec`: confines every agent's reads, writes, and shell working directory to absolute paths under its assigned worktree, a rule each agent hands with that path to its subagents at every depth; the coordinator's starting checkout and the integration worktree are read-only to workers. Snapshots both at dispatch and checks them before each dispatch, merge, and final QA: a change since the snapshot stops integration with the changed paths named and left in place, while a starting checkout already dirty at dispatch does not stop the run.
+
 ## [0.23.0] - 2026-10-18
 
 ### Added

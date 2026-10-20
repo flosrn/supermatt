@@ -159,6 +159,20 @@ export const cases = [
     rubric: ["A and B are not dispatched concurrently on the same mutable resources merely because their files differ.", "The plan either assigns verified distinct databases, ports and build output or serializes their conflicting operations.", "C remains eligible for independent work, and the merge slot is distinct from resource ownership."],
   },
   {
+    id: "worktree-confinement-spec", skill: "implement-spec", unchanged: true,
+    files: {
+      "run.md": "Spec #12. The host's subagents start in the coordinator's working directory.\nCoordinator starting checkout: /Users/dev/app, branch main. It is the repository's main checkout, shared with other sessions.\nIntegration worktree: /Users/dev/wt/spec-12, branch feat/spec-12.\nTicket #13: worktree /Users/dev/wt/ticket-13, branch ticket-13, starting commit 1a2b3c4. Edits src/intake/parse.ts.\nTicket #14: worktree /Users/dev/wt/ticket-14, branch ticket-14, starting commit 1a2b3c4. Edits src/intake/handoff.ts and its tests; its worker usually dispatches a test-writing subagent.\n",
+      "state.md": "# Captured repository state\n\n## At dispatch of #13 and #14\n/Users/dev/app: HEAD 9f8e7d6\n M notes/todo.md   (content sha256 5e1c09aa)\n/Users/dev/wt/spec-12: HEAD 1a2b3c4, status empty\n\n## Capture A: worker #13 reported commit 7c6d5e4, synced with 1a2b3c4, full gate green\n/Users/dev/app: HEAD 9f8e7d6\n M notes/todo.md   (content sha256 5e1c09aa)\n/Users/dev/wt/spec-12: HEAD 1a2b3c4, status empty\n\n## Capture B: worker #14 reported commit 0d9c8b7, synced with 7c6d5e4, full gate green\nIf #13 was merged at capture A, the fast-forward moved the integration tip to 7c6d5e4.\n/Users/dev/app: HEAD 9f8e7d6\n M notes/todo.md   (content sha256 5e1c09aa)\n M src/intake/handoff.test.ts   (content sha256 b7f2d431)\n?? deploy/README.md   (content sha256 0c4e8a19)\n/Users/dev/wt/spec-12: HEAD 7c6d5e4, status empty\n",
+    },
+    prompt: "Apply only the dispatch and merge-slot parts of the skill to run.md and state.md. First write, in your reply, the prompt you would send to the ticket #14 worker at dispatch. Then, for each capture in state.md, decide whether the coordinator merges that worker's commit now, and report what it does instead if not. Do not create worktrees, run git, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The #14 worker prompt gives /Users/dev/wt/ticket-14 as an absolute path and requires every path passed to any tool, reads included, and every shell working directory to be absolute and under it; it makes /Users/dev/app and /Users/dev/wt/spec-12 read-only to the worker.",
+      "The prompt requires the worker to hand that rule, with the absolute worktree path, to every subagent it dispatches and on to their own subagents at any depth, and to report a write outside the worktree instead of cleaning it up.",
+      "Capture A merges #13: notes/todo.md was already modified at dispatch and is unchanged since, so it does not stop the run.",
+      "Capture B stops before merging #14 and names src/intake/handoff.test.ts and deploy/README.md as changed since dispatch. Nothing is committed, discarded, stashed, checked out, or re-applied; saving a copy outside the repository is allowed.",
+    ],
+  },
+  {
     id: "resources-orchestrate", skill: "orchestrate", unchanged: true,
     files: { "lanes.md": "Existing lane 1 still has a running QA server on port 4100 and owns schema app_test. Lane 2 needs both resources. Lane 1 is parked but its process has not exited.\n" },
     prompt: "Use only the resource-ownership procedure to assess lanes.md. Report the next safe dispatch decision. Do not run Herdr setup, contact GitHub, or start/stop processes in this scoped probe.",
