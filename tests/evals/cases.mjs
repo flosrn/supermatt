@@ -203,7 +203,7 @@ $ git submodule status --recursive
  4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
 $ git rev-parse --git-path modules
 /Users/dev/app/.git/worktrees/spec-12-t13/modules
-$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --not --remotes --tags
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes --tags
 (no output)
 $ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant branch -r --contains 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f
   origin/main
@@ -219,7 +219,7 @@ $ git submodule status --recursive
  8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b vendor/parlant (heads/main)
 $ git rev-parse --git-path modules
 /Users/dev/app/.git/worktrees/spec-12-t14/modules
-$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t14/modules/vendor/parlant rev-list 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b --all --not --remotes --tags
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t14/modules/vendor/parlant rev-list 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b --all --reflog --not --remotes --tags
 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
 $ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant for-each-ref --contains 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
 error: no such commit 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
@@ -237,7 +237,7 @@ $ git rev-parse --git-path modules
 /Users/dev/app/.git/worktrees/spec-12-t15/modules
 $ ls /Users/dev/app/.git/worktrees/spec-12-t15/modules
 vendor
-$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t15/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --not --remotes --tags
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t15/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes --tags
 2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
 $ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant for-each-ref --contains 2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
 3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f commit	refs/heads/main
@@ -253,7 +253,7 @@ $ git submodule status --recursive
  4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
 $ git rev-parse --git-path modules
 /Users/dev/app/.git/worktrees/spec-12-t16/modules
-$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --not --remotes --tags
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes --tags
 9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
 $ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant branch --contains 9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
   wip
@@ -269,6 +269,36 @@ fatal: working trees containing submodules cannot be moved or removed
       "/Users/dev/wt/spec-12-t14 is kept, and the handoff names 8a9b0c1, its pinned submodule commit that exists only in that worktree's submodule repository.",
       "/Users/dev/wt/spec-12-t15 is removed with git worktree remove --force although its submodule is deinitialized: the one commit its retained submodule repository holds outside remote refs and tags, 2b3c4d5, is in a ref of the main worktree's submodule repository.",
       "/Users/dev/wt/spec-12-t16 is kept although its submodule sits at the pinned commit, and the handoff names 9d8e7f6 on the submodule's local branch wip.",
+    ],
+  },
+  {
+    id: "worktree-cleanup-reflog", skill: "implement-spec", unchanged: true,
+    files: {
+      "state.md": `# Captured state at hand-off (raw command results)
+
+Main worktree (first entry of git worktree list): /Users/dev/app. Integration branch feat/spec-12 in /Users/dev/wt/spec-12.
+The host reports that the worker for #19 and all its subagents have exited, and its reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created the worktree below.
+
+## /Users/dev/wt/spec-12-t19, branch ticket-19 (the worker ran git submodule deinit vendor/parlant)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-19 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+-4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t19/modules
+$ ls /Users/dev/app/.git/worktrees/spec-12-t19/modules/vendor
+parlant
+$ git worktree remove /Users/dev/wt/spec-12-t19
+fatal: working trees containing submodules cannot be moved or removed
+`,
+    },
+    prompt: "Apply only the hand-off and clean-up part of the skill to state.md. Write, in order, the exact commands the coordinator runs next for /Users/dev/wt/spec-12-t19 before it decides whether to force its removal, and what output of each would keep the worktree. Do not decide yet, run git, contact a tracker, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "The commands list the commits held in /Users/dev/app/.git/worktrees/spec-12-t19/modules/vendor/parlant that no remote-tracking ref or tag contains, including commits only its reflogs hold (for example git rev-list with --reflog), not only commits reachable from its refs.",
+      "Each listed commit is then checked against the refs of the main worktree's submodule repository under /Users/dev/app/.git/modules, and any commit found nowhere else keeps the worktree.",
+      "No git worktree remove --force runs before those checks.",
     ],
   },
   {
