@@ -423,7 +423,7 @@ $ git worktree remove /Users/dev/wt/spec-12-t21
     prompt: "Apply only the hand-off and clean-up part of the skill to state.md. Write, in order, the exact commands the coordinator still runs for /Users/dev/wt/spec-12-t21 before it decides whether its commits are in feat/spec-12, and what output of each would keep the worktree. Do not decide yet, run git, contact a tracker, launch agents, or edit files in this scoped probe.",
     rubric: [
       "Beyond the git cherry output already captured, the commands list the merge commits on ticket-21 that feat/spec-12 does not reach (for example git rev-list --merges feat/spec-12..ticket-21), because git cherry skips merge commits.",
-      "Each such merge is checked for a change of its own (for example git diff-tree --cc), and any output, such as a conflict resolution, keeps the worktree.",
+      "Each such merge is compared with the result Git's automatic merge of its parents would record (for example git show --remerge-diff), not only with a combined diff such as git diff-tree --cc, which hides a hunk that keeps one parent's side. Any difference, such as a conflict resolution or a dropped change of one parent, keeps the worktree.",
     ],
   },
   {
