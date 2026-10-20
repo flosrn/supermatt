@@ -25,15 +25,18 @@ function commitMsgScript() {
   return body.map((line) => line.slice(indent)).join("\n");
 }
 
-// Writes `subject` to `relativePath` under a fresh temp dir and runs the hook on it, substituting
-// {1} verbatim the way lefthook does. Returns the run and the message bytes left afterwards.
-function runHook(t, relativePath, subject) {
+// Writes `subject` to `relativePath` under a fresh temp dir, writes any `others` beside it, and runs the
+// hook on it the way lefthook does: {1} is pasted unquoted, after trimming surrounding whitespace.
+// Returns the run and the message bytes left afterwards.
+function runHook(t, relativePath, subject, others = {}) {
   const dir = mkdtempSync(join(tmpdir(), "commit-msg-hook-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const [path, content] of Object.entries({ ...others, [relativePath]: `${subject}\n` })) {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), content);
+  }
   const message = join(dir, relativePath);
-  mkdirSync(dirname(message), { recursive: true });
-  writeFileSync(message, `${subject}\n`);
-  const result = spawnSync("sh", ["-c", commitMsgScript().replaceAll("{1}", message)], { encoding: "utf8" });
+  const result = spawnSync("sh", ["-c", commitMsgScript().replaceAll("{1}", message.trim())], { encoding: "utf8" });
   return { result, left: readFileSync(message, "utf8") };
 }
 
@@ -46,7 +49,8 @@ const awkwardPaths = [
   "$HOME dir/$1.txt",
   "tick `false` dir/`id`.txt",
   "back\\slash.txt",
-  " edge spaces /m.txt ",
+  "line\nbreak.txt",
+  "edge \n\n space.txt",
 ];
 
 for (const path of awkwardPaths) {
@@ -65,6 +69,12 @@ for (const path of awkwardPaths) {
     assert.equal(left, "test: path\n");
   });
 }
+
+test("commit-msg hook judges the file a multi-line path names, not the one its first line names", (t) => {
+  const { result } = runHook(t, "dir\nrest.txt", "test: path", { dir: "fix: decoy\n" });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /Accepted types: /);
+});
 
 test("commit-msg hook rejects an unaccepted type and names every type its regex accepts", (t) => {
   const accepted = commitMsgScript().match(/grep -qE '\^\(([^)]+)\)/);
