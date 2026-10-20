@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- `orchestrate`: on OMP, verifies each lane's worker skills with `omp skill list <worktree> --json` instead of fixed folders such as `~/.agents/skills`, so SuperMatt loaded from a custom skill directory resolves. Every required skill must resolve to the root of the running orchestrate skill; a bare name from another root, a collision warning, a missing skill, or a failed listing parks the lane with both paths or the exact failure. Behavioral evaluation cases cover each outcome.
+- `orchestrate`: on OMP, verifies each lane's worker skills with `omp skill list <worktree> --json` instead of fixed folders such as `~/.agents/skills`, so SuperMatt loaded from a custom skill directory resolves. Every required skill must resolve to the root of the running orchestrate skill, compared as the same directory rather than as text. A bare name from another root, a collision warning, a missing skill, or a failed or non-JSON listing parks the lane, naming both paths (the two in the warning, for a collision) or the exact failure. Behavioral evaluation cases cover each outcome.
 
 ## [0.23.0] - 2026-10-18
 

@@ -64,8 +64,8 @@ const ompRequired = ["triage", "implement", "qa", "code-review", "fix-findings",
 const ompUserInvoked = new Set(["triage", "implement", "fix-findings", "refactor", "commit", "ship-pr", "retro", "orchestrate"]);
 const ompSkill = (name, baseDir = `${ompRoot}/${name}`, source = "custom:user") =>
   ({ name, description: `${name} skill.`, filePath: `${baseDir}/SKILL.md`, baseDir, source, hide: ompUserInvoked.has(name) });
-const ompListing = ({ omit = [], extra = [], warnings = [] } = {}) => JSON.stringify({
-  skills: [...["orchestrate", ...ompRequired].filter(name => !omit.includes(name)).map(name => ompSkill(name)), ompSkill("deploy", "@FIXTURE@/host/.omp/agent/skills/deploy", "native:user"), ...extra],
+const ompListing = ({ root = ompRoot, omit = [], extra = [], warnings = [] } = {}) => JSON.stringify({
+  skills: [ompSkill("orchestrate"), ...ompRequired.filter(name => !omit.includes(name)).map(name => ompSkill(name, `${root}/${name}`)), ompSkill("deploy", "@FIXTURE@/host/.omp/agent/skills/deploy", "native:user"), ...extra],
   warnings,
 }, null, 2) + "\n";
 const ompExecutable = ({ listing = "", status = 0, stderr = "" }) => `#!/usr/bin/env node
@@ -119,6 +119,18 @@ const ompDiscoveryCases = [
     id: "orchestrate-omp-skills-listing-failed",
     omp: { status: 1, stderr: `Error: EACCES: permission denied, scandir '${ompRoot}'\n` },
     rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "The report gives the exact gap: the command, exit status 1, and the EACCES error output.", "Lane 1 parks; the orchestrator does not infer resolution from the SuperMatt folder on disk, ~/.agents/skills, ~/.omp/agent/skills, ~/.claude/skills, OMP's config, or any other fixed folder."],
+  }),
+  ompDiscoveryCase({
+    id: "orchestrate-omp-skills-listing-not-json",
+    omp: { listing: "Install, search, publish, and manage skills on the Skillshare registry (skills.omp.sh)\n\nUSAGE\n  $ omp skill [ACTION] [TARGETS...] [FLAGS]\n" },
+    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "The report gives the exact gap: the command, exit status 0, and the usage text it printed instead of the skill listing JSON.", "Lane 1 parks; the orchestrator does not read the usage text as an empty or passing listing, and does not infer resolution from the SuperMatt folder on disk, fixed skill folders, or OMP's config."],
+  }),
+  ompDiscoveryCase({
+    // The harness rejects symlinks, so "./" stands in for another spelling of the same directory.
+    // The orchestrate entry keeps the spelling lane.md gives, so a text comparison cannot pass.
+    id: "orchestrate-omp-skills-respelled-root",
+    omp: { listing: ompListing({ root: `${ompRoot}/.` }) },
+    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "Every required skill passes: each listed baseDir, spelled with a ./ segment unlike the running orchestrate skill's root, is checked as the same directory as the matching folder under host/tools/supermatt/skills, rather than compared as text.", "Lane 1 may start its worker; the different path spelling alone is not reported as a conflict."],
   }),
 ];
 
