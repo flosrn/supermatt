@@ -165,11 +165,13 @@ export const cases = [
       "AGENTS.md": "# App\n\n## Setup\n\nRun `npm ci`, then `npm run build:icons`.\n",
       "README.md": "# App\n\n## Development\n\n`npm install`, then `npm run dev`.\n",
       "other-repo.md": "A separate implement-spec run works on a second repository, /Users/dev/tools. Its files that mention anything beyond source code, in full:\n\nAGENTS.md:\n```\n# Tools\nUse conventional commits. Run `just test` before committing.\n```\n\nREADME.md:\n```\n# Tools\nInternal scripts for release automation.\n```\n\nIt has no CONTRIBUTING.md and no docs/agents directory.\n",
+      "third-repo.md": "Another implement-spec run works on a third repository, /Users/dev/site. Its files that mention anything beyond source code, in full:\n\nAGENTS.md:\n```\n# Site\nKeep components in src/components. Prefer named exports.\n```\n\nREADME.md:\n```\n# Site\nThe marketing site.\n```\n\nCONTRIBUTING.md:\n```\n# Contributing\n\n## Getting started\n\n1. `make bootstrap`\n2. `git submodule update --init`\n\n## Before a pull request\n\nRun `make lint`.\n```\n\nIt has no docs/agents directory.\n",
     },
-    prompt: "Apply only the worktree creation and preparation parts of the skill. For this repository, report the commands the coordinator runs in each new worker worktree before dispatching into it, in order, with their source. Then do the same for the repository in other-repo.md, and say what the coordinator records in its task graph and whether it dispatches. Do not create worktrees, run anything beyond reading these files, contact a tracker, launch workers, or edit files in this scoped probe.",
+    prompt: "Apply only the worktree creation and preparation parts of the skill. For this repository, report the commands the coordinator runs in each new worker worktree before dispatching into it, in order, with their source. Then do the same for the repositories in other-repo.md and third-repo.md, and for each say what the coordinator records in its task graph and whether it dispatches. Do not create worktrees, run anything beyond reading these files, contact a tracker, launch workers, or edit files in this scoped probe.",
     rubric: [
       "This repository's worker worktrees run exactly docs/agents/worktree-setup.md's commands, in order, from the worktree root (bun install --frozen-lockfile, then git submodule update --init --recursive), before dispatch, and none of the commands in AGENTS.md or README.md.",
       "For /Users/dev/tools, the task graph records that no setup was found (no setup document, and none in AGENTS.md, README, or CONTRIBUTING), and the coordinator dispatches without setup instead of inventing an install or treating `just test` as setup.",
+      "For /Users/dev/site, the setup is CONTRIBUTING.md's make bootstrap, then git submodule update --init, recorded with CONTRIBUTING.md as its source; make lint is a check, not setup.",
     ],
   },
   {
@@ -209,7 +211,7 @@ $ pnpm install --frozen-lockfile    (rerun two minutes later)
  ERR_PNPM_FETCH_503  GET https://registry.npmjs.org/next: Service Unavailable - 503
 exit 1
 
-## Capture C: later, #31 is integrated at 5e6f7a8 and #32 is still blocked. /Users/dev/wt/t33, starting commit 5e6f7a8 verified
+## Capture C: later, #31 is integrated at 5e6f7a8. /Users/dev/wt/t33, starting commit 5e6f7a8 verified
 $ shasum -a 256 /Users/dev/app/.git/hooks/*
 3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
 8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
@@ -251,14 +253,49 @@ d41e6c02  /Users/dev/app/.git/hooks/pre-commit
 77b0f3a1  /Users/dev/app/.git/hooks/pre-push
 $ git status --porcelain=v1 --untracked-files=all
 (no output)
+
+## Capture E: a separate run of this spec. Integration worktree /Users/dev/wt/spec-30, created at 1a2b3c4, starting commit verified; nothing dispatched yet
+$ shasum -a 256 /Users/dev/app/.git/hooks/*
+3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
+8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
+(setup commands ran here; every one exited 0; output omitted)
+$ shasum -a 256 /Users/dev/app/.git/hooks/*
+3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
+8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
+$ git status --porcelain=v1 --untracked-files=all
+?? next-env.d.ts
 `,
     },
     prompt: "Apply only the worktree creation, preparation, and dispatch parts of the skill to run.md, state.md, and this repository's files. First list, in order, the setup the coordinator runs in every worktree of run.md before any agent works in it, with the source of each step. Then, for each capture in state.md, decide whether the coordinator dispatches into that worktree now, and report what it does instead if not and what it records in the task graph. Finally write the prompt you would send to the #31 worker once it is dispatched. Do not create worktrees, run git or pnpm, contact a tracker, launch workers, or edit files in this scoped probe.",
     rubric: [
-      "The setup is AGENTS.md's pnpm install --frozen-lockfile, plus initializing vendor/engine and fetching its tags, because the pin check runs git describe --tags there and .gitmodules makes it a shallow clone without tags. The same setup runs, from the worktree root after its starting commit is verified, in the worker, QA, and fix worktrees before any agent works in them.",
-      "Capture A does not dispatch #31 until the coordinator has initialized vendor/engine and fetched its tags. The #31 prompt then says its worktree is already prepared, so the worker does not repeat the setup.",
+      "The setup is AGENTS.md's pnpm install --frozen-lockfile, plus initializing vendor/engine and making its tag lookup work, because the pin check runs git describe --tags there: since .gitmodules makes it a shallow clone, the coordinator fetches its tags with the history that reaches them and confirms git describe --tags succeeds. The same setup runs, from the worktree root after its starting commit is verified, in the integration, worker, QA, and fix worktrees before any agent works in them.",
+      "Capture A does not dispatch #31 until vendor/engine is initialized and git describe --tags succeeds there. The #31 prompt then says its worktree is already prepared, so the worker does not repeat the setup.",
       "Capture B keeps #32 out: its worktree is not handed to the worker to finish the failed install, and the task graph records the failing command and its 503 error as the reason. Only a later setup that the coordinator completes lets it dispatch.",
       "Capture C does not dispatch #33 and stops the run, naming pre-commit as changed and pre-push as added in /Users/dev/app/.git/hooks; the coordinator leaves them for the user and does not restore them. Capture D does not dispatch #34 either, although its own before-and-after digests match, because the run has stopped.",
+      "Capture E does not count the integration worktree as prepared: its setup left next-env.d.ts untracked, so the coordinator records that path and asks the user before the run goes on, without deleting, ignoring, or committing the file.",
+    ],
+  },
+  {
+    id: "worktree-setup-sync", skill: "implement-spec", unchanged: true,
+    files: {
+      "AGENTS.md": "# App\n\n## Setup\n\nFrom the repository root, run `pnpm install --frozen-lockfile`, then `pnpm codegen`.\n\n## Checks\n\nThe required gate is `pnpm gate`: `pnpm test`, then `pnpm check:pin`.\n",
+      "run.md": "Spec #30. The files in this directory are the repository at the integration tip 7c8d9e0.\nCoordinator starting checkout: /Users/dev/app, branch main at 1a2b3c4, the main worktree (first entry of git worktree list). Its AGENTS.md still documents only `pnpm install --frozen-lockfile` as setup. Its hooks directory is /Users/dev/app/.git/hooks.\nIntegration worktree: /Users/dev/wt/spec-30, branch feat/spec-30, at 7c8d9e0 after merging #31. The #31 commit added the `pnpm codegen` setup step to AGENTS.md and a dependency to package.json and pnpm-lock.yaml.\nTicket #32: worktree /Users/dev/wt/t32, branch ticket-32. It was prepared at 1a2b3c4 with `pnpm install --frozen-lockfile` (source AGENTS.md, hooks unchanged, status clean) and dispatched. Its worker reported commit 4d5e6f7 and now holds the merge slot.\n",
+      "state.md": `# Captured command results (raw)
+
+## Sync: the #32 worker merged feat/spec-30 into ticket-32
+$ git -C /Users/dev/wt/t32 diff --stat 4d5e6f7 HEAD
+ AGENTS.md      |  2 +-
+ package.json   |  1 +
+ pnpm-lock.yaml | 24 ++++++++++++++++++++++++
+ 3 files changed, 26 insertions(+), 1 deletion(-)
+$ git -C /Users/dev/wt/t32 rev-parse HEAD
+8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f
+`,
+    },
+    prompt: "Apply only the merge-slot and worktree-preparation parts of the skill to run.md and state.md. List, in order, every step the coordinator takes for #32 from the end of the sync to its merge decision, with the exact commands each step runs and the file any command list is read from. Do not run git or pnpm, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "Because the sync changed the setup source, package.json, and pnpm-lock.yaml, the coordinator reruns the setup in /Users/dev/wt/t32 before the checks the merge invalidates: pnpm install --frozen-lockfile, then pnpm codegen, read from the AGENTS.md in /Users/dev/wt/t32 at the synced commit, not from the older AGENTS.md in /Users/dev/app. The worker is not left to run the gate on dependencies prepared before the sync.",
+      "Around that rerun, the coordinator records /Users/dev/app/.git/hooks before and after and compares each hook's type and mode as well as its content digest (for example with ls -l or stat next to shasum), so a hook that loses its executable bit stops the run.",
     ],
   },
   {
