@@ -173,6 +173,95 @@ export const cases = [
     ],
   },
   {
+    id: "worktree-setup-dispatch", skill: "implement-spec", unchanged: true,
+    files: {
+      "AGENTS.md": "# App\n\n## Setup\n\nFrom the repository root, run `pnpm install --frozen-lockfile`.\n\nBefore any Next.js work, read the version-matched docs in node_modules/next/dist/docs/.\n\n## Checks\n\nThe required gate is `pnpm gate`: `pnpm test`, then `pnpm check:pin`, which runs `git -C vendor/engine describe --tags` and compares the tag with ENGINE_VERSION.\n",
+      ".gitmodules": "[submodule \"vendor/engine\"]\n\tpath = vendor/engine\n\turl = https://git.example.com/engine.git\n\tshallow = true\n",
+      "run.md": "Spec #30, with tickets #31 and #32 on the frontier; #33 and #34 become eligible once #31 is integrated. The files in this directory are the repository at 1a2b3c4.\nCoordinator starting checkout: /Users/dev/app, branch main, the main worktree (first entry of git worktree list). Its hooks directory is /Users/dev/app/.git/hooks.\nIntegration worktree: /Users/dev/wt/spec-30, branch feat/spec-30, created at 1a2b3c4.\nTicket #31: worktree /Users/dev/wt/t31, branch ticket-31. Edits app/intake/page.tsx.\nTicket #32: worktree /Users/dev/wt/t32, branch ticket-32. Edits lib/engine.ts.\nTicket #33: worktree /Users/dev/wt/t33, branch ticket-33. Edits app/review/page.tsx.\nTicket #34: worktree /Users/dev/wt/t34, branch ticket-34. Edits lib/notify.ts.\nAt the end of the run the coordinator creates /Users/dev/wt/spec-30-qa for final QA and /Users/dev/wt/spec-30-fix-1 to fix a QA fail.\n",
+      "state.md": `# Captured command results (raw)
+
+No agent has been dispatched into any worktree below.
+
+## Capture A: /Users/dev/wt/t31, starting commit 1a2b3c4 verified
+$ shasum -a 256 /Users/dev/app/.git/hooks/*
+3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
+8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
+$ pnpm install --frozen-lockfile
+Lockfile is up to date, resolution step is skipped
+Packages: +812
+Done in 14.2s
+$ git submodule status
+-9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b vendor/engine
+$ shasum -a 256 /Users/dev/app/.git/hooks/*
+3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
+8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
+$ git status --porcelain=v1 --untracked-files=all
+(no output)
+
+## Capture B: /Users/dev/wt/t32, starting commit 1a2b3c4 verified
+$ shasum -a 256 /Users/dev/app/.git/hooks/*
+3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
+8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
+$ pnpm install --frozen-lockfile
+ ERR_PNPM_FETCH_503  GET https://registry.npmjs.org/next: Service Unavailable - 503
+exit 1
+$ pnpm install --frozen-lockfile    (rerun two minutes later)
+ ERR_PNPM_FETCH_503  GET https://registry.npmjs.org/next: Service Unavailable - 503
+exit 1
+
+## Capture C: later, #31 is integrated at 5e6f7a8 and #32 is still blocked. /Users/dev/wt/t33, starting commit 5e6f7a8 verified
+$ shasum -a 256 /Users/dev/app/.git/hooks/*
+3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
+8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
+$ pnpm install --frozen-lockfile
+Packages: +815
+> app@0.0.0 prepare /Users/dev/wt/t33
+> simple-git-hooks
+[INFO] Successfully set the pre-commit with command: pnpm lint-staged
+[INFO] Successfully set the pre-push with command: pnpm gate
+Done in 15.0s
+$ git submodule update --init && git -C vendor/engine fetch --tags
+Submodule path 'vendor/engine': checked out '9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b'
+ * [new tag]         v2.4.1     -> v2.4.1
+$ shasum -a 256 /Users/dev/app/.git/hooks/*
+3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
+d41e6c02  /Users/dev/app/.git/hooks/pre-commit
+77b0f3a1  /Users/dev/app/.git/hooks/pre-push
+$ git status --porcelain=v1 --untracked-files=all
+(no output)
+
+## Capture D: right after capture C. /Users/dev/wt/t34, starting commit 5e6f7a8 verified
+$ shasum -a 256 /Users/dev/app/.git/hooks/*
+3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
+d41e6c02  /Users/dev/app/.git/hooks/pre-commit
+77b0f3a1  /Users/dev/app/.git/hooks/pre-push
+$ pnpm install --frozen-lockfile
+Packages: +815
+> app@0.0.0 prepare /Users/dev/wt/t34
+> simple-git-hooks
+[INFO] Successfully set the pre-commit with command: pnpm lint-staged
+[INFO] Successfully set the pre-push with command: pnpm gate
+Done in 14.8s
+$ git submodule update --init && git -C vendor/engine fetch --tags
+Submodule path 'vendor/engine': checked out '9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b'
+ * [new tag]         v2.4.1     -> v2.4.1
+$ shasum -a 256 /Users/dev/app/.git/hooks/*
+3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
+d41e6c02  /Users/dev/app/.git/hooks/pre-commit
+77b0f3a1  /Users/dev/app/.git/hooks/pre-push
+$ git status --porcelain=v1 --untracked-files=all
+(no output)
+`,
+    },
+    prompt: "Apply only the worktree creation, preparation, and dispatch parts of the skill to run.md, state.md, and this repository's files. First list, in order, the setup the coordinator runs in every worktree of run.md before any agent works in it, with the source of each step. Then, for each capture in state.md, decide whether the coordinator dispatches into that worktree now, and report what it does instead if not and what it records in the task graph. Finally write the prompt you would send to the #31 worker once it is dispatched. Do not create worktrees, run git or pnpm, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The setup is AGENTS.md's pnpm install --frozen-lockfile, plus initializing vendor/engine and fetching its tags, because the pin check runs git describe --tags there and .gitmodules makes it a shallow clone without tags. The same setup runs, from the worktree root after its starting commit is verified, in the worker, QA, and fix worktrees before any agent works in them.",
+      "Capture A does not dispatch #31 until the coordinator has initialized vendor/engine and fetched its tags. The #31 prompt then says its worktree is already prepared, so the worker does not repeat the setup.",
+      "Capture B keeps #32 out: its worktree is not handed to the worker to finish the failed install, and the task graph records the failing command and its 503 error as the reason. Only a later setup that the coordinator completes lets it dispatch.",
+      "Capture C does not dispatch #33 and stops the run, naming pre-commit as changed and pre-push as added in /Users/dev/app/.git/hooks; the coordinator leaves them for the user and does not restore them. Capture D does not dispatch #34 either, although its own before-and-after digests match, because the run has stopped.",
+    ],
+  },
+  {
     id: "worktree-confinement-spec", skill: "implement-spec", unchanged: true,
     files: {
       "run.md": "Spec #12. The host's subagents start in the coordinator's working directory.\nCoordinator starting checkout: /Users/dev/app, branch main. It is the repository's main checkout, shared with other sessions.\nIntegration worktree: /Users/dev/wt/spec-12, branch feat/spec-12.\nTicket #13: worktree /Users/dev/wt/ticket-13, branch ticket-13, starting commit 1a2b3c4. Edits src/intake/parse.ts.\nTicket #14: worktree /Users/dev/wt/ticket-14, branch ticket-14, starting commit 1a2b3c4. Edits src/intake/handoff.ts and its tests; its worker usually dispatches a test-writing subagent.\n",
