@@ -14,8 +14,12 @@ pre-commit:
 commit-msg:
   jobs:
     - name: conventional
+      # lefthook pastes {1} into the script verbatim, so a quoted heredoc reads the message path literally, whatever it contains.
       run: |
-        head -1 {1} | grep -qE '^(feat|fix|docs|chore|ci|refactor)(\(.+\))?!?: .+' || { echo "Use Conventional Commits: type(scope): description. Accepted types: feat, fix, docs, chore, ci, refactor."; exit 1; }
+        IFS= read -r message <<'MESSAGE_PATH'
+        {1}
+        MESSAGE_PATH
+        head -1 "$message" | grep -qE '^(feat|fix|docs|chore|ci|refactor)(\(.+\))?!?: .+' || { echo "Use Conventional Commits: type(scope): description. Accepted types: feat, fix, docs, chore, ci, refactor."; exit 1; }
 
 pre-push:
   parallel: true
