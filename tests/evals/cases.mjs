@@ -211,7 +211,7 @@ $ git worktree remove /Users/dev/wt/spec-12-t13
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t13 submodule absorbgitdirs
 (no output)
-$ find /Users/dev/wt/spec-12-t13 -name HEAD -type f
+$ find /Users/dev/wt/spec-12-t13 -name HEAD
 (no output)
 
 ## /Users/dev/wt/spec-12-t14, branch ticket-14 (the worker moved the vendor/parlant pin)
@@ -231,7 +231,7 @@ $ git worktree remove /Users/dev/wt/spec-12-t14
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t14 submodule absorbgitdirs
 (no output)
-$ find /Users/dev/wt/spec-12-t14 -name HEAD -type f
+$ find /Users/dev/wt/spec-12-t14 -name HEAD
 (no output)
 
 ## /Users/dev/wt/spec-12-t15, branch ticket-15 (the worker ran git submodule deinit vendor/parlant)
@@ -253,7 +253,7 @@ $ git worktree remove /Users/dev/wt/spec-12-t15
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t15 submodule absorbgitdirs
 (no output)
-$ find /Users/dev/wt/spec-12-t15 -name HEAD -type f
+$ find /Users/dev/wt/spec-12-t15 -name HEAD
 (no output)
 
 ## /Users/dev/wt/spec-12-t16, branch ticket-16
@@ -275,7 +275,7 @@ $ git worktree remove /Users/dev/wt/spec-12-t16
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t16 submodule absorbgitdirs
 (no output)
-$ find /Users/dev/wt/spec-12-t16 -name HEAD -type f
+$ find /Users/dev/wt/spec-12-t16 -name HEAD
 (no output)
 `,
     },
@@ -330,7 +330,7 @@ fatal: working trees containing submodules cannot be moved or removed
       "The listing of each repository's commits does not exclude commits that only a tag in that repository holds: no --tags (or other tag ref) on the excluded side, since such a tag goes with the worktree.",
       "A listed commit counts as held elsewhere when the main worktree's corresponding repository has it in a ref or a reflog, not only when a ref there contains it.",
       "vendor/kit's repository at /Users/dev/wt/spec-12-t23/.cache/kit, inside the worktree but outside its modules directory, is found (for example by resolving each submodule's git directory) and either checked or keeps the worktree: git submodule absorbgitdirs leaves an existing gitfile in place, and the forced removal would delete that repository.",
-      "The commands also search the worktree directory itself for Git repositories of any name (for example find /Users/dev/wt/spec-12-t23 -name HEAD -type f, then git rev-parse on each directory), since a repository that a deinitialized or removed submodule left there is visible to no submodule command, and any repository found keeps the worktree.",
+      "The commands also search the worktree directory itself for Git repositories of any name (for example find /Users/dev/wt/spec-12-t23 -name HEAD, then git rev-parse on each directory), since a repository that a deinitialized or removed submodule left there is visible to no submodule command, and any repository found keeps the worktree. The search does not skip a HEAD that is a symbolic link, a layout Git accepts (no -type f restriction).",
     ],
   },
   {
