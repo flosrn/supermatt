@@ -187,6 +187,91 @@ export const cases = [
     ],
   },
   {
+    id: "worktree-cleanup-submodules", skill: "implement-spec", unchanged: true,
+    files: {
+      "state.md": `# Captured state at hand-off (raw command results)
+
+Main worktree (first entry of git worktree list): /Users/dev/app. Integration branch feat/spec-12 in /Users/dev/wt/spec-12.
+The host reports that the workers for #13 to #16 and all their subagents have exited, and their reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created each worktree below.
+
+## /Users/dev/wt/spec-12-t13, branch ticket-13
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-13 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+ 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t13/modules
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --not --remotes --tags
+(no output)
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant branch -r --contains 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f
+  origin/main
+$ git worktree remove /Users/dev/wt/spec-12-t13
+fatal: working trees containing submodules cannot be moved or removed
+
+## /Users/dev/wt/spec-12-t14, branch ticket-14 (the worker moved the vendor/parlant pin)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-14 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+ 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b vendor/parlant (heads/main)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t14/modules
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t14/modules/vendor/parlant rev-list 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b --all --not --remotes --tags
+8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant for-each-ref --contains 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
+error: no such commit 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
+$ git worktree remove /Users/dev/wt/spec-12-t14
+fatal: working trees containing submodules cannot be moved or removed
+
+## /Users/dev/wt/spec-12-t15, branch ticket-15 (the worker ran git submodule deinit vendor/parlant)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-15 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+-4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t15/modules
+$ ls /Users/dev/app/.git/worktrees/spec-12-t15/modules
+vendor
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t15/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --not --remotes --tags
+2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant for-each-ref --contains 2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f commit	refs/heads/main
+$ git worktree remove /Users/dev/wt/spec-12-t15
+fatal: working trees containing submodules cannot be moved or removed
+
+## /Users/dev/wt/spec-12-t16, branch ticket-16
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-16 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+ 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t16/modules
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --not --remotes --tags
+9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant branch --contains 9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+  wip
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant for-each-ref --contains 9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+error: no such commit 9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+$ git worktree remove /Users/dev/wt/spec-12-t16
+fatal: working trees containing submodules cannot be moved or removed
+`,
+    },
+    prompt: "Apply only the hand-off and clean-up part of the skill to state.md. For each worker worktree, decide whether the coordinator removes it now and give the exact command it runs. For each worktree it keeps, name the failing check and any commit that removal would lose. Do not run git, contact a tracker, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "/Users/dev/wt/spec-12-t13 is removed with git worktree remove --force, used only because git refused the plain removal for its submodule: the tree is clean, its branch is in feat/spec-12, and its pinned submodule commit 4e5f6a7 is on the submodule's remote.",
+      "/Users/dev/wt/spec-12-t14 is kept, and the handoff names 8a9b0c1, its pinned submodule commit that exists only in that worktree's submodule repository.",
+      "/Users/dev/wt/spec-12-t15 is removed with git worktree remove --force although its submodule is deinitialized: the one commit its retained submodule repository holds outside remote refs and tags, 2b3c4d5, is in a ref of the main worktree's submodule repository.",
+      "/Users/dev/wt/spec-12-t16 is kept although its submodule sits at the pinned commit, and the handoff names 9d8e7f6 on the submodule's local branch wip.",
+    ],
+  },
+  {
     id: "resources-orchestrate", skill: "orchestrate", unchanged: true,
     files: { "lanes.md": "Existing lane 1 still has a running QA server on port 4100 and owns schema app_test. Lane 2 needs both resources. Lane 1 is parked but its process has not exited.\n" },
     prompt: "Use only the resource-ownership procedure to assess lanes.md. Report the next safe dispatch decision. Do not run Herdr setup, contact GitHub, or start/stop processes in this scoped probe.",
