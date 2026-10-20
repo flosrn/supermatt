@@ -130,7 +130,7 @@ flowchart LR
 
 Run `retro` before clearing the session, or provide a verified session ID or path later. It reads local Claude Code, Codex, Cursor, and OMP transcript evidence and reports gaps instead of guessing from the newest file. After a bug fix, use it to identify what would have prevented the bug; use `improve-architecture` when the finding is a missing test seam.
 
-With triaged GitHub issues or local Markdown tickets, `orchestrate` runs steps 4 and 5 unattended for each issue, several issues in parallel if you ask, in worker sessions inside Herdr. Workers use the harness that started it: Claude Code, Codex, Cursor, or OMP. Cursor and OMP workers receive the authoritative active model ID when available, otherwise they keep the harness default. Local tracker files stay in the main checkout; code changes ship through GitHub PRs.
+With triaged GitHub issues or local Markdown tickets, `orchestrate` runs steps 4 and 5 unattended for each issue, several issues in parallel if you ask, in worker sessions inside Herdr. Workers use the harness that started it: Claude Code, Codex, Cursor, or OMP. Cursor and OMP workers receive the authoritative active model ID when available, otherwise they keep the harness default. On OMP, each worktree's required skills are checked with `omp skill list <worktree> --json` and must come from the skill root that loaded `orchestrate`, wherever OMP found it. Local tracker files stay in the main checkout; code changes ship through GitHub PRs.
 
 An explicit `orchestrate` invocation delegates only its [listed worker commands](./references/harnesses.md#orchestrator-dispatch) within that run. Other user-invoked skills still require a human command; existing safety and approval gates remain in force.
 
