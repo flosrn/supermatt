@@ -173,6 +173,20 @@ export const cases = [
     ],
   },
   {
+    id: "worktree-confinement-boundaries", skill: "implement-spec", unchanged: true,
+    files: {
+      "run.md": "Spec #12. The host's subagents start in the coordinator's working directory.\nCoordinator starting checkout: /Users/dev/app, branch main, shared with other sessions.\nIntegration worktree: /Users/dev/wt/spec-12, branch feat/spec-12, created at 1a2b3c4.\nTicket #13 was merged into the integration branch by fast-forward to 7c6d5e4 after the snapshot check passed. Ticket #14 runs in /Users/dev/wt/ticket-14. Ticket #15 is newly eligible.\n",
+      "worker-question.md": "Worker #14 asks before going on: its tdd mutation runner wrote mutation files into a directory it created with mktemp, /var/folders/xy/T/tmp.k3J9. It read the installed tdd skill at /Users/dev/.claude/skills/tdd/SKILL.md, and its QA subagent saved scenario evidence in /var/folders/xy/T/qa-14.Rw2. Nothing was written in /Users/dev/app or /Users/dev/wt/spec-12. Are these writes outside its worktree that it must report and stop on?\n",
+      "state.md": "# Captured repository state (raw command results)\n\n## Snapshot recorded before the first dispatch\n/Users/dev/app: HEAD 9f8e7d6\n  status: MM src/config.ts\n  working file src/config.ts sha256 41aa07c2\n  git diff --cached --binary | sha256: 77d0e1b5\n  git diff --binary | sha256: 3b9f60d8\n/Users/dev/wt/spec-12: HEAD 1a2b3c4, status empty, both diffs empty\n\n## Capture C: before dispatching #15\n/Users/dev/app: HEAD 9f8e7d6\n  status: MM src/config.ts\n  working file src/config.ts sha256 41aa07c2\n  git diff --cached --binary | sha256: 77d0e1b5\n  git diff --binary | sha256: 3b9f60d8\n/Users/dev/wt/spec-12: HEAD 7c6d5e4, status empty, both diffs empty\n\n## Capture D: worker #14 reported commit 0d9c8b7, synced with 7c6d5e4, full gate green; before merging it\n/Users/dev/app: HEAD 9f8e7d6\n  status: MM src/config.ts\n  working file src/config.ts sha256 41aa07c2\n  git diff --cached --binary | sha256: c25e9a13\n  git diff --binary | sha256: e80f4d27\n/Users/dev/wt/spec-12: HEAD 7c6d5e4, status empty, both diffs empty\n",
+    },
+    prompt: "Apply only the dispatch, worker-contract, and merge-slot parts of the skill to run.md, worker-question.md, and state.md. Answer the worker's question. Then decide whether the coordinator dispatches #15 at capture C, and whether it merges #14 at capture D; report what it does instead of each step it does not take. Do not create worktrees, run git, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The worker's mktemp mutation directory, the QA evidence directory, and the read of the installed tdd skill are allowed and are not stray writes to report; repository paths stay confined to /Users/dev/wt/ticket-14.",
+      "Capture C dispatches #15: the integration HEAD 7c6d5e4 is the expected tip after the #13 merge, so the HEAD differing from the first snapshot does not stop the run, and the starting checkout is unchanged.",
+      "Capture D stops before merging #14 and names src/config.ts as changed since dispatch, from its changed staged content, although its status and working file are unchanged. Nothing is committed, discarded, stashed, or re-applied.",
+    ],
+  },
+  {
     id: "resources-orchestrate", skill: "orchestrate", unchanged: true,
     files: { "lanes.md": "Existing lane 1 still has a running QA server on port 4100 and owns schema app_test. Lane 2 needs both resources. Lane 1 is parked but its process has not exited.\n" },
     prompt: "Use only the resource-ownership procedure to assess lanes.md. Report the next safe dispatch decision. Do not run Herdr setup, contact GitHub, or start/stop processes in this scoped probe.",

@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
-- `implement-spec`: confines every agent's reads, writes, and shell working directory to absolute paths under its assigned worktree, a rule each agent hands with that path to its subagents at every depth; the coordinator's starting checkout and the integration worktree are read-only to workers. Snapshots both at dispatch and checks them before each dispatch, merge, and final QA: a change since the snapshot stops integration with the changed paths named and left in place, while a starting checkout already dirty at dispatch does not stop the run.
+- `implement-spec`: confines every agent's reads, writes, and shell working directory to absolute paths under its assigned worktree, apart from installed skill resources and its own temporary scratch and evidence directories, a rule each agent hands with that path to its subagents at every depth; the coordinator's starting checkout and the integration worktree are read-only to workers. Snapshots both at dispatch (status, staged and unstaged diff digests, untracked contents) and checks them before each dispatch, merge, and final QA, with the integration `HEAD` checked against the last merged tip: a change since the snapshot stops integration with the changed paths named and left in place, while a starting checkout already dirty at dispatch does not stop the run.
 
 ## [0.23.0] - 2026-10-18
 
