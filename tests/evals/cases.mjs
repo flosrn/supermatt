@@ -323,7 +323,7 @@ $ git -C /Users/dev/wt/t32 rev-parse HEAD
     id: "worktree-setup-final", skill: "implement-spec", unchanged: true,
     files: {
       "AGENTS.md": "# App\n\n## Setup\n\nFrom the repository root, run `pnpm install --frozen-lockfile`, then `pnpm codegen`.\n\n## Checks\n\nThe required gate is `pnpm gate`: `pnpm test`, then `pnpm check:pin`, which compares the commit checked out in vendor/engine with ENGINE_COMMIT.\n",
-      ".gitmodules": "[submodule \"vendor/engine\"]\n\tpath = vendor/engine\n\turl = https://git.example.com/engine.git\n\tignore = all\n",
+      ".gitmodules": "[submodule \"vendor/engine\"]\n\tpath = vendor/engine\n\turl = https://git.example.com/engine.git\n\tignore = all\n[submodule \"vendor/fonts\"]\n\tpath = vendor/fonts\n\turl = https://git.example.com/fonts.git\n",
       "run.md": "Spec #30. The files in this directory are the repository at the integration tip 9a0b1c2.\nCoordinator starting checkout: /Users/dev/app, the main worktree. Its hooks directory is /Users/dev/app/.git/hooks.\nIntegration worktree: /Users/dev/wt/spec-30, branch feat/spec-30. The snapshot check passed, then the coordinator merged #32, the last ticket, by fast-forward from 7c8d9e0 to 9a0b1c2. The merge changed only the vendor/engine pin and src/engine/adapter.ts; no manifest or lockfile changed. The coordinator still holds the merge slot; no ticket remains, so step 4 comes next.\nThe integration worktree's recorded snapshot: HEAD 7c8d9e0, status ` M src/generated/client.ts`, `?? next-env.d.ts`, and `?? public/sw.js`; staged diff empty; `git diff --binary --no-ext-diff --no-textconv --ignore-submodules=none -- src/generated/client.ts` sha256 aa11aa11; next-env.d.ts sha256 11aa22bb, public/sw.js sha256 55cc66dd.\n",
       "state.md": `# Captured command results (raw)
 
@@ -382,15 +382,59 @@ cc33cc33  -
 $ shasum -a 256 next-env.d.ts public/sw.js
 11aa22bb  next-env.d.ts
 55cc66dd  public/sw.js
+
+## Capture K: another run of this spec, unrelated to the other captures. There, #32's merge from 7c8d9e0 to 8a9b0c1 changed only package.json and pnpm-lock.yaml. In /Users/dev/wt/spec-30, right after that merge
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+ M src/generated/client.ts
+?? next-env.d.ts
+?? public/sw.js
+$ git diff --binary --no-ext-diff --no-textconv --ignore-submodules=none -- src/generated/client.ts | shasum -a 256
+aa11aa11  -
+$ shasum -a 256 next-env.d.ts public/sw.js
+11aa22bb  next-env.d.ts
+55cc66dd  public/sw.js
+(setup commands ran here under the hooks guard: hooks unchanged; every command exited 0; output omitted)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+?? next-env.d.ts
+$ shasum -a 256 next-env.d.ts
+11aa22bb  next-env.d.ts
+
+## Capture L: another run of this spec, unrelated to the other captures. There, #32's merge from 7c8d9e0 to 2c3d4e5 changed only src/review.ts and the vendor/fonts pin; no setup step or check uses vendor/fonts. In /Users/dev/wt/spec-30, right after that merge and the setup rerun it called for (hooks unchanged; every command exited 0; no leftover paths)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+ M src/generated/client.ts
+ M src/review.ts
+ M vendor/fonts
+?? next-env.d.ts
+?? public/sw.js
+$ git diff --binary --no-ext-diff --no-textconv --ignore-submodules=none -- src/generated/client.ts | shasum -a 256
+aa11aa11  -
+$ shasum -a 256 next-env.d.ts public/sw.js
+11aa22bb  next-env.d.ts
+55cc66dd  public/sw.js
+
+## Capture M: another run of this spec, unrelated to the other captures. There, #32's merge from 7c8d9e0 to 3d4e5f6 changed only .gitignore, which no longer lists build/, and src/review.ts. In /Users/dev/wt/spec-30, right after that merge
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+ M src/generated/client.ts
+?? build/stats.json
+?? next-env.d.ts
+?? public/sw.js
+$ git diff --binary --no-ext-diff --no-textconv --ignore-submodules=none -- src/generated/client.ts | shasum -a 256
+aa11aa11  -
+$ shasum -a 256 next-env.d.ts public/sw.js
+11aa22bb  next-env.d.ts
+55cc66dd  public/sw.js
 `,
     },
     prompt: "Apply only the merge-slot, worktree-preparation, and step 4 entry parts of the skill to run.md and state.md. List, in order, what the coordinator does in /Users/dev/wt/spec-30 between this merge and the step 4 gate, with the exact commands each step runs and the file any command list is read from. Then, for each capture, decide what the coordinator does next. Do not run git or pnpm, contact a tracker, launch workers, or edit files in this scoped probe.",
     rubric: [
-      "Right after the merge, while still holding the merge slot, the coordinator reruns the setup in /Users/dev/wt/spec-30 because the merge moved the vendor/engine pin, a setup input, although no manifest or lockfile changed: pnpm install --frozen-lockfile, then pnpm codegen, read from its own AGENTS.md, with vendor/engine checked out at its new pin (git submodule update --init), under the hooks guard. Its status and diffs are read with --ignore-submodules=none, since .gitmodules sets ignore = all. The modified vendor/engine that the merge itself leaves before that rerun does not stop integration. A new snapshot is recorded only after the rerun succeeds and any leftover paths are settled, and the step 4 gate runs after that.",
+      "Right after the merge, while still holding the merge slot, the coordinator reruns the setup in /Users/dev/wt/spec-30 because the merge moved the vendor/engine pin, a setup input, although no manifest or lockfile changed; it finds the paths a merge changed with git diff --name-only --ignore-submodules=none, since .gitmodules sets ignore = all on vendor/engine and would otherwise hide the pin. The setup is pnpm install --frozen-lockfile, then pnpm codegen, read from its own AGENTS.md, with vendor/engine checked out at its new pin (git submodule update --init), under the hooks guard, and status and diffs are read with --ignore-submodules=none. The modified vendor/engine that the merge itself leaves before that rerun does not stop integration. A new snapshot is recorded only after the rerun succeeds and any leftover paths are settled, and the step 4 gate runs after that.",
       "Capture G records no new snapshot and runs neither the step 4 gate nor QA: the rerun failed twice with the 503 error, so the coordinator records the failing command and output and reports the failure to the user.",
       "Capture H asks the user about src/generated/schema.ts, which the setup created, about public/sw.js, whose content the setup changed from 55cc66dd to 77dd88ee, and about src/generated/client.ts, whose unstaged diff the setup changed although its status line stayed ` M`. It does not ask about next-env.d.ts, which the setup left unchanged, nor about vendor/engine, which the setup brought to its pinned commit. It records the new snapshot only after that answer, before the gate.",
       "Capture I runs no setup, because that merge changed no setup input, and does not stop integration although next-env.d.ts no longer appears in the status: the merged .gitignore hid it. The coordinator records a new snapshot of the integration worktree before releasing the merge slot, then goes on to step 4.",
       "Capture J stops integration instead of recording a new snapshot: src/generated/client.ts changed (unstaged diff aa11aa11 to cc33cc33) although that merge did not touch it and ran no setup. The coordinator names it and leaves it in place.",
+      "Capture K asks the user about public/sw.js, which the setup deleted, but neither asks about nor stops on src/generated/client.ts, which the setup restored to its committed content. It records the new snapshot only after that answer.",
+      "Capture L stops integration on src/review.ts: the merge changed it, but a fast-forward leaves it clean, so its ` M` came from elsewhere. vendor/fonts, a merged pin still at its previous commit, is not what stops it.",
+      "Capture M does not stop integration on build/stats.json, which the merged .gitignore no longer ignores; it records a new snapshot of the integration worktree before releasing the merge slot.",
     ],
   },
   {
