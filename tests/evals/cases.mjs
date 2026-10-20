@@ -272,6 +272,47 @@ fatal: working trees containing submodules cannot be moved or removed
     ],
   },
   {
+    id: "worktree-cleanup-rebase", skill: "implement-spec", unchanged: true,
+    files: {
+      "state.md": `# Captured state at hand-off (raw command results)
+
+Repository /Users/dev/app has no submodules: it has no .gitmodules, and git submodule status prints nothing.
+Other sessions kept pushing to main, so before hand-off the coordinator rebased the integration branch feat/spec-12, in /Users/dev/wt/spec-12, onto origin/main. Its PR is not merged.
+The host reports that the workers for #17 and #18 and all their subagents have exited, and their reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created each worktree below.
+
+## /Users/dev/wt/spec-12-t17, branch ticket-17
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-17 feat/spec-12; echo $?
+1
+$ git cherry -v feat/spec-12 ticket-17
+- 1f2e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f0e parse intake dates
+- 2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b reject empty intake
+$ git cherry -v origin/main ticket-17
++ 1f2e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f0e parse intake dates
++ 2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b reject empty intake
+
+## /Users/dev/wt/spec-12-t18, branch ticket-18
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-18 feat/spec-12; echo $?
+1
+$ git cherry -v feat/spec-12 ticket-18
+- 3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c add handoff retry
++ 4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d log handoff retries
+$ git cherry -v origin/main ticket-18
++ 3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c add handoff retry
++ 4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d log handoff retries
+`,
+    },
+    prompt: "Apply only the hand-off and clean-up part of the skill to state.md. For each worker worktree, decide whether the coordinator removes it now and give the exact command it runs. For each worktree it keeps, name the failing check and any commit that removal would lose. Do not run git, contact a tracker, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "/Users/dev/wt/spec-12-t17 counts as integrated although its commits are not ancestors of the rebased feat/spec-12, because git cherry feat/spec-12 ticket-17 prints only - lines; it is removed with git worktree remove and no --force.",
+      "/Users/dev/wt/spec-12-t18 is kept, and the handoff names 4c5d6e7 (log handoff retries), the + line of git cherry feat/spec-12 ticket-18, as the failing check.",
+      "The decision checks against feat/spec-12, not origin/main: the + lines of git cherry origin/main ticket-17 do not keep t17.",
+    ],
+  },
+  {
     id: "resources-orchestrate", skill: "orchestrate", unchanged: true,
     files: { "lanes.md": "Existing lane 1 still has a running QA server on port 4100 and owns schema app_test. Lane 2 needs both resources. Lane 1 is parked but its process has not exited.\n" },
     prompt: "Use only the resource-ownership procedure to assess lanes.md. Report the next safe dispatch decision. Do not run Herdr setup, contact GitHub, or start/stop processes in this scoped probe.",
