@@ -275,6 +275,8 @@ $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 $ shasum -a 256 /Users/dev/app/.git/hooks/*
 3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
 8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
 (setup commands ran here; every one exited 0; output omitted)
 $ shasum -a 256 /Users/dev/app/.git/hooks/*
 3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
@@ -297,7 +299,7 @@ $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
     id: "worktree-setup-sync", skill: "implement-spec", unchanged: true,
     files: {
       "AGENTS.md": "# App\n\n## Setup\n\nFrom the repository root, run `pnpm install --frozen-lockfile`, then `pnpm codegen`.\n\n## Checks\n\nThe required gate is `pnpm gate`: `pnpm test`, then `pnpm check:pin`.\n",
-      "run.md": "Spec #30. The files in this directory are the repository at the integration tip 7c8d9e0.\nCoordinator starting checkout: /Users/dev/app, branch main at 1a2b3c4, the main worktree (first entry of git worktree list). Its AGENTS.md still documents only `pnpm install --frozen-lockfile` as setup. Its hooks directory is /Users/dev/app/.git/hooks.\nIntegration worktree: /Users/dev/wt/spec-30, branch feat/spec-30, prepared at 1a2b3c4 with `pnpm install --frozen-lockfile` and not set up since. It is now at 7c8d9e0 after the fast-forward merge of #31, whose commit added the `pnpm codegen` setup step to AGENTS.md and a dependency to package.json and pnpm-lock.yaml.\nTicket #32: worktree /Users/dev/wt/t32, branch ticket-32. It was prepared at 1a2b3c4 with `pnpm install --frozen-lockfile` (source AGENTS.md, hooks unchanged, status clean) and dispatched. Its worker reported commit 4d5e6f7 and now holds the merge slot. Ticket #33 becomes eligible once #32 is integrated; final QA follows #33.\n",
+      "run.md": "Spec #30. The files in this directory are the repository at the integration tip 7c8d9e0.\nCoordinator starting checkout: /Users/dev/app, branch main at 1a2b3c4, the main worktree (first entry of git worktree list). Its AGENTS.md still documents only `pnpm install --frozen-lockfile` as setup. Its hooks directory is /Users/dev/app/.git/hooks.\nIntegration worktree: /Users/dev/wt/spec-30, branch feat/spec-30, at 7c8d9e0 after the fast-forward merge of #31, whose commit added the `pnpm codegen` setup step to AGENTS.md and a dependency to package.json and pnpm-lock.yaml. The coordinator reran its setup right after that merge and recorded a new snapshot.\nTicket #32: worktree /Users/dev/wt/t32, branch ticket-32. It was prepared at 1a2b3c4 with `pnpm install --frozen-lockfile` (source AGENTS.md, hooks unchanged, status clean) and dispatched. Its own commit 4d5e6f7 adds another dependency to package.json and pnpm-lock.yaml. Its worker now holds the merge slot. Ticket #33 becomes eligible once #32 is integrated; final QA follows #33.\n",
       "state.md": `# Captured command results (raw)
 
 ## Sync: the #32 worker merged feat/spec-30 into ticket-32
@@ -314,15 +316,15 @@ $ git -C /Users/dev/wt/t32 rev-parse HEAD
     rubric: [
       "Because the sync changed the setup source, package.json, and pnpm-lock.yaml, the coordinator reruns the setup in /Users/dev/wt/t32 before the checks the merge invalidates: pnpm install --frozen-lockfile, then pnpm codegen, read from the AGENTS.md in /Users/dev/wt/t32 at the synced commit, not from the older AGENTS.md in /Users/dev/app. The worker is not left to run the gate on dependencies prepared before the sync.",
       "Around that rerun, the coordinator records /Users/dev/app/.git/hooks before and after and compares each hook's type and mode as well as its content digest (for example with ls -l or stat next to shasum), so a hook that loses its executable bit stops the run.",
-      "After merging #32 and before dispatching #33, the coordinator reruns the setup in /Users/dev/wt/spec-30 (pnpm install --frozen-lockfile, then pnpm codegen, from its own AGENTS.md, under the same hooks guard), because the merges since its setup at 1a2b3c4 changed the setup source and the lockfile. It then records a new snapshot of that worktree for the later snapshot checks.",
+      "Right after merging #32 into /Users/dev/wt/spec-30, still holding the merge slot and before dispatching #33, the coordinator reruns the setup there (pnpm install --frozen-lockfile, then pnpm codegen, from its own AGENTS.md, under the same hooks guard), because #32's commit changed package.json and pnpm-lock.yaml. It then records a new snapshot of that worktree for the later snapshot checks.",
     ],
   },
   {
     id: "worktree-setup-final", skill: "implement-spec", unchanged: true,
     files: {
       "AGENTS.md": "# App\n\n## Setup\n\nFrom the repository root, run `pnpm install --frozen-lockfile`, then `pnpm codegen`.\n\n## Checks\n\nThe required gate is `pnpm gate`: `pnpm test`, then `pnpm check:pin`, which compares the commit checked out in vendor/engine with ENGINE_COMMIT.\n",
-      ".gitmodules": "[submodule \"vendor/engine\"]\n\tpath = vendor/engine\n\turl = https://git.example.com/engine.git\n",
-      "run.md": "Spec #30. The files in this directory are the repository at the integration tip 9a0b1c2.\nCoordinator starting checkout: /Users/dev/app, the main worktree. Its hooks directory is /Users/dev/app/.git/hooks.\nIntegration worktree: /Users/dev/wt/spec-30, branch feat/spec-30. The snapshot check passed, then the coordinator merged #32, the last ticket, by fast-forward from 7c8d9e0 to 9a0b1c2. The merge changed package.json, pnpm-lock.yaml, and the vendor/engine pin. The coordinator still holds the merge slot; no ticket remains, so step 4 comes next.\nThe integration worktree's recorded snapshot: HEAD 7c8d9e0, status `?? next-env.d.ts` and `?? public/sw.js`, next-env.d.ts sha256 11aa22bb, public/sw.js sha256 55cc66dd, both diffs empty.\n",
+      ".gitmodules": "[submodule \"vendor/engine\"]\n\tpath = vendor/engine\n\turl = https://git.example.com/engine.git\n\tignore = all\n",
+      "run.md": "Spec #30. The files in this directory are the repository at the integration tip 9a0b1c2.\nCoordinator starting checkout: /Users/dev/app, the main worktree. Its hooks directory is /Users/dev/app/.git/hooks.\nIntegration worktree: /Users/dev/wt/spec-30, branch feat/spec-30. The snapshot check passed, then the coordinator merged #32, the last ticket, by fast-forward from 7c8d9e0 to 9a0b1c2. The merge changed only the vendor/engine pin and src/engine/adapter.ts; no manifest or lockfile changed. The coordinator still holds the merge slot; no ticket remains, so step 4 comes next.\nThe integration worktree's recorded snapshot: HEAD 7c8d9e0, status `?? next-env.d.ts` and `?? public/sw.js`, next-env.d.ts sha256 11aa22bb, public/sw.js sha256 55cc66dd, both diffs empty.\n",
       "state.md": `# Captured command results (raw)
 
 ## Capture G: in /Users/dev/wt/spec-30, right after the merge
@@ -342,6 +344,9 @@ $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
  M vendor/engine
 ?? next-env.d.ts
 ?? public/sw.js
+$ shasum -a 256 next-env.d.ts public/sw.js
+11aa22bb  next-env.d.ts
+55cc66dd  public/sw.js
 (setup commands ran here under the hooks guard: hooks unchanged; every command exited 0; output omitted)
 $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 ?? next-env.d.ts
@@ -350,13 +355,20 @@ $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 $ shasum -a 256 next-env.d.ts public/sw.js
 11aa22bb  next-env.d.ts
 77dd88ee  public/sw.js
+
+## Capture I: another run of this spec, unrelated to captures G and H. There, #32's merge from 7c8d9e0 to 9a0b1c2 changed only .gitignore, which now lists next-env.d.ts, and src/review.ts. In /Users/dev/wt/spec-30, right after that merge
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+?? public/sw.js
+$ shasum -a 256 public/sw.js
+55cc66dd  public/sw.js
 `,
     },
     prompt: "Apply only the merge-slot, worktree-preparation, and step 4 entry parts of the skill to run.md and state.md. List, in order, what the coordinator does in /Users/dev/wt/spec-30 between this merge and the step 4 gate, with the exact commands each step runs and the file any command list is read from. Then, for each capture, decide what the coordinator does next. Do not run git or pnpm, contact a tracker, launch workers, or edit files in this scoped probe.",
     rubric: [
-      "Right after the merge, while still holding the merge slot, the coordinator reruns the setup in /Users/dev/wt/spec-30 (pnpm install --frozen-lockfile, then pnpm codegen, read from its own AGENTS.md, plus updating vendor/engine to its new pin, under the hooks guard). The modified vendor/engine that the merge itself leaves before that rerun does not stop integration. A new snapshot is recorded only after the rerun succeeds and any leftover paths are settled, and the step 4 gate runs after that.",
+      "Right after the merge, while still holding the merge slot, the coordinator reruns the setup in /Users/dev/wt/spec-30 because the merge moved the vendor/engine pin, a setup input, although no manifest or lockfile changed: pnpm install --frozen-lockfile, then pnpm codegen, read from its own AGENTS.md, with vendor/engine checked out at its new pin (git submodule update --init), under the hooks guard. Its status and diffs are read with --ignore-submodules=none, since .gitmodules sets ignore = all. The modified vendor/engine that the merge itself leaves before that rerun does not stop integration. A new snapshot is recorded only after the rerun succeeds and any leftover paths are settled, and the step 4 gate runs after that.",
       "Capture G records no new snapshot and runs neither the step 4 gate nor QA: the rerun failed twice with the 503 error, so the coordinator records the failing command and output and reports the failure to the user.",
-      "Capture H asks the user about src/generated/schema.ts, which the snapshot lacks, and about public/sw.js, whose content changed from 55cc66dd to 77dd88ee, but not about next-env.d.ts, which is unchanged. It records the new snapshot only after that answer, before the gate.",
+      "Capture H asks the user about src/generated/schema.ts, which the setup created, and about public/sw.js, whose content the setup changed from 55cc66dd to 77dd88ee, but not about next-env.d.ts, which the setup left unchanged. It records the new snapshot only after that answer, before the gate.",
+      "Capture I runs no setup, because that merge changed no setup input, and does not stop integration although next-env.d.ts no longer appears in the status: the merged .gitignore hid it. The coordinator records a new snapshot of the integration worktree before releasing the merge slot, then goes on to step 4.",
     ],
   },
   {
