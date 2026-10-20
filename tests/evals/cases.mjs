@@ -211,8 +211,8 @@ $ git worktree remove /Users/dev/wt/spec-12-t13
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t13 submodule absorbgitdirs
 (no output)
-$ find /Users/dev/wt/spec-12-t13 -name .git -type d
-(no output)
+$ git -C /Users/dev/wt/spec-12-t13 submodule foreach --recursive --quiet 'git rev-parse --absolute-git-dir'
+/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant
 
 ## /Users/dev/wt/spec-12-t14, branch ticket-14 (the worker moved the vendor/parlant pin)
 $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
@@ -231,8 +231,8 @@ $ git worktree remove /Users/dev/wt/spec-12-t14
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t14 submodule absorbgitdirs
 (no output)
-$ find /Users/dev/wt/spec-12-t14 -name .git -type d
-(no output)
+$ git -C /Users/dev/wt/spec-12-t14 submodule foreach --recursive --quiet 'git rev-parse --absolute-git-dir'
+/Users/dev/app/.git/worktrees/spec-12-t14/modules/vendor/parlant
 
 ## /Users/dev/wt/spec-12-t15, branch ticket-15 (the worker ran git submodule deinit vendor/parlant)
 $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
@@ -253,7 +253,7 @@ $ git worktree remove /Users/dev/wt/spec-12-t15
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t15 submodule absorbgitdirs
 (no output)
-$ find /Users/dev/wt/spec-12-t15 -name .git -type d
+$ git -C /Users/dev/wt/spec-12-t15 submodule foreach --recursive --quiet 'git rev-parse --absolute-git-dir'
 (no output)
 
 ## /Users/dev/wt/spec-12-t16, branch ticket-16
@@ -275,8 +275,8 @@ $ git worktree remove /Users/dev/wt/spec-12-t16
 fatal: working trees containing submodules cannot be moved or removed
 $ git -C /Users/dev/wt/spec-12-t16 submodule absorbgitdirs
 (no output)
-$ find /Users/dev/wt/spec-12-t16 -name .git -type d
-(no output)
+$ git -C /Users/dev/wt/spec-12-t16 submodule foreach --recursive --quiet 'git rev-parse --absolute-git-dir'
+/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant
 `,
     },
     prompt: "Apply only the hand-off and clean-up part of the skill to state.md. For each worker worktree, decide whether the coordinator removes it now and give the exact command it runs. For each worktree it keeps, name the failing check and any commit that removal would lose. Do not run git, contact a tracker, launch agents, or edit files in this scoped probe.",
@@ -295,7 +295,7 @@ $ find /Users/dev/wt/spec-12-t16 -name .git -type d
 Main worktree (first entry of git worktree list): /Users/dev/app. Integration branch feat/spec-12 in /Users/dev/wt/spec-12.
 The host reports that the worker for #23 and all its subagents have exited, and its reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created the worktree below.
 
-## /Users/dev/wt/spec-12-t23, branch ticket-23 (the worker added vendor/tools by cloning it in place, and removed vendor/legacy with git rm)
+## /Users/dev/wt/spec-12-t23, branch ticket-23 (the worker added vendor/tools by cloning it in place, added vendor/kit with git clone --separate-git-dir into its ignored .cache directory, and removed vendor/legacy with git rm)
 $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 (no output)
 $ git merge-base --is-ancestor ticket-23 feat/spec-12; echo $?
@@ -304,6 +304,7 @@ $ git submodule status --recursive
  4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
  1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c vendor/parlant/third_party/tokenizer (heads/main)
  2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d vendor/tools (heads/main)
+ 3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e vendor/kit (heads/main)
 $ git rev-parse --git-path modules
 /Users/dev/app/.git/worktrees/spec-12-t23/modules
 $ find /Users/dev/app/.git/worktrees/spec-12-t23/modules -name HEAD -maxdepth 6
@@ -312,8 +313,12 @@ $ find /Users/dev/app/.git/worktrees/spec-12-t23/modules -name HEAD -maxdepth 6
 /Users/dev/app/.git/worktrees/spec-12-t23/modules/vendor/legacy/HEAD
 $ ls -a /Users/dev/wt/spec-12-t23/vendor/tools
 .  ..  .git  bin  README.md
+$ cat /Users/dev/wt/spec-12-t23/vendor/kit/.git
+gitdir: /Users/dev/wt/spec-12-t23/.cache/kit
+$ git check-ignore /Users/dev/wt/spec-12-t23/.cache/kit
+/Users/dev/wt/spec-12-t23/.cache/kit
 $ ls /Users/dev/wt/spec-12-t23/vendor
-parlant  tools
+kit  parlant  tools
 $ git worktree remove /Users/dev/wt/spec-12-t23
 fatal: working trees containing submodules cannot be moved or removed
 `,
@@ -324,6 +329,7 @@ fatal: working trees containing submodules cannot be moved or removed
       "Every submodule repository is checked: vendor/parlant, the nested vendor/parlant/third_party/tokenizer, vendor/tools, and vendor/legacy. vendor/legacy is checked without a pinned commit, since git submodule status no longer lists it, and its missing directory does not by itself keep the worktree.",
       "The listing of each repository's commits does not exclude commits that only a tag in that repository holds: no --tags (or other tag ref) on the excluded side, since such a tag goes with the worktree.",
       "A listed commit counts as held elsewhere when the main worktree's corresponding repository has it in a ref or a reflog, not only when a ref there contains it.",
+      "vendor/kit's repository at /Users/dev/wt/spec-12-t23/.cache/kit, inside the worktree but outside its modules directory, is found (for example by resolving each submodule's git directory) and either checked or keeps the worktree: git submodule absorbgitdirs leaves an existing gitfile in place, and the forced removal would delete that repository.",
     ],
   },
   {
@@ -404,7 +410,7 @@ $ git cherry -v origin/main ticket-18
     files: {
       "state.md": `# Captured state at hand-off (raw command results)
 
-Repository /Users/dev/app has no submodules: it has no .gitmodules, and git submodule status prints nothing.
+Repository /Users/dev/app has one submodule, vendor/parlant, and its configuration sets diff.ignoreSubmodules=all.
 Before hand-off the coordinator rebased the integration branch feat/spec-12, in /Users/dev/wt/spec-12, onto origin/main. Its PR is not merged.
 The host reports that the worker for #21 and all its subagents have exited, and its reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created the worktree below.
 
@@ -424,6 +430,7 @@ $ git worktree remove /Users/dev/wt/spec-12-t21
     rubric: [
       "Beyond the git cherry output already captured, the commands list the merge commits on ticket-21 that feat/spec-12 does not reach (for example git rev-list --merges feat/spec-12..ticket-21), because git cherry skips merge commits.",
       "Each such merge is compared with the result Git's automatic merge of its parents would record (for example git show --remerge-diff), not only with a combined diff such as git diff-tree --cc, which hides a hunk that keeps one parent's side. Any difference, such as a conflict resolution or a dropped change of one parent, keeps the worktree.",
+      "The merge comparison shows a submodule pin changed only in the merge, despite diff.ignoreSubmodules=all (for example with --ignore-submodules=none); otherwise that configuration hides it.",
     ],
   },
   {
