@@ -318,6 +318,8 @@ $ git merge-base --is-ancestor ticket-17 feat/spec-12; echo $?
 $ git cherry -v feat/spec-12 ticket-17
 - 1f2e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f0e parse intake dates
 - 2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b reject empty intake
+$ git rev-list --merges feat/spec-12..ticket-17
+(no output)
 $ git cherry -v origin/main ticket-17
 + 1f2e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f0e parse intake dates
 + 2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b reject empty intake
@@ -340,6 +342,33 @@ $ git cherry -v origin/main ticket-18
       "/Users/dev/wt/spec-12-t17 counts as integrated although its commits are not ancestors of the rebased feat/spec-12, because git cherry feat/spec-12 ticket-17 prints only - lines; it is removed with git worktree remove and no --force.",
       "/Users/dev/wt/spec-12-t18 is kept, and the handoff names 4c5d6e7 (log handoff retries), the + line of git cherry feat/spec-12 ticket-18, as the failing check.",
       "The decision checks against feat/spec-12, not origin/main: the + lines of git cherry origin/main ticket-17 do not keep t17.",
+    ],
+  },
+  {
+    id: "worktree-cleanup-merge", skill: "implement-spec", unchanged: true,
+    files: {
+      "state.md": `# Captured state at hand-off (raw command results)
+
+Repository /Users/dev/app has no submodules: it has no .gitmodules, and git submodule status prints nothing.
+Before hand-off the coordinator rebased the integration branch feat/spec-12, in /Users/dev/wt/spec-12, onto origin/main. Its PR is not merged.
+The host reports that the worker for #21 and all its subagents have exited, and its reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created the worktree below.
+
+## /Users/dev/wt/spec-12-t21, branch ticket-21
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-21 feat/spec-12; echo $?
+1
+$ git cherry -v feat/spec-12 ticket-21
+- 5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e add intake schema
+- 6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f validate intake fields
+$ git worktree remove /Users/dev/wt/spec-12-t21
+(not run yet)
+`,
+    },
+    prompt: "Apply only the hand-off and clean-up part of the skill to state.md. Write, in order, the exact commands the coordinator still runs for /Users/dev/wt/spec-12-t21 before it decides whether its commits are in feat/spec-12, and what output of each would keep the worktree. Do not decide yet, run git, contact a tracker, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "Beyond the git cherry output already captured, the commands list the merge commits on ticket-21 that feat/spec-12 does not reach (for example git rev-list --merges feat/spec-12..ticket-21), because git cherry skips merge commits.",
+      "Each such merge is checked for a change of its own (for example git diff-tree --cc), and any output, such as a conflict resolution, keeps the worktree.",
     ],
   },
   {
