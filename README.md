@@ -80,7 +80,7 @@ docs/agents/cross-model.json    external peer mode, model, and effort settings
 
 `host-only` prevents every supported external peer subprocess while preserving current-host readers. `auto` keeps the hardened Claude or Codex family selection. Cursor and OMP require explicit selection and runtime confirmation because their inherited configuration cannot provide the same isolation boundary. You can edit `docs/agents/cross-model.json` directly after setup.
 
-You can also add `docs/agents/worktree-setup.md` by hand: the ordered shell commands, such as a dependency install, that `implement-spec` runs from the root of each worktree it creates before any agent works there, and again after a merge that changes them, a dependency manifest or lockfile, or `.gitmodules`. Without it, `implement-spec` uses the setup documented in `AGENTS.md`, then `README.md`, then `CONTRIBUTING.md`. Either way, it adds the submodule steps your required checks need, such as fetching the tags a `git describe --tags` check reads.
+You can also add `docs/agents/worktree-setup.md` by hand: the ordered shell commands, such as a dependency install, that `implement-spec` runs from the root of each worktree it creates before any agent works there, and again after a merge that changes them, a dependency manifest or lockfile, or `.gitmodules`. Without it, `implement-spec` uses the setup of the first of `AGENTS.md`, `README.md`, and `CONTRIBUTING.md` that documents one. Either way, it adds the submodule steps your required checks need, such as fetching the tags a `git describe --tags` check reads.
 
 <details>
 <summary>Claude Code's bundled <code>/code-review</code></summary>

@@ -199,7 +199,7 @@ $ git submodule status
 $ shasum -a 256 /Users/dev/app/.git/hooks/*
 3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
 8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
-$ git status --porcelain=v1 --untracked-files=all
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 (no output)
 
 ## Capture B: /Users/dev/wt/t32, starting commit 1a2b3c4 verified
@@ -231,7 +231,7 @@ $ shasum -a 256 /Users/dev/app/.git/hooks/*
 3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
 d41e6c02  /Users/dev/app/.git/hooks/pre-commit
 77b0f3a1  /Users/dev/app/.git/hooks/pre-push
-$ git status --porcelain=v1 --untracked-files=all
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 (no output)
 
 ## Capture D: right after capture C. /Users/dev/wt/t34, starting commit 5e6f7a8 verified
@@ -253,10 +253,10 @@ $ shasum -a 256 /Users/dev/app/.git/hooks/*
 3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
 d41e6c02  /Users/dev/app/.git/hooks/pre-commit
 77b0f3a1  /Users/dev/app/.git/hooks/pre-push
-$ git status --porcelain=v1 --untracked-files=all
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 (no output)
 
-## Capture F: a separate run of this spec. /Users/dev/wt/t31, starting commit 1a2b3c4 verified
+## Capture E: another run of this spec, unrelated to the other captures. /Users/dev/wt/t31, starting commit 1a2b3c4 verified
 $ ls -l /Users/dev/app/.git/hooks/ && shasum -a 256 /Users/dev/app/.git/hooks/*
 -rwxr-xr-x  1 dev  staff  412 Oct 20 09:12 commit-msg
 -rwxr-xr-x  1 dev  staff  238 Oct 20 09:12 pre-commit
@@ -271,7 +271,7 @@ $ ls -l /Users/dev/app/.git/hooks/ && shasum -a 256 /Users/dev/app/.git/hooks/*
 $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 (no output)
 
-## Capture E: a separate run of this spec. Integration worktree /Users/dev/wt/spec-30, created at 1a2b3c4, starting commit verified; nothing dispatched yet
+## Capture F: another run of this spec, unrelated to the other captures. Integration worktree /Users/dev/wt/spec-30, created at 1a2b3c4, starting commit verified; nothing dispatched yet
 $ shasum -a 256 /Users/dev/app/.git/hooks/*
 3f1c0a9e  /Users/dev/app/.git/hooks/commit-msg
 8a2d4b7c  /Users/dev/app/.git/hooks/pre-commit
@@ -289,15 +289,15 @@ $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
       "Capture A does not dispatch #31 until vendor/engine is initialized and git describe --tags succeeds there. The #31 prompt then says its worktree is already prepared, so the worker does not repeat the setup.",
       "Capture B keeps #32 out: its worktree is not handed to the worker to finish the failed install, and the task graph records the failing command and its 503 error as the reason. Since the rerun failed the same way, the coordinator reports the failure to the user. Only a later setup that the coordinator completes lets it dispatch.",
       "Capture C does not dispatch #33 and stops the run, naming pre-commit as changed and pre-push as added in /Users/dev/app/.git/hooks; the coordinator leaves them for the user and does not restore them. Capture D does not dispatch #34 either, although its own before-and-after digests match, because the run has stopped.",
-      "Capture E treats the leftover file as the user's decision: the setup itself succeeded, but it left next-env.d.ts untracked, so the coordinator records that path and asks the user before the run goes on, without deleting, ignoring, or committing the file.",
-      "Capture F stops the run before #31 is dispatched: pre-commit lost its executable bit although its content digest is unchanged, and the coordinator names it and leaves its mode for the user. commit-msg, whose only change is its timestamp, is not reported as changed.",
+      "Capture E stops the run before #31 is dispatched: pre-commit lost its executable bit although its content digest is unchanged, and the coordinator names it and leaves its mode for the user. commit-msg, whose only change is its timestamp, is not reported as changed.",
+      "Capture F treats the leftover file as the user's decision: the setup itself succeeded, but it left next-env.d.ts untracked, so the coordinator records that path and asks the user before the run goes on, without deleting, ignoring, or committing the file.",
     ],
   },
   {
     id: "worktree-setup-sync", skill: "implement-spec", unchanged: true,
     files: {
       "AGENTS.md": "# App\n\n## Setup\n\nFrom the repository root, run `pnpm install --frozen-lockfile`, then `pnpm codegen`.\n\n## Checks\n\nThe required gate is `pnpm gate`: `pnpm test`, then `pnpm check:pin`.\n",
-      "run.md": "Spec #30. The files in this directory are the repository at the integration tip 7c8d9e0.\nCoordinator starting checkout: /Users/dev/app, branch main at 1a2b3c4, the main worktree (first entry of git worktree list). Its AGENTS.md still documents only `pnpm install --frozen-lockfile` as setup. Its hooks directory is /Users/dev/app/.git/hooks.\nIntegration worktree: /Users/dev/wt/spec-30, branch feat/spec-30, prepared at 1a2b3c4 with `pnpm install --frozen-lockfile` and not set up since. It is now at 7c8d9e0 after the fast-forward merge of #31, whose commit added the `pnpm codegen` setup step to AGENTS.md and a dependency to package.json and pnpm-lock.yaml.\nTicket #32: worktree /Users/dev/wt/t32, branch ticket-32. It was prepared at 1a2b3c4 with `pnpm install --frozen-lockfile` (source AGENTS.md, hooks unchanged, status clean) and dispatched. Its worker reported commit 4d5e6f7 and now holds the merge slot. No other ticket remains; final QA follows #32.\n",
+      "run.md": "Spec #30. The files in this directory are the repository at the integration tip 7c8d9e0.\nCoordinator starting checkout: /Users/dev/app, branch main at 1a2b3c4, the main worktree (first entry of git worktree list). Its AGENTS.md still documents only `pnpm install --frozen-lockfile` as setup. Its hooks directory is /Users/dev/app/.git/hooks.\nIntegration worktree: /Users/dev/wt/spec-30, branch feat/spec-30, prepared at 1a2b3c4 with `pnpm install --frozen-lockfile` and not set up since. It is now at 7c8d9e0 after the fast-forward merge of #31, whose commit added the `pnpm codegen` setup step to AGENTS.md and a dependency to package.json and pnpm-lock.yaml.\nTicket #32: worktree /Users/dev/wt/t32, branch ticket-32. It was prepared at 1a2b3c4 with `pnpm install --frozen-lockfile` (source AGENTS.md, hooks unchanged, status clean) and dispatched. Its worker reported commit 4d5e6f7 and now holds the merge slot. Ticket #33 becomes eligible once #32 is integrated; final QA follows #33.\n",
       "state.md": `# Captured command results (raw)
 
 ## Sync: the #32 worker merged feat/spec-30 into ticket-32
@@ -310,11 +310,11 @@ $ git -C /Users/dev/wt/t32 rev-parse HEAD
 8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f
 `,
     },
-    prompt: "Apply only the merge-slot and worktree-preparation parts of the skill to run.md and state.md. List, in order, every step the coordinator takes for #32 from the end of the sync to its merge decision, and then what it does in /Users/dev/wt/spec-30 after merging #32 and before final QA, with the exact commands each step runs and the file any command list is read from. Do not run git or pnpm, contact a tracker, launch workers, or edit files in this scoped probe.",
+    prompt: "Apply only the merge-slot and worktree-preparation parts of the skill to run.md and state.md. List, in order, every step the coordinator takes for #32 from the end of the sync to its merge decision, and then what it does in /Users/dev/wt/spec-30 after merging #32 and before dispatching #33, with the exact commands each step runs and the file any command list is read from. Do not run git or pnpm, contact a tracker, launch workers, or edit files in this scoped probe.",
     rubric: [
       "Because the sync changed the setup source, package.json, and pnpm-lock.yaml, the coordinator reruns the setup in /Users/dev/wt/t32 before the checks the merge invalidates: pnpm install --frozen-lockfile, then pnpm codegen, read from the AGENTS.md in /Users/dev/wt/t32 at the synced commit, not from the older AGENTS.md in /Users/dev/app. The worker is not left to run the gate on dependencies prepared before the sync.",
       "Around that rerun, the coordinator records /Users/dev/app/.git/hooks before and after and compares each hook's type and mode as well as its content digest (for example with ls -l or stat next to shasum), so a hook that loses its executable bit stops the run.",
-      "After merging #32, the coordinator reruns the setup in /Users/dev/wt/spec-30 (pnpm install --frozen-lockfile, then pnpm codegen, from its own AGENTS.md, under the same hooks guard) before final QA and the final gate, because the merges since its setup at 1a2b3c4 changed the setup source and the lockfile.",
+      "After merging #32 and before dispatching #33, the coordinator reruns the setup in /Users/dev/wt/spec-30 (pnpm install --frozen-lockfile, then pnpm codegen, from its own AGENTS.md, under the same hooks guard), because the merges since its setup at 1a2b3c4 changed the setup source and the lockfile. It then records a new snapshot of that worktree for the later snapshot checks.",
     ],
   },
   {
