@@ -108,7 +108,7 @@ const ompDiscoveryCases = [
       warnings: [{ skillPath: "@FIXTURE@/.omp/skills/commit/SKILL.md", message: `name collision: "commit" from @FIXTURE@/.omp/skills/commit/SKILL.md is overridden by ${ompRoot}/commit/SKILL.md; available as "native/commit"` }],
     }) },
     files: { ...ompSkillFile("host/team-skills/qa"), ...ompSkillFile(".omp/skills/commit") },
-    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "qa is a conflicting same-named skill: its bare name resolves to host/team-skills/qa outside the running SuperMatt root, and the report names that path and the expected SuperMatt qa path.", "The collision warning on commit is also a conflict, reported with both paths, even though the bare name currently resolves to SuperMatt.", "Lane 1 parks; the orchestrator neither starts the worker nor substitutes another command or harness."],
+    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "qa is a conflicting same-named skill: its bare name resolves to host/team-skills/qa outside the running SuperMatt root, and the report names that path and the expected SuperMatt qa path.", "The collision warning on commit is also a conflict, even though the bare name currently resolves to SuperMatt, and the report names both paths from the warning: .omp/skills/commit/SKILL.md and the SuperMatt commit path.", "Lane 1 parks; the orchestrator neither starts the worker nor substitutes another command or harness."],
   }),
   ompDiscoveryCase({
     id: "orchestrate-omp-skills-missing",
