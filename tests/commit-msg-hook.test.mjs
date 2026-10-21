@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -25,17 +25,61 @@ function commitMsgScript() {
   return body.map((line) => line.slice(indent)).join("\n");
 }
 
-test("commit-msg hook rejects an unaccepted type and names every type its regex accepts", (t) => {
-  // No spaces or quotes in the path: unquoted {1} is tracked separately in #14.
+// Writes `subject` to `relativePath` under a fresh temp dir, writes any `others` beside it, and runs the
+// hook on it the way lefthook does: {1} is pasted unquoted, after trimming surrounding whitespace.
+// Returns the run and the message bytes left afterwards.
+function runHook(t, relativePath, subject, others = {}) {
   const dir = mkdtempSync(join(tmpdir(), "commit-msg-hook-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const message = join(dir, "COMMIT_EDITMSG");
-  writeFileSync(message, "test(retro): example\n");
+  for (const [path, content] of Object.entries({ ...others, [relativePath]: `${subject}\n` })) {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), content);
+  }
+  const message = join(dir, relativePath);
+  const result = spawnSync("sh", ["-c", commitMsgScript().replaceAll("{1}", message.trim())], { encoding: "utf8" });
+  return { result, left: readFileSync(message, "utf8") };
+}
 
-  const script = commitMsgScript();
-  const accepted = script.match(/grep -qE '\^\(([^)]+)\)/);
-  assert.ok(accepted, `no type alternation in the commit-msg regex:\n${script}`);
-  const result = spawnSync("sh", ["-c", script.replaceAll("{1}", message)], { encoding: "utf8" });
+const awkwardPaths = [
+  "message with spaces.txt",
+  "dir with space/m.txt",
+  "it's.txt",
+  "it's dir/m.txt",
+  'say "hi".txt',
+  "$HOME dir/$1.txt",
+  "tick `false` dir/`id`.txt",
+  "back\\slash.txt",
+  "line\nbreak.txt",
+  "edge \n\n space.txt",
+];
+
+for (const path of awkwardPaths) {
+  test(`commit-msg hook accepts a valid subject in ${JSON.stringify(path)}`, (t) => {
+    const { result, left } = runHook(t, path, "fix: path");
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stderr, "");
+    assert.equal(left, "fix: path\n");
+  });
+
+  test(`commit-msg hook rejects an invalid subject in ${JSON.stringify(path)} with the accepted types`, (t) => {
+    const { result, left } = runHook(t, path, "test: path");
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /Accepted types: /);
+    assert.equal(result.stderr, "");
+    assert.equal(left, "test: path\n");
+  });
+}
+
+test("commit-msg hook judges the file a multi-line path names, not the one its first line names", (t) => {
+  const { result } = runHook(t, "dir\nrest.txt", "test: path", { dir: "fix: decoy\n" });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /Accepted types: /);
+});
+
+test("commit-msg hook rejects an unaccepted type and names every type its regex accepts", (t) => {
+  const accepted = commitMsgScript().match(/grep -qE '\^\(([^)]+)\)/);
+  assert.ok(accepted, `no type alternation in the commit-msg regex:\n${commitMsgScript()}`);
+  const { result } = runHook(t, "COMMIT_EDITMSG", "test(retro): example");
 
   assert.equal(result.status, 1, result.stdout + result.stderr);
   const named = result.stdout.match(/Accepted types: ([^.]+)\./);

@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
-- Commit message hook: lists the accepted Conventional Commit types in rejection messages and contributor guidance without changing which subjects pass.
+- Commit message hook: lists the accepted Conventional Commit types in rejection messages and contributor guidance without changing which subjects pass. Reads the message file whatever its path contains, so spaces, quotes, `$`, backticks, backslashes, or line breaks in the file name or a parent directory (such as a linked worktree's) no longer reject a valid subject or break the hook with a shell syntax error.
 - `qa`: the shared scratch dependency preflight accepts Node built-ins as resolved and lists them by name, including built-in-only checks, while retaining canonical-path output for packages and exit 1 with the existing failure message for missing packages.
 - `refactor`: hands branch-assessment readers a written branch diff so read-only subagents need no Git access.
 - `retro`: recognizes OMP `skill-prompt` custom messages as user evidence with their original source lines while skipping other custom types and rejecting userless sessions; session-evidence tests no longer read the host's session stores or identities.
