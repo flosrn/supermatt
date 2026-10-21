@@ -49,7 +49,7 @@ Lane L, from 1 to LANES, has a pane, a worker agent named `PROJECT-work-K-L`, an
 
 - **Open the lanes** once, at setup, as shell panes stacked in one column right of yours, with equal heights. Lane 1: `herdr pane split "$HERDR_PANE_ID" --direction right --no-focus --cwd "$PWD"`. Lane L above 1: `herdr pane split <lane L-1's pane> --direction down --ratio R --no-focus --cwd "$PWD"`, where R is 1/(LANES-L+2), the share lane L-1 keeps. Save each `.result.pane.pane_id`. The panes stay for the whole run.
 - **Create the worktree** on branch B: `git fetch origin && git worktree add -b B WT origin/DEFAULT`, or `git worktree add --detach WT origin/DEFAULT` with no branch. Leave `.env*` files uncopied by default. Have the worker try the repository's checks and local preview without credentials. Supply environment values only when a required operation reports that it needs them and existing user authorization permits access. Preserve user restrictions on reading, copying, linking, or loading environment files; if a required value cannot be supplied within those restrictions, park the lane with the exact requirement.
-- **Remove the worktree**: stop any live worker and confirm its harness process has exited, so its hooks no longer need WT. If WT exists, `git worktree remove WT`, and delete each still-local branch recorded for this lane only after its PR is confirmed merged and its local head matches the recorded PR head (B plus any CI repair branches). Retain unmerged or externally changed branches for inspection. A worker that has not exited or a worktree with changes parks the lane.
+- **Remove the worktree**: remove only WT created by this run. Stop any live worker and confirm its harness process and subagents have exited, so their hooks no longer need WT. If WT exists, require `git -C WT status --porcelain=v1 --untracked-files=all --ignore-submodules=none` to print nothing, then try `git worktree remove WT` without `--force`. If Git refuses, read and follow [Worktree removal with submodules](../../references/worktree-removal.md), which governs the submodule checks and conditional `--force`. If removal cannot safely complete, park the lane with the failed check and any commit that exists only there. A worker that has not exited or a worktree with changes also parks the lane. After removal, delete each still-local branch recorded for this lane only after its PR is confirmed merged and its local head matches the recorded PR head (B plus any CI repair branches). Retain unmerged or externally changed branches for inspection.
 - **Park the lane**: stop driving it, ignore its later notifications, and leave its pane, worker, and worktree as they are. Its issue stays in IN_FLIGHT. If it holds the ship slot, release it; a failed or blocked post-merge workflow keeps the separate default-branch merge hold set. Send the notification (see On stop) with the title `PROJECT lane L needs you` and the reason as its body, and add the reason to the friction log. The other lanes go on.
 
 ## Run the lanes
@@ -127,7 +127,7 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
 1. Read REF with the configured tracker's **Read an issue** operation. If still open, use its **Close** operation with `Merged in <PR URL>.` For local Markdown, verify the canonical file has its `Closed:` date and comment. A closed issue unblocks the issues that wait on it.
 2. Stop the worker and confirm its harness process has exited.
 3. In the main checkout: `git -c pull.rebase=false pull --ff-only`. The tree must be clean.
-4. Remove the clean worktree and release the ship slot.
+4. Apply **Remove the worktree** under Lanes. Only after successful removal, release the ship slot.
 5. Create a detached worktree for the read-only retrospective.
 
 ### 9. Retro (session C)
@@ -135,7 +135,7 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
 1. Show phase `retro`. Start the worker.
 2. Prompt `/retro the sessions <SESSIONS>. Report candidates only. Leave this repository and external sources unchanged; do not apply candidates, create checks, file issues, or publish a lessons PR.` (`--wait`, no timeout). Pass OMP's recorded absolute transcript paths and Cursor's authoritative Herdr session IDs or paths. For Claude and Codex, use resolved paths when recorded, otherwise include `with transcripts under <SESSION_ROOT>` with the actual root. Wait for the worker.
 3. Record each surviving candidate in the friction log with its source and proposed fix. LESSONS is `none` or `<count> candidates reported`. Applying candidates is separate work for an explicit user request, not another step in this loop.
-4. Stop the worker and confirm its harness process has exited. Confirm `git -C WT status --porcelain` is empty. Unexpected changes park the lane for inspection; do not commit or discard them. Remove the clean worktree and go to Report.
+4. Apply **Remove the worktree** under Lanes. Unexpected changes park the lane for inspection; do not commit or discard them. After successful removal, go to Report.
 
 ### 10. Report
 

@@ -8,7 +8,7 @@ An action is safe when everything it deletes, overwrites, or rewrites is inside 
 
 - Clear a cache that rebuilds itself: a subfolder of `~/.cache`, or a package manager's own clean command (`bun pm cache rm`, `npm cache clean`).
 - Remove a `mktemp -d` directory that the worker made in this run, under `$TMPDIR` or `/tmp`. Before you answer, read the path it names and list the directory.
-- Remove a git worktree of this repo whose tree is clean (`git -C <path> status --porcelain` prints nothing).
+- Remove a git worktree only through [Remove the worktree](SKILL.md#lanes), including its ownership, process-exit, clean-tree, plain-removal-first, and conditional submodule-removal checks. Park rather than approve when any required check fails.
 - Push the issue branch, `--force-with-lease` included, and delete it locally or on the remote after its PR merged.
 
 Every other delete, overwrite, or rewrite outside the checkout is unsafe: files elsewhere in the home folder, another repo, system config, anything with `sudo`, a push to DEFAULT, or a force-push to any other branch.
