@@ -7,7 +7,7 @@
   },
   "license": "MIT",
   "keywords": ["skills", "workflow", "tdd", "code-review", "planning", "debugging"],
-  "homepage": "https://github.com/svyatov/supermatt",
-  "repository": "https://github.com/svyatov/supermatt",
+  "homepage": "https://github.com/flosrn/supermatt",
+  "repository": "https://github.com/flosrn/supermatt",
   "logo": ".claude-plugin/icon.png"
 }

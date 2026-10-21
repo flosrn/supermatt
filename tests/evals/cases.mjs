@@ -56,6 +56,84 @@ const explicitAdapterCases = [
   }),
 ];
 
+// An offline stand-in for an OMP host's CLI: it records each call and replays
+// one captured `omp skill list` result for the lane's worktree. @FIXTURE@ in the
+// replay becomes the fixture's absolute path, so every listed skill exists on disk.
+const ompRoot = "@FIXTURE@/host/tools/supermatt/skills";
+const ompRequired = ["triage", "implement", "qa", "code-review", "fix-findings", "refactor", "commit", "ship-pr", "resolving-merge-conflicts", "retro"];
+const ompUserInvoked = new Set(["triage", "implement", "fix-findings", "refactor", "commit", "ship-pr", "retro", "orchestrate"]);
+const ompSkill = (name, baseDir = `${ompRoot}/${name}`, source = "custom:user") =>
+  ({ name, description: `${name} skill.`, filePath: `${baseDir}/SKILL.md`, baseDir, source, hide: ompUserInvoked.has(name) });
+const ompListing = ({ root = ompRoot, omit = [], extra = [], warnings = [] } = {}) => JSON.stringify({
+  skills: [ompSkill("orchestrate"), ...ompRequired.filter(name => !omit.includes(name)).map(name => ompSkill(name, `${root}/${name}`)), ompSkill("deploy", "@FIXTURE@/host/.omp/agent/skills/deploy", "native:user"), ...extra],
+  warnings,
+}, null, 2) + "\n";
+const ompExecutable = ({ listing = "", status = 0, stderr = "" }) => `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+const fixture = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const argv = process.argv.slice(2);
+appendFileSync(resolve(fixture, "captures.json"), JSON.stringify({ command: "omp", argv }) + "\\n");
+if (argv[0] === "--version") { process.stdout.write("omp/18.12.3\\n"); process.exit(0); }
+if (argv[0] !== "skill" || argv[1] !== "list") { process.stderr.write("offline omp stand-in: only --version and skill list are captured\\n"); process.exit(2); }
+process.stdout.write(${JSON.stringify(listing)}.replaceAll("@FIXTURE@", fixture));
+process.stderr.write(${JSON.stringify(stderr)}.replaceAll("@FIXTURE@", fixture));
+process.exit(${status});
+`;
+const ompSkillFile = path => ({ [`${path}/SKILL.md`]: `---\nname: ${path.split("/").at(-1)}\ndescription: Stand-in.\n---\n` });
+const ompDiscoveryCase = ({ id, omp, files = {}, rubric }) => ({
+  id, skill: "orchestrate", requiredFile: "captures.json",
+  files: {
+    "lane.md": "Host: OMP, so KIND is omp. This run's orchestrate skill was loaded by OMP from host/tools/supermatt/skills/orchestrate under this directory. Lane 1 just created its worktree for issue #21; WT is this directory. No worker has started in it yet. Required worker skills: " + ompRequired.join(", ") + ".\n",
+    "capture-bin/omp": ompExecutable(omp),
+    ...Object.assign({}, ...["orchestrate", ...ompRequired].map(name => ompSkillFile(`host/tools/supermatt/skills/${name}`))),
+    ...ompSkillFile("host/.omp/agent/skills/deploy"),
+    ...files,
+  },
+  prompt: "You are the orchestrator in lane.md. Apply only the orchestrator's rule for whether the worker can discover its required skills, for lane 1, before its first worker starts. capture-bin/omp is an offline stand-in for this host's omp CLI: make it executable and put capture-bin first on PATH for every omp call. Do not run Herdr setup, contact GitHub, start workers, or edit files in this scoped probe. Report each command you run, the result for each required skill with its path, and whether lane 1 may start its worker or parks, with the reason.",
+  rubric,
+});
+const ompDiscoveryCases = [
+  ompDiscoveryCase({
+    id: "orchestrate-omp-skills-custom-root",
+    omp: { listing: ompListing() },
+    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "Every required skill passes because its bare name resolves to a baseDir directly under the root that holds the running orchestrate skill, a custom directory.", "The orchestrator does not inspect or plan to inspect ~/.agents/skills, ~/.omp/agent/skills, ~/.claude/skills, or OMP's config files, and lane 1 may start its worker."],
+  }),
+  ompDiscoveryCase({
+    id: "orchestrate-omp-skills-shadowed",
+    omp: { listing: ompListing({
+      omit: ["qa"],
+      extra: [ompSkill("qa", "@FIXTURE@/host/team-skills/qa"), ompSkill("native/commit", "@FIXTURE@/.omp/skills/commit", "native:project")],
+      warnings: [{ skillPath: "@FIXTURE@/.omp/skills/commit/SKILL.md", message: `name collision: "commit" from @FIXTURE@/.omp/skills/commit/SKILL.md is overridden by ${ompRoot}/commit/SKILL.md; available as "native/commit"` }],
+    }) },
+    files: { ...ompSkillFile("host/team-skills/qa"), ...ompSkillFile(".omp/skills/commit") },
+    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "qa is a conflicting same-named skill: its bare name resolves to host/team-skills/qa outside the running SuperMatt root, and the report names that path and the expected SuperMatt qa path.", "The collision warning on commit is also a conflict, even though the bare name currently resolves to SuperMatt, and the report names both paths from the warning: .omp/skills/commit/SKILL.md and the SuperMatt commit path.", "Lane 1 parks; the orchestrator neither starts the worker nor substitutes another command or harness."],
+  }),
+  ompDiscoveryCase({
+    id: "orchestrate-omp-skills-missing",
+    omp: { listing: ompListing({ omit: ["retro"] }) },
+    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "retro is reported missing from the listing, while the other required skills pass from the running SuperMatt root.", "Lane 1 parks with that reason, even though host/tools/supermatt/skills/retro exists on disk; the orchestrator does not treat a folder or file check as resolution."],
+  }),
+  ompDiscoveryCase({
+    id: "orchestrate-omp-skills-listing-failed",
+    omp: { status: 1, stderr: `Error: EACCES: permission denied, scandir '${ompRoot}'\n` },
+    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "The report gives the exact gap: the command, exit status 1, and the EACCES error output.", "Lane 1 parks; the orchestrator does not infer resolution from the SuperMatt folder on disk, ~/.agents/skills, ~/.omp/agent/skills, ~/.claude/skills, OMP's config, or any other fixed folder."],
+  }),
+  ompDiscoveryCase({
+    id: "orchestrate-omp-skills-listing-not-json",
+    omp: { listing: "Install, search, publish, and manage skills on the Skillshare registry (skills.omp.sh)\n\nUSAGE\n  $ omp skill [ACTION] [TARGETS...] [FLAGS]\n" },
+    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "The report gives the exact gap: the command, exit status 0, and the usage text it printed instead of the skill listing JSON.", "Lane 1 parks; the orchestrator does not read the usage text as an empty or passing listing, and does not infer resolution from the SuperMatt folder on disk, fixed skill folders, or OMP's config."],
+  }),
+  ompDiscoveryCase({
+    // The harness rejects symlinks, so "./" stands in for another spelling of the same directory.
+    // The orchestrate entry keeps the spelling lane.md gives, so a text comparison cannot pass.
+    id: "orchestrate-omp-skills-respelled-root",
+    omp: { listing: ompListing({ root: `${ompRoot}/.` }) },
+    rubric: ["captures.json records omp skill list with the absolute worktree path and --json.", "Every required skill passes: each listed baseDir, spelled with a ./ segment unlike the running orchestrate skill's root, is checked as the same directory as the matching folder under host/tools/supermatt/skills, rather than compared as text.", "Lane 1 may start its worker; the different path spelling alone is not reported as a conflict."],
+  }),
+];
+
 export const cases = [
   {
     id: "stop-before-review", skill: "implement", requiredFile: "result.txt", expectedBytes: "42\n",
@@ -619,6 +697,7 @@ $ git worktree remove /Users/dev/wt/spec-12-t21
     prompt: "You are the orchestrator in lane 1; WT is this directory. You just made the history edit recorded in lane.md. Apply only the orchestrator's rules for what must happen before the lane's next phase. Do not run Herdr setup, contact GitHub, start or stop workers, or edit files in this scoped probe. Run any check you need yourself. Report each action you take, and each prompt you would send to the worker, in order.",
     rubric: ["Before QA, the orchestrator runs both commands named in AGENTS.md in WT (node --check src/*.mjs and node --test) and observes the invoice assertion failure, not just a syntax-check pass.", "QA and review are held while checks fail; neither is started or planned to proceed before the finding is fixed and both checks pass.", "The proposed worker prompt sends the failure as a /fix-findings finding and includes the actual failing output, rather than only a verdict or a generic instruction to investigate.", "The orchestrator leaves all fixture files unchanged and does not plan to edit the code itself; the worker owns all code changes."],
   },
+  ...ompDiscoveryCases,
 ];
 
 export const variants = {

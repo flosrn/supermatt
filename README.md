@@ -22,6 +22,8 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+> [!NOTE]
+> This is Flo's fork of [svyatov/supermatt](https://github.com/svyatov/supermatt). Its `main` is upstream `main` plus fixes waiting to go upstream and a few personal patches, titled `(personal patch, not for upstream)`. `git log --first-parent upstream/main..main` lists them. Below is upstream's README, edited only where those commits change a skill.
 - **Claude Code, Codex, Cursor, and OMP.** Each host loads the same canonical 41-skill tree through a package adapter or documented compatibility fallback.
 - **41 skills.** 32 for engineering and 9 for productivity, listed below.
 - **Peer review is repository-controlled.** `docs/agents/cross-model.json` can keep `code-review` and `jury` entirely on current-host readers, automatically select a hardened Claude or Codex peer, or explicitly select Claude, Codex, Cursor Agent, or OMP with supported model and effort values.
@@ -32,14 +34,14 @@
 In Claude Code, type:
 
 ```text
-/plugin marketplace add svyatov/supermatt
+/plugin marketplace add flosrn/supermatt
 /plugin install supermatt@supermatt
 ```
 
 In Codex, run:
 
 ```bash
-codex plugin marketplace add svyatov/supermatt
+codex plugin marketplace add flosrn/supermatt
 codex plugin add supermatt@supermatt
 ```
 
@@ -52,7 +54,7 @@ agent --plugin-dir .
 In OMP, run:
 
 ```text
-omp plugin marketplace add svyatov/supermatt
+omp plugin marketplace add flosrn/supermatt
 omp plugin install supermatt@supermatt
 ```
 
@@ -130,7 +132,7 @@ flowchart LR
 
 Run `retro` before clearing the session, or provide a verified session ID or path later. It reads local Claude Code, Codex, Cursor, and OMP transcript evidence and reports gaps instead of guessing from the newest file. After a bug fix, use it to identify what would have prevented the bug; use `improve-architecture` when the finding is a missing test seam.
 
-With triaged GitHub issues or local Markdown tickets, `orchestrate` runs steps 4 and 5 unattended for each issue, several issues in parallel if you ask, in worker sessions inside Herdr. Workers use the harness that started it: Claude Code, Codex, Cursor, or OMP. Cursor and OMP workers receive the authoritative active model ID when available, otherwise they keep the harness default. Local tracker files stay in the main checkout; code changes ship through GitHub PRs.
+With triaged GitHub issues or local Markdown tickets, `orchestrate` runs steps 4 and 5 unattended for each issue, several issues in parallel if you ask, in worker sessions inside Herdr. Workers use the harness that started it: Claude Code, Codex, Cursor, or OMP. Cursor workers receive the authoritative active model ID when available, otherwise they keep the harness default; OMP workers run on the OmniRoute gateway handles in orchestrate's worker table. On OMP, each worktree's required skills are checked with `omp skill list <worktree> --json` and must come from the skill root that loaded `orchestrate`, wherever OMP found it. Local tracker files stay in the main checkout; code changes ship through GitHub PRs.
 
 An explicit `orchestrate` invocation delegates only its [listed worker commands](./references/harnesses.md#orchestrator-dispatch) within that run. Other user-invoked skills still require a human command; existing safety and approval gates remain in force.
 
