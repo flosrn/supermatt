@@ -372,13 +372,16 @@ aa11aa11  -
 $ shasum -a 256 public/sw.js
 55cc66dd  public/sw.js
 
-## Capture J: another run of this spec, unrelated to the other captures. There, #32's merge from 7c8d9e0 to 6e7f8a9 changed only src/review.ts. In /Users/dev/wt/spec-30, right after that merge
+## Capture J: another run of this spec, unrelated to the other captures. There, #32's merge from 7c8d9e0 to 6e7f8a9 changed only src/review.ts, and the recorded snapshot also listed " M src/legacy.ts" with unstaged diff sha256 dd44dd44. In /Users/dev/wt/spec-30, right after that merge
 $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
  M src/generated/client.ts
+ M src/legacy.ts
 ?? next-env.d.ts
 ?? public/sw.js
 $ git diff --binary --no-ext-diff --no-textconv --ignore-submodules=none -- src/generated/client.ts | shasum -a 256
 cc33cc33  -
+$ git diff --binary --no-ext-diff --no-textconv --ignore-submodules=none -- src/legacy.ts | shasum -a 256
+dd44dd44  -
 $ shasum -a 256 next-env.d.ts public/sw.js
 11aa22bb  next-env.d.ts
 55cc66dd  public/sw.js
@@ -399,7 +402,7 @@ $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 $ shasum -a 256 next-env.d.ts
 11aa22bb  next-env.d.ts
 
-## Capture L: another run of this spec, unrelated to the other captures. There, #32's merge from 7c8d9e0 to 2c3d4e5 changed only src/review.ts and the vendor/fonts pin; no setup step or check uses vendor/fonts. In /Users/dev/wt/spec-30, right after that merge and the setup rerun it called for (hooks unchanged; every command exited 0; no leftover paths)
+## Capture L: another run of this spec, unrelated to the other captures. There, #32's merge from 7c8d9e0 to 2c3d4e5 changed only src/review.ts and the vendor/fonts pin, from 1111aaaa to 2222bbbb; no setup step or check uses vendor/fonts, which was checked out at 1111aaaa and clean in the recorded snapshot. In /Users/dev/wt/spec-30, right after that merge
 $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
  M src/generated/client.ts
  M src/review.ts
@@ -408,6 +411,25 @@ $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 ?? public/sw.js
 $ git diff --binary --no-ext-diff --no-textconv --ignore-submodules=none -- src/generated/client.ts | shasum -a 256
 aa11aa11  -
+$ git diff --ignore-submodules=none -- vendor/fonts
+diff --git a/vendor/fonts b/vendor/fonts
+--- a/vendor/fonts
++++ b/vendor/fonts
+@@ -1 +1 @@
+-Subproject commit 2222bbbb
++Subproject commit 1111aaaa
+$ shasum -a 256 next-env.d.ts public/sw.js
+11aa22bb  next-env.d.ts
+55cc66dd  public/sw.js
+(setup commands ran here under the hooks guard: hooks unchanged; every command exited 0; output omitted)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+ M src/generated/client.ts
+ M src/review.ts
+ M vendor/fonts
+?? next-env.d.ts
+?? public/sw.js
+$ git diff --binary --no-ext-diff --no-textconv --ignore-submodules=none -- src/generated/client.ts src/review.ts vendor/fonts | shasum -a 256
+(same digest before and after the setup)
 $ shasum -a 256 next-env.d.ts public/sw.js
 11aa22bb  next-env.d.ts
 55cc66dd  public/sw.js
@@ -420,7 +442,8 @@ $ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 ?? public/sw.js
 $ git diff --binary --no-ext-diff --no-textconv --ignore-submodules=none -- src/generated/client.ts | shasum -a 256
 aa11aa11  -
-$ shasum -a 256 next-env.d.ts public/sw.js
+$ shasum -a 256 build/stats.json next-env.d.ts public/sw.js
+3e4f5a6b  build/stats.json
 11aa22bb  next-env.d.ts
 55cc66dd  public/sw.js
 `,
@@ -431,9 +454,9 @@ $ shasum -a 256 next-env.d.ts public/sw.js
       "Capture G records no new snapshot and runs neither the step 4 gate nor QA: the rerun failed twice with the 503 error, so the coordinator records the failing command and output and reports the failure to the user.",
       "Capture H asks the user about src/generated/schema.ts, which the setup created, about public/sw.js, whose content the setup changed from 55cc66dd to 77dd88ee, and about src/generated/client.ts, whose unstaged diff the setup changed although its status line stayed ` M`. It does not ask about next-env.d.ts, which the setup left unchanged, nor about vendor/engine, which the setup brought to its pinned commit. It records the new snapshot only after that answer, before the gate.",
       "Capture I runs no setup, because that merge changed no setup input, and does not stop integration although next-env.d.ts no longer appears in the status: the merged .gitignore hid it. The coordinator records a new snapshot of the integration worktree before releasing the merge slot, then goes on to step 4.",
-      "Capture J stops integration instead of recording a new snapshot: src/generated/client.ts changed (unstaged diff aa11aa11 to cc33cc33) although that merge did not touch it and ran no setup. The coordinator names it and leaves it in place.",
+      "Capture J stops integration instead of recording a new snapshot: src/generated/client.ts changed (unstaged diff aa11aa11 to cc33cc33) although that merge did not touch it and ran no setup. The coordinator names it and leaves it in place. It does not name src/legacy.ts, whose own diff digest is unchanged.",
       "Capture K asks the user about public/sw.js, which the setup deleted, but neither asks about nor stops on src/generated/client.ts, which the setup restored to its committed content. It records the new snapshot only after that answer.",
-      "Capture L stops integration on src/review.ts: the merge changed it, but a fast-forward leaves it clean, so its ` M` came from elsewhere. vendor/fonts, a merged pin still at its previous commit, is not what stops it.",
+      "Capture L stops integration on src/review.ts: the merge changed it, but a fast-forward leaves it clean, so its ` M` came from elsewhere. It does not stop on vendor/fonts, whose diff shows it still checked out at 1111aaaa, the commit it had before the merge.",
       "Capture M does not stop integration on build/stats.json, which the merged .gitignore no longer ignores; it records a new snapshot of the integration worktree before releasing the merge slot.",
     ],
   },
