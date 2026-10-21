@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - `orchestrate`: on OMP, verifies each lane's worker skills with `omp skill list <worktree> --json` instead of fixed folders such as `~/.agents/skills`, so SuperMatt loaded from a custom skill directory resolves. Every required skill must resolve to the root of the running orchestrate skill, compared as the same directory rather than as text. A bare name from another root, a collision warning, a missing skill, or a failed or non-JSON listing parks the lane, naming both paths (the two in the warning, for a collision) or the exact failure. Behavioral evaluation cases cover each outcome.
 
+### Fixed
+
+- Commit message hook: lists the accepted Conventional Commit types in rejection messages and contributor guidance without changing which subjects pass. Reads the message file whatever its path contains, so spaces, quotes, `$`, backticks, backslashes, or line breaks in the file name or a parent directory (such as a linked worktree's) no longer reject a valid subject or break the hook with a shell syntax error.
+- `qa`: the shared scratch dependency preflight accepts Node built-ins as resolved and lists them by name, including built-in-only checks, while retaining canonical-path output for packages and exit 1 with the existing failure message for missing packages.
+- `refactor`: hands branch-assessment readers a written branch diff so read-only subagents need no Git access.
+- `retro`: recognizes OMP `skill-prompt` custom messages as user evidence with their original source lines while skipping other custom types and rejecting userless sessions; session-evidence tests no longer read the host's session stores or identities.
+- `ship-pr`: hands delegated history readers a written per-commit diff covering roots and every parent, including merge resolutions, with a readable text pass so content that Git attributes mark binary is still screened, and leaves blobs the reader cannot read as text to the delegating session or blocks shipping.
+
 ## [0.23.0] - 2026-10-18
 
 ### Added
