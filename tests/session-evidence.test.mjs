@@ -26,6 +26,7 @@ const sessionEnvKeys = [
   "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "OMP_SESSION_DIR", "OMP_SESSION_ROOT",
   "PI_SESSION_DIR", "OMP_PROFILE", "PI_PROFILE", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
   "OMP_SESSION_PATH", "PI_CODING_AGENT_SESSION_FILE", "OMP_SESSION_ID", "CLAUDE_SESSION_ID",
+  "PI_SESSION_FILE", "PI_SESSION_ID",
   "CODEX_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_SESSION_ID",
 ];
 
@@ -152,6 +153,210 @@ test("OMP follows the active branch and includes associated child transcripts", 
   assert.deepEqual(output.gaps, []);
   assert.equal(output.sessions.filter(({ path }) => path.endsWith("/abandoned.jsonl")).length, 0);
   assert.equal(output.sessions.flatMap(({ records }) => records).filter(({ kind }) => kind === "tool-error").length, 1);
+});
+
+test("OMP prefers PI_SESSION_FILE over concurrent session identities and includes linked children", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const main = join(sessionRoot, "-workspace-project/session.jsonl");
+  const child = join(sessionRoot, "-workspace-project/session/child.jsonl");
+  copy("omp-main.jsonl", main);
+  copy("omp-child.jsonl", child);
+  const competitors = [
+    ["pi-id-session", "PI_SESSION_ID competing evidence"],
+    ["legacy-session", "Legacy competing evidence"],
+  ];
+  for (const [id, text] of competitors) {
+    writeFileSync(join(sessionRoot, "-workspace-project", `${id}.jsonl`), [
+      { type: "session", version: 3, id, cwd: "/workspace/project" },
+      { type: "message", id: "u1", parentId: null, message: { role: "user", content: text } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  }
+  const legacy = join(sessionRoot, "-workspace-project/legacy-session.jsonl");
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project"], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+    PI_SESSION_FILE: main,
+    PI_SESSION_ID: "pi-id-session",
+    OMP_SESSION_PATH: legacy,
+    PI_CODING_AGENT_SESSION_FILE: legacy,
+    OMP_SESSION_ID: "legacy-session",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(output.sessions.map(({ path }) => path), [realpathSync(main), realpathSync(child)]);
+  assert.deepEqual(texts(output), [
+    "OMP verified user marker",
+    "OMP main answer",
+    "OMP failed tool",
+    "OMP compacted evidence",
+    "OMP final answer",
+    "OMP child answer",
+  ]);
+  assert.deepEqual(output.gaps, []);
+});
+
+test("OMP resolves PI_SESSION_ID from metadata ahead of legacy identities when PI_SESSION_FILE is empty", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const main = join(sessionRoot, "-workspace-project/session.jsonl");
+  const child = join(sessionRoot, "-workspace-project/session/child.jsonl");
+  const legacy = join(sessionRoot, "-workspace-project/legacy-session.jsonl");
+  copy("omp-main.jsonl", main);
+  copy("omp-child.jsonl", child);
+  writeFileSync(legacy, [
+    { type: "session", version: 3, id: "legacy-session", cwd: "/workspace/project" },
+    { type: "message", id: "u1", parentId: null, message: { role: "user", content: "Legacy competing evidence" } },
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project"], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+    PI_SESSION_FILE: "",
+    PI_SESSION_ID: "omp-session",
+    OMP_SESSION_PATH: legacy,
+    PI_CODING_AGENT_SESSION_FILE: legacy,
+    OMP_SESSION_ID: "legacy-session",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(output.sessions.map(({ path }) => path), [realpathSync(main), realpathSync(child)]);
+  assert.deepEqual(texts(output), [
+    "OMP verified user marker",
+    "OMP main answer",
+    "OMP failed tool",
+    "OMP compacted evidence",
+    "OMP final answer",
+    "OMP child answer",
+  ]);
+  assert.deepEqual(output.gaps, []);
+});
+
+test("OMP resolves PI_SESSION_ID without a file or legacy identity", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const main = join(sessionRoot, "-workspace-project/session.jsonl");
+  copy("omp-main.jsonl", main);
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project"], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+    PI_SESSION_ID: "omp-session",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(output.sessions.map(({ path }) => path), [realpathSync(main)]);
+  assert.ok(texts(output).includes("OMP verified user marker"));
+});
+
+test("OMP rejects duplicate PI_SESSION_ID matches in the same workspace without stdout", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  copy("omp-main.jsonl", join(sessionRoot, "-workspace-project/first.jsonl"));
+  copy("omp-main.jsonl", join(sessionRoot, "-workspace-project/second.jsonl"));
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project"], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+    PI_SESSION_ID: "omp-session",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stdout, "");
+});
+
+test("OMP rejects PI_SESSION_FILE from another workspace instead of falling back to valid identities", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const other = join(sessionRoot, "-workspace-other/session.jsonl");
+  const valid = join(sessionRoot, "-workspace-project/session.jsonl");
+  mkdirSync(dirname(other), { recursive: true });
+  writeFileSync(other, [
+    { type: "session", version: 3, id: "other-session", cwd: "/workspace/other" },
+    { type: "message", id: "u1", parentId: null, message: { role: "user", content: "Foreign OMP user evidence" } },
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  copy("omp-main.jsonl", valid);
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project"], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+    PI_SESSION_FILE: other,
+    PI_SESSION_ID: "omp-session",
+    OMP_SESSION_PATH: valid,
+    PI_CODING_AGENT_SESSION_FILE: valid,
+    OMP_SESSION_ID: "omp-session",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stdout, "");
+});
+
+test("OMP with empty PI_SESSION_FILE and no identity does not select a recent transcript", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  copy("omp-main.jsonl", join(sessionRoot, "-workspace-project/recent.jsonl"));
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project"], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+    PI_SESSION_FILE: "",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(output.sessions, []);
+  assert.ok(output.gaps.length > 0);
+});
+
+for (const legacyKey of ["OMP_SESSION_PATH", "PI_CODING_AGENT_SESSION_FILE", "OMP_SESSION_ID"]) {
+  test(`OMP accepts ${legacyKey} when the new session variables are empty`, (t) => {
+    const home = workspace(t);
+    const sessionRoot = join(home, ".omp/agent/sessions");
+    const main = join(sessionRoot, "-workspace-project/session.jsonl");
+    copy("omp-main.jsonl", main);
+
+    const result = run(["--host", "omp", "--cwd", "/workspace/project"], {
+      HOME: home,
+      PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+      PI_SESSION_FILE: "",
+      PI_SESSION_ID: "",
+      [legacyKey]: legacyKey === "OMP_SESSION_ID" ? "omp-session" : main,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.sessions.map(({ path }) => path), [realpathSync(main)]);
+    assert.ok(texts(output).includes("OMP verified user marker"));
+  });
+}
+
+test("OMP explicit --session takes precedence over all environment identities", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const selected = join(sessionRoot, "-workspace-project/selected.jsonl");
+  const competing = join(sessionRoot, "-workspace-project/competing.jsonl");
+  copy("omp-skill-prompt.jsonl", selected);
+  copy("omp-main.jsonl", competing);
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project", "--session", selected], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+    PI_SESSION_FILE: competing,
+    PI_SESSION_ID: "omp-session",
+    OMP_SESSION_PATH: competing,
+    PI_CODING_AGENT_SESSION_FILE: competing,
+    OMP_SESSION_ID: "omp-session",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(output.sessions.map(({ path }) => path), [realpathSync(selected)]);
+  assert.deepEqual(texts(output), ["OMP skill prompt marker\nSkill command instructions", "OMP skill answer"]);
+  assert.deepEqual(output.gaps, []);
 });
 
 test("OMP accepts skill-prompt-only user input and skips unrelated custom messages", (t) => {
@@ -517,6 +722,8 @@ test("OMP ID lookup isolates inherited session roots and identities", (t) => {
     XDG_DATA_HOME: collisionRoot,
     CLAUDE_CONFIG_DIR: collisionRoot,
     CODEX_HOME: collisionRoot,
+    PI_SESSION_FILE: join(collisionRoot, "omp-session.jsonl"),
+    PI_SESSION_ID: "outside-session",
     OMP_SESSION_PATH: "outside-session",
     PI_CODING_AGENT_SESSION_FILE: "outside-session",
     OMP_SESSION_ID: "outside-session",

@@ -404,7 +404,7 @@ function evidence(host, cwd, requests) {
   const metadata = host === "cursor"
     ? process.env.CURSOR_SESSION_ID
     : host === "omp"
-      ? process.env.OMP_SESSION_PATH || process.env.PI_CODING_AGENT_SESSION_FILE || process.env.OMP_SESSION_ID
+      ? process.env.PI_SESSION_FILE || process.env.PI_SESSION_ID || process.env.OMP_SESSION_PATH || process.env.PI_CODING_AGENT_SESSION_FILE || process.env.OMP_SESSION_ID
       : host === "claude"
         ? process.env.CLAUDE_SESSION_ID
         : process.env.CODEX_SESSION_ID || process.env.CODEX_THREAD_ID;
