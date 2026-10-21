@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"omp-fallback-usage","cwd":"/workspace/project"}
+{"type":"message","id":"u1","parentId":null,"message":{"role":"user","content":[{"type":"text","text":"Fallback OMP user"}]}}
+{"type":"message","id":"a1","parentId":"u1","activeLeafId":"a1","message":{"role":"assistant","content":[{"type":"text","text":"Earlier self-selected OMP answer"}]}}
+{"type":"message","id":"a2","parentId":"u1","activeLeafId":"a2","message":{"role":"assistant","content":[{"type":"text","text":"Latest self-selected OMP answer"}]}}
+{"type":"message","id":"off-branch","parentId":"a1","activeLeafId":"a2","message":{"role":"assistant","content":[{"type":"text","text":"Off-branch OMP answer"}]}}
+{"type":"model_usage","id":"usage1","parentId":"off-branch","activeLeafId":"removed","purpose":"late","api":"test","provider":"test","model":"test","usage":{},"stopReason":"stop"}
