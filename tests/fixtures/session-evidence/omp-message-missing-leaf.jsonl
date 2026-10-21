@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"omp-missing-leaf","timestamp":"2026-10-15T00:00:00.000Z","cwd":"/workspace/project"}
+{"type":"message","id":"u1","parentId":null,"message":{"role":"user","content":[{"type":"text","text":"Fallback OMP user"}]}}
+{"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":[{"type":"text","text":"Fallback OMP answer"}]}}
+{"type":"message","id":"bash1","parentId":"u1","activeLeafId":"removed","message":{"role":"bashExecution","command":"printf removed","output":"Fallback OMP shell output","exitCode":0}}

@@ -359,6 +359,37 @@ test("OMP explicit --session takes precedence over all environment identities", 
   assert.deepEqual(output.gaps, []);
 });
 
+test("OMP follows the active leaf persisted by a terminal bashExecution message", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const main = join(sessionRoot, "-workspace-project/session.jsonl");
+  copy("omp-message-active-leaf.jsonl", main);
+  copy("omp-child.jsonl", join(sessionRoot, "-workspace-project/session/child.jsonl"));
+  copy("omp-abandoned-child.jsonl", join(sessionRoot, "-workspace-project/session/abandoned.jsonl"));
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project", "--session", main], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.sessions.length, 2);
+  assert.deepEqual(texts(output), [
+    "OMP verified user marker",
+    "OMP main answer",
+    "OMP failed tool",
+    "OMP compacted evidence",
+    "OMP final answer",
+    "OMP child answer",
+  ]);
+  assert.deepEqual(output.gaps, []);
+  assert.equal(output.sessions.filter(({ path }) => path.endsWith("/abandoned.jsonl")).length, 0);
+  assert.deepEqual(output.sessions.flatMap(({ records }) => records).filter(({ kind }) => kind === "tool-error"), [
+    { line: 7, kind: "tool-error", text: "OMP failed tool" },
+  ]);
+});
+
 test("OMP accepts skill-prompt-only user input and skips unrelated custom messages", (t) => {
   const home = workspace(t);
   const sessionRoot = join(home, ".omp/agent/sessions");
@@ -467,6 +498,66 @@ test("OMP falls back when a persisted active leaf no longer exists", (t) => {
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(texts(JSON.parse(result.stdout)), ["Fallback OMP user", "Fallback OMP answer"]);
 });
+
+test("OMP treats a null leaf persisted by a terminal bashExecution message as cleared history", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const main = join(sessionRoot, "-workspace-project/session.jsonl");
+  copy("omp-message-null-leaf.jsonl", main);
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project", "--session", main], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unsupported OMP transcript schema/);
+  assert.equal(result.stdout, "");
+});
+
+test("OMP falls back when a terminal bashExecution message persists a missing leaf", (t) => {
+  const home = workspace(t);
+  const sessionRoot = join(home, ".omp/agent/sessions");
+  const main = join(sessionRoot, "-workspace-project/session.jsonl");
+  copy("omp-message-missing-leaf.jsonl", main);
+
+  const result = run(["--host", "omp", "--cwd", "/workspace/project", "--session", main], {
+    HOME: home,
+    PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.sessions.length, 1);
+  assert.deepEqual(output.sessions[0].records, [
+    { line: 2, kind: "user", text: "Fallback OMP user" },
+    { line: 3, kind: "assistant", text: "Fallback OMP answer" },
+  ]);
+  assert.deepEqual(output.gaps, []);
+});
+
+for (const terminalType of ["usage", "message"]) {
+  test(`OMP fallback selects the latest self-selecting entry before a dangling ${terminalType} leaf`, (t) => {
+    const home = workspace(t);
+    const sessionRoot = join(home, ".omp/agent/sessions");
+    const main = join(sessionRoot, "-workspace-project/session.jsonl");
+    copy(`omp-fallback-${terminalType}.jsonl`, main);
+
+    const result = run(["--host", "omp", "--cwd", "/workspace/project", "--session", main], {
+      HOME: home,
+      PI_CODING_AGENT_SESSION_DIR: sessionRoot,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.sessions.length, 1);
+    assert.deepEqual(output.sessions[0].records, [
+      { line: 2, kind: "user", text: "Fallback OMP user" },
+      { line: 4, kind: "assistant", text: "Latest self-selected OMP answer" },
+    ]);
+    assert.deepEqual(output.gaps, []);
+  });
+}
 
 test("OMP rejects an associated child transcript from another workspace", (t) => {
   const home = workspace(t);

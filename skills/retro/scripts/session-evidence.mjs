@@ -118,12 +118,12 @@ function cursorSession(path) {
 function activeEntries(entries) {
   const indexed = new Map(entries.filter(({ value }) => value?.id).map((entry) => [entry.value.id, entry]));
   const last = entries.findLast(({ value }) => value?.id && value.type !== "session");
-  let leafId = last?.value.type === "model_usage" && last.value.activeLeafId !== undefined
+  let leafId = last?.value.activeLeafId !== undefined
     ? last.value.activeLeafId
     : last?.value.id;
   if (typeof leafId === "string" && !indexed.has(leafId)) {
     leafId = entries.findLast(({ value }) => value?.id && value.type !== "session"
-      && (value.type !== "model_usage" || value.activeLeafId === undefined || value.activeLeafId === value.id))?.value.id;
+      && (value.activeLeafId === undefined || value.activeLeafId === value.id))?.value.id;
   }
   let current = typeof leafId === "string" ? indexed.get(leafId) : undefined;
   const active = new Set();
