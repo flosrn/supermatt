@@ -265,6 +265,254 @@ export const cases = [
     ],
   },
   {
+    id: "worktree-cleanup-submodules", skill: "implement-spec", unchanged: true,
+    files: {
+      "state.md": `# Captured state at hand-off (raw command results)
+
+Main worktree (first entry of git worktree list): /Users/dev/app. Integration branch feat/spec-12 in /Users/dev/wt/spec-12.
+The host reports that the workers for #13 to #16 and all their subagents have exited, and their reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created each worktree below.
+
+## /Users/dev/wt/spec-12-t13, branch ticket-13
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-13 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+ 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t13/modules
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant --work-tree=/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes
+(no output)
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t13/modules/vendor/parlant branch -r --contains 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f
+  origin/main
+$ git worktree remove /Users/dev/wt/spec-12-t13
+fatal: working trees containing submodules cannot be moved or removed
+$ git -C /Users/dev/wt/spec-12-t13 submodule absorbgitdirs
+(no output)
+$ find /Users/dev/wt/spec-12-t13 -name HEAD
+(no output)
+
+## /Users/dev/wt/spec-12-t14, branch ticket-14 (the worker moved the vendor/parlant pin)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-14 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+ 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b vendor/parlant (heads/main)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t14/modules
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t14/modules/vendor/parlant --work-tree=/Users/dev/app/.git/worktrees/spec-12-t14/modules/vendor/parlant rev-list 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b --all --reflog --not --remotes
+8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant --work-tree=/Users/dev/app/.git/modules/vendor/parlant rev-list --all --reflog | grep -Fx 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
+(no output)
+$ git worktree remove /Users/dev/wt/spec-12-t14
+fatal: working trees containing submodules cannot be moved or removed
+$ git -C /Users/dev/wt/spec-12-t14 submodule absorbgitdirs
+(no output)
+$ find /Users/dev/wt/spec-12-t14 -name HEAD
+(no output)
+
+## /Users/dev/wt/spec-12-t15, branch ticket-15 (the worker ran git submodule deinit vendor/parlant)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-15 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+-4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t15/modules
+$ ls /Users/dev/app/.git/worktrees/spec-12-t15/modules
+vendor
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t15/modules/vendor/parlant --work-tree=/Users/dev/app/.git/worktrees/spec-12-t15/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes
+2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant --work-tree=/Users/dev/app/.git/modules/vendor/parlant rev-list --all --reflog | grep -Fx 2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+$ git worktree remove /Users/dev/wt/spec-12-t15
+fatal: working trees containing submodules cannot be moved or removed
+$ git -C /Users/dev/wt/spec-12-t15 submodule absorbgitdirs
+(no output)
+$ find /Users/dev/wt/spec-12-t15 -name HEAD
+(no output)
+
+## /Users/dev/wt/spec-12-t16, branch ticket-16
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-16 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+ 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t16/modules
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant --work-tree=/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes
+9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+$ git --git-dir=/Users/dev/app/.git/worktrees/spec-12-t16/modules/vendor/parlant branch --contains 9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+  wip
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant --work-tree=/Users/dev/app/.git/modules/vendor/parlant rev-list --all --reflog | grep -Fx 9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+(no output)
+$ git worktree remove /Users/dev/wt/spec-12-t16
+fatal: working trees containing submodules cannot be moved or removed
+$ git -C /Users/dev/wt/spec-12-t16 submodule absorbgitdirs
+(no output)
+$ find /Users/dev/wt/spec-12-t16 -name HEAD
+(no output)
+`,
+    },
+    prompt: "Apply only the hand-off and clean-up part of the skill to state.md. For each worker worktree, decide whether the coordinator removes it now and give the exact command it runs. For each worktree it keeps, name the failing check and any commit that removal would lose. Do not run git, contact a tracker, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "/Users/dev/wt/spec-12-t13 is removed with git worktree remove --force, used only because git refused the plain removal for its submodule: the tree is clean, its branch is in feat/spec-12, and its pinned submodule commit 4e5f6a7 is on the submodule's remote.",
+      "/Users/dev/wt/spec-12-t14 is kept, and the handoff names 8a9b0c1, its pinned submodule commit that exists only in that worktree's submodule repository.",
+      "/Users/dev/wt/spec-12-t15 is removed with git worktree remove --force although its submodule is deinitialized: the one commit its retained submodule repository holds outside remote-tracking refs, 2b3c4d5, is also held by the main worktree's submodule repository.",
+      "/Users/dev/wt/spec-12-t16 is kept although its submodule sits at the pinned commit, and the handoff names 9d8e7f6 on the submodule's local branch wip.",
+    ],
+  },
+  {
+    id: "worktree-cleanup-submodule-repositories", skill: "implement-spec", unchanged: true,
+    files: {
+      "state.md": `# Captured state at hand-off (raw command results)
+
+Main worktree (first entry of git worktree list): /Users/dev/app. Integration branch feat/spec-12 in /Users/dev/wt/spec-12.
+The host reports that the worker for #23 and all its subagents have exited, and its reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created the worktree below.
+
+## /Users/dev/wt/spec-12-t23, branch ticket-23 (the worker added vendor/tools by cloning it in place, added vendor/kit with git clone --separate-git-dir into its ignored .cache directory, and removed vendor/legacy with git rm)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-23 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+ 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
+ 1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c vendor/parlant/third_party/tokenizer (heads/main)
+ 2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d vendor/tools (heads/main)
+ 3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e vendor/kit (heads/main)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t23/modules
+$ find /Users/dev/app/.git/worktrees/spec-12-t23/modules -name HEAD -maxdepth 6
+/Users/dev/app/.git/worktrees/spec-12-t23/modules/vendor/parlant/HEAD
+/Users/dev/app/.git/worktrees/spec-12-t23/modules/vendor/parlant/modules/third_party/tokenizer/HEAD
+/Users/dev/app/.git/worktrees/spec-12-t23/modules/vendor/legacy/HEAD
+$ ls -a /Users/dev/wt/spec-12-t23/vendor/tools
+.  ..  .git  bin  README.md
+$ cat /Users/dev/wt/spec-12-t23/vendor/kit/.git
+gitdir: /Users/dev/wt/spec-12-t23/.cache/kit
+$ git check-ignore /Users/dev/wt/spec-12-t23/.cache/kit
+/Users/dev/wt/spec-12-t23/.cache/kit
+$ ls /Users/dev/wt/spec-12-t23/vendor
+kit  parlant  tools
+$ git worktree remove /Users/dev/wt/spec-12-t23
+fatal: working trees containing submodules cannot be moved or removed
+`,
+    },
+    prompt: "Apply only the hand-off and clean-up part of the skill to state.md. Write, in order, the exact commands the coordinator runs next for /Users/dev/wt/spec-12-t23 before it decides whether to force its removal, and what output of each would keep the worktree. Do not decide yet, run git, contact a tracker, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "The commands bring the repository embedded at vendor/tools/.git into the checks before any force, for example by moving it into the modules directory with git submodule absorbgitdirs and confirming no .git directory remains.",
+      "Every submodule repository is checked: vendor/parlant, the nested vendor/parlant/third_party/tokenizer, vendor/tools, and vendor/legacy. vendor/legacy is checked without a pinned commit, since git submodule status no longer lists it, and its missing directory does not by itself keep the worktree.",
+      "The listing of each repository's commits does not exclude commits that only a tag in that repository holds: no --tags (or other tag ref) on the excluded side, since such a tag goes with the worktree.",
+      "A listed commit counts as held elsewhere when the main worktree's corresponding repository has it in a ref or a reflog, not only when a ref there contains it.",
+      "vendor/kit's repository at /Users/dev/wt/spec-12-t23/.cache/kit, inside the worktree but outside its modules directory, is found (for example by resolving each submodule's git directory) and either checked or keeps the worktree: git submodule absorbgitdirs leaves an existing gitfile in place, and the forced removal would delete that repository.",
+      "The commands also search the worktree directory itself for Git repositories of any name (for example find /Users/dev/wt/spec-12-t23 -name HEAD, then git rev-parse on each directory), since a repository that a deinitialized or removed submodule left there is visible to no submodule command, and any repository found keeps the worktree. The search does not skip a HEAD that is a symbolic link, a layout Git accepts (no -type f restriction).",
+    ],
+  },
+  {
+    id: "worktree-cleanup-reflog", skill: "implement-spec", unchanged: true,
+    files: {
+      "state.md": `# Captured state at hand-off (raw command results)
+
+Main worktree (first entry of git worktree list): /Users/dev/app. Integration branch feat/spec-12 in /Users/dev/wt/spec-12.
+The host reports that the worker for #19 and all its subagents have exited, and its reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created the worktree below.
+
+## /Users/dev/wt/spec-12-t19, branch ticket-19 (the worker ran git submodule deinit vendor/parlant)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-19 feat/spec-12; echo $?
+0
+$ git submodule status --recursive
+-4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/spec-12-t19/modules
+$ ls /Users/dev/app/.git/worktrees/spec-12-t19/modules/vendor
+parlant
+$ git worktree remove /Users/dev/wt/spec-12-t19
+fatal: working trees containing submodules cannot be moved or removed
+`,
+    },
+    prompt: "Apply only the hand-off and clean-up part of the skill to state.md. Write, in order, the exact commands the coordinator runs next for /Users/dev/wt/spec-12-t19 before it decides whether to force its removal, and what output of each would keep the worktree. Do not decide yet, run git, contact a tracker, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "The commands list the commits held in /Users/dev/app/.git/worktrees/spec-12-t19/modules/vendor/parlant that no remote-tracking ref contains, including commits only its reflogs hold (for example git rev-list with --reflog), not only commits reachable from its refs.",
+      "Each listed commit is then checked against the main worktree's submodule repository under /Users/dev/app/.git/modules, and any commit found nowhere else keeps the worktree.",
+      "No git worktree remove --force runs before those checks.",
+    ],
+  },
+  {
+    id: "worktree-cleanup-rebase", skill: "implement-spec", unchanged: true,
+    files: {
+      "state.md": `# Captured state at hand-off (raw command results)
+
+Repository /Users/dev/app has no submodules: it has no .gitmodules, and git submodule status prints nothing.
+Other sessions kept pushing to main, so before hand-off the coordinator rebased the integration branch feat/spec-12, in /Users/dev/wt/spec-12, onto origin/main. Its PR is not merged.
+The host reports that the workers for #17 and #18 and all their subagents have exited, and their reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created each worktree below.
+
+## /Users/dev/wt/spec-12-t17, branch ticket-17
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-17 feat/spec-12; echo $?
+1
+$ git cherry -v feat/spec-12 ticket-17
+- 1f2e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f0e parse intake dates
+- 2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b reject empty intake
+$ git rev-list --merges feat/spec-12..ticket-17
+(no output)
+$ git cherry -v origin/main ticket-17
++ 1f2e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f0e parse intake dates
++ 2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b reject empty intake
+
+## /Users/dev/wt/spec-12-t18, branch ticket-18
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-18 feat/spec-12; echo $?
+1
+$ git cherry -v feat/spec-12 ticket-18
+- 3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c add handoff retry
++ 4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d log handoff retries
+$ git cherry -v origin/main ticket-18
++ 3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c add handoff retry
++ 4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d log handoff retries
+`,
+    },
+    prompt: "Apply only the hand-off and clean-up part of the skill to state.md. For each worker worktree, decide whether the coordinator removes it now and give the exact command it runs. For each worktree it keeps, name the failing check and any commit that removal would lose. Do not run git, contact a tracker, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "/Users/dev/wt/spec-12-t17 counts as integrated although its commits are not ancestors of the rebased feat/spec-12, because git cherry feat/spec-12 ticket-17 prints only - lines; it is removed with git worktree remove and no --force.",
+      "/Users/dev/wt/spec-12-t18 is kept, and the handoff names 4c5d6e7 (log handoff retries), the + line of git cherry feat/spec-12 ticket-18, as the failing check.",
+      "The decision checks against feat/spec-12, not origin/main: the + lines of git cherry origin/main ticket-17 do not keep t17.",
+    ],
+  },
+  {
+    id: "worktree-cleanup-merge", skill: "implement-spec", unchanged: true,
+    files: {
+      "state.md": `# Captured state at hand-off (raw command results)
+
+Repository /Users/dev/app has one submodule, vendor/parlant, and its configuration sets diff.ignoreSubmodules=all.
+Before hand-off the coordinator rebased the integration branch feat/spec-12, in /Users/dev/wt/spec-12, onto origin/main. Its PR is not merged.
+The host reports that the worker for #21 and all its subagents have exited, and its reports and session references are saved under /var/folders/xy/T/spec-12-run. This run created the worktree below.
+
+## /Users/dev/wt/spec-12-t21, branch ticket-21
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git merge-base --is-ancestor ticket-21 feat/spec-12; echo $?
+1
+$ git cherry -v feat/spec-12 ticket-21
+- 5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e add intake schema
+- 6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f validate intake fields
+$ git worktree remove /Users/dev/wt/spec-12-t21
+(not run yet)
+`,
+    },
+    prompt: "Apply only the hand-off and clean-up part of the skill to state.md. Write, in order, the exact commands the coordinator still runs for /Users/dev/wt/spec-12-t21 before it decides whether its commits are in feat/spec-12, and what output of each would keep the worktree. Do not decide yet, run git, contact a tracker, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "Beyond the git cherry output already captured, the commands list the merge commits on ticket-21 that feat/spec-12 does not reach (for example git rev-list --merges feat/spec-12..ticket-21), because git cherry skips merge commits.",
+      "Each such merge is compared with the result Git's automatic merge of its parents would record (for example git show --remerge-diff), not only with a combined diff such as git diff-tree --cc, which hides a hunk that keeps one parent's side. Any difference, such as a conflict resolution or a dropped change of one parent, keeps the worktree.",
+      "The merge comparison shows a submodule pin changed only in the merge, despite diff.ignoreSubmodules=all (for example with --ignore-submodules=none); otherwise that configuration hides it.",
+    ],
+  },
+  {
     id: "resources-orchestrate", skill: "orchestrate", unchanged: true,
     files: { "lanes.md": "Existing lane 1 still has a running QA server on port 4100 and owns schema app_test. Lane 2 needs both resources. Lane 1 is parked but its process has not exited.\n" },
     prompt: "Use only the resource-ownership procedure to assess lanes.md. Report the next safe dispatch decision. Do not run Herdr setup, contact GitHub, or start/stop processes in this scoped probe.",
