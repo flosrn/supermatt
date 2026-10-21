@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- `implement-spec`: confines every agent's reads, writes, and shell working directory to absolute paths under its assigned worktree, apart from installed skill resources and its own temporary scratch and evidence directories, a rule each agent hands with that path to its subagents at every depth; the coordinator's starting checkout and the integration worktree are read-only to workers. Snapshots both at dispatch (status, raw staged and unstaged diff digests that a configured diff helper cannot hide, untracked contents) and checks them before each dispatch, merge, and final QA, with the integration `HEAD` checked against the last merged tip: a change since the snapshot stops integration with the changed paths named and left in place, while a starting checkout already dirty at dispatch does not stop the run.
 - `orchestrate`: on OMP, verifies each lane's worker skills with `omp skill list <worktree> --json` instead of fixed folders such as `~/.agents/skills`, so SuperMatt loaded from a custom skill directory resolves. Every required skill must resolve to the root of the running orchestrate skill, compared as the same directory rather than as text. A bare name from another root, a collision warning, a missing skill, or a failed or non-JSON listing parks the lane, naming both paths (the two in the warning, for a collision) or the exact failure. Behavioral evaluation cases cover each outcome.
 
 ### Fixed
