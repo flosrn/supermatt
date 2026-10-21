@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- `orchestrate`: on OMP, verifies each lane's worker skills with `omp skill list <worktree> --json` instead of fixed folders such as `~/.agents/skills`, so SuperMatt loaded from a custom skill directory resolves. Every required skill must resolve to the root of the running orchestrate skill, compared as the same directory rather than as text. A bare name from another root, a collision warning, a missing skill, or a failed or non-JSON listing parks the lane, naming both paths (the two in the warning, for a collision) or the exact failure. Behavioral evaluation cases cover each outcome.
+
 ### Fixed
 
 - Commit message hook: lists the accepted Conventional Commit types in rejection messages and contributor guidance without changing which subjects pass. Reads the message file whatever its path contains, so spaces, quotes, `$`, backticks, backslashes, or line breaks in the file name or a parent directory (such as a linked worktree's) no longer reject a valid subject or break the hook with a shell syntax error.
