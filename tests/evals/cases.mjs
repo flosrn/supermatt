@@ -815,6 +815,152 @@ $ git worktree remove /Users/dev/wt/spec-12-t21
     ],
   },
   {
+    id: "orchestrate-cleanup-submodules", skill: "orchestrate", unchanged: true,
+    files: {
+      "state.md": `# Captured state at lane cleanup (raw command results)
+
+Main worktree (first entry of git worktree list): /Users/dev/app.
+The host reports that every lane below and all its descendants have exited. Their reports, decisions and session references are saved under /var/folders/xy/T/orchestrate-run. Each lane completed its assigned work and this run created every worktree below. No process or resource remains owned by these lanes.
+
+## Lane 1: /Users/dev/wt/lane-1, branch lane-1
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git submodule status --recursive
+ 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
+$ git worktree remove /Users/dev/wt/lane-1
+fatal: working trees containing submodules cannot be moved or removed
+$ git -C /Users/dev/wt/lane-1 submodule absorbgitdirs
+(no output)
+$ find /Users/dev/wt/lane-1 -name HEAD
+(no output)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/lane-1/modules
+$ find /Users/dev/app/.git/worktrees/lane-1/modules -name HEAD
+/Users/dev/app/.git/worktrees/lane-1/modules/vendor/parlant/HEAD
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-1/modules/vendor/parlant --work-tree=/Users/dev/app/.git/worktrees/lane-1/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes
+(no output)
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-1/modules/vendor/parlant branch -r --contains 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f
+  origin/main
+
+## Lane 2: /Users/dev/wt/lane-2, branch lane-2
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git submodule status --recursive
+ 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b vendor/parlant (heads/main)
+$ git worktree remove /Users/dev/wt/lane-2
+fatal: working trees containing submodules cannot be moved or removed
+$ git -C /Users/dev/wt/lane-2 submodule absorbgitdirs
+(no output)
+$ find /Users/dev/wt/lane-2 -name HEAD
+(no output)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/lane-2/modules
+$ find /Users/dev/app/.git/worktrees/lane-2/modules -name HEAD
+/Users/dev/app/.git/worktrees/lane-2/modules/vendor/parlant/HEAD
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-2/modules/vendor/parlant --work-tree=/Users/dev/app/.git/worktrees/lane-2/modules/vendor/parlant rev-list 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b --all --reflog --not --remotes
+8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant --work-tree=/Users/dev/app/.git/modules/vendor/parlant rev-list --all --reflog | grep -Fx 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b
+(no output)
+
+## Lane 3: /Users/dev/wt/lane-3, branch lane-3
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git ls-files .gitmodules
+(no output)
+$ git submodule status --recursive
+(no output)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/lane-3/modules
+$ test -e /Users/dev/app/.git/worktrees/lane-3/modules; echo $?
+1
+$ git worktree remove /Users/dev/wt/lane-3
+(not run yet)
+
+## Lane 4: /Users/dev/wt/lane-4, branch lane-4 (vendor/parlant was deinitialized)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git submodule status --recursive
+-4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant
+$ git worktree remove /Users/dev/wt/lane-4
+fatal: working trees containing submodules cannot be moved or removed
+$ git -C /Users/dev/wt/lane-4 submodule absorbgitdirs
+(no output)
+$ find /Users/dev/wt/lane-4 -name HEAD
+(no output)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/lane-4/modules
+$ find /Users/dev/app/.git/worktrees/lane-4/modules -name HEAD
+/Users/dev/app/.git/worktrees/lane-4/modules/vendor/parlant/HEAD
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-4/modules/vendor/parlant --work-tree=/Users/dev/app/.git/worktrees/lane-4/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes
+2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant --work-tree=/Users/dev/app/.git/modules/vendor/parlant rev-list --all --reflog | grep -Fx 2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant rev-list --all | grep -Fx 2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c
+(no output)
+
+## Lane 5: /Users/dev/wt/lane-5, branch lane-5
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git submodule status --recursive
+ 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
+ 1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c vendor/parlant/third_party/tokenizer (heads/main)
+$ git worktree remove /Users/dev/wt/lane-5
+fatal: working trees containing submodules cannot be moved or removed
+$ git -C /Users/dev/wt/lane-5 submodule absorbgitdirs
+(no output)
+$ find /Users/dev/wt/lane-5 -name HEAD
+(no output)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/lane-5/modules
+$ find /Users/dev/app/.git/worktrees/lane-5/modules -name HEAD
+/Users/dev/app/.git/worktrees/lane-5/modules/vendor/parlant/HEAD
+/Users/dev/app/.git/worktrees/lane-5/modules/vendor/parlant/modules/third_party/tokenizer/HEAD
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-5/modules/vendor/parlant --work-tree=/Users/dev/app/.git/worktrees/lane-5/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes
+(no output)
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-5/modules/vendor/parlant/modules/third_party/tokenizer --work-tree=/Users/dev/app/.git/worktrees/lane-5/modules/vendor/parlant/modules/third_party/tokenizer rev-list 1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c --all --reflog --not --remotes
+9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-5/modules/vendor/parlant/modules/third_party/tokenizer reflog show --format=%H
+9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/parlant/modules/third_party/tokenizer --work-tree=/Users/dev/app/.git/modules/vendor/parlant/modules/third_party/tokenizer rev-list --all --reflog | grep -Fx 9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e
+(no output)
+
+## Lane 6: /Users/dev/wt/lane-6, branch lane-6 (vendor/legacy was removed with git rm)
+$ git status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+(no output)
+$ git submodule status --recursive
+ 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f vendor/parlant (v1.2.0)
+$ git worktree remove /Users/dev/wt/lane-6
+fatal: working trees containing submodules cannot be moved or removed
+$ git -C /Users/dev/wt/lane-6 submodule absorbgitdirs
+(no output)
+$ find /Users/dev/wt/lane-6 -name HEAD
+(no output)
+$ git rev-parse --git-path modules
+/Users/dev/app/.git/worktrees/lane-6/modules
+$ find /Users/dev/app/.git/worktrees/lane-6/modules -name HEAD
+/Users/dev/app/.git/worktrees/lane-6/modules/vendor/parlant/HEAD
+/Users/dev/app/.git/worktrees/lane-6/modules/vendor/legacy/HEAD
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-6/modules/vendor/parlant --work-tree=/Users/dev/app/.git/worktrees/lane-6/modules/vendor/parlant rev-list 4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f --all --reflog --not --remotes
+(no output)
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-6/modules/vendor/legacy --work-tree=/Users/dev/app/.git/worktrees/lane-6/modules/vendor/legacy rev-list --all --reflog --not --remotes
+7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b
+$ git --git-dir=/Users/dev/app/.git/worktrees/lane-6/modules/vendor/legacy show-ref --tags
+7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b refs/tags/local-backup
+$ git --git-dir=/Users/dev/app/.git/modules/vendor/legacy --work-tree=/Users/dev/app/.git/modules/vendor/legacy rev-list --all --reflog | grep -Fx 7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b
+(no output)
+`,
+    },
+    prompt: "Apply only the lane cleanup decision to state.md. For each lane, report the exact next removal command, if safe, and whether successful removal lets it finish. For each lane retained, report its parked outcome with the failing check and the commit SHA at risk. Use only the captured results: do not run git, Herdr, or tracker commands, launch agents, or edit files in this scoped probe.",
+    rubric: [
+      "Lane 1 is removed with git worktree remove --force /Users/dev/wt/lane-1 and may finish after successful removal. Force is allowed only after the captured plain removal failed specifically for submodules, with a clean tree, absorbed gitdirs, no repository left inside the worktree, and the pin held by a remote-tracking ref.",
+      "Lane 2 is retained and parked, not finished or force-removed. The failing commit-preservation check names 8a9b0c1 (or its full SHA), the pinned submodule commit absent from remote-tracking refs and from the main worktree's corresponding repository.",
+      "Lane 3 uses plain git worktree remove /Users/dev/wt/lane-3, without --force, and may finish after successful removal. The no-submodule path does not require a force retry.",
+      "Lane 4 is removed with git worktree remove --force /Users/dev/wt/lane-4 and may finish after successful removal. Deinitialization is not itself a blocker, and 2b3c4d5 is preserved by the main submodule repository's reflog even though no ref there reaches it.",
+      "Lane 5 is retained and parked with 9d8e7f6 (or its full SHA) and the failing preservation check in the nested tokenizer repository. A clean pinned parent and child do not excuse losing a commit held by the nested repository's reflog.",
+      "Lane 6 is retained and parked with 7c6b5a4 (or its full SHA) and the failing preservation check in vendor/legacy. Removal from the submodule listing does not remove its retained repository from the check, and its local-backup tag is not preservation elsewhere.",
+    ],
+  },
+  {
     id: "resources-orchestrate", skill: "orchestrate", unchanged: true,
     files: { "lanes.md": "Existing lane 1 still has a running QA server on port 4100 and owns schema app_test. Lane 2 needs both resources. Lane 1 is parked but its process has not exited.\n" },
     prompt: "Use only the resource-ownership procedure to assess lanes.md. Report the next safe dispatch decision. Do not run Herdr setup, contact GitHub, or start/stop processes in this scoped probe.",
