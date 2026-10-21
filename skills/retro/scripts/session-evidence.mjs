@@ -143,6 +143,11 @@ function ompRecords(path, main = false, cwd, entries = jsonl(path)) {
       if (typeof value.summary === "string" && value.summary) records.push({ line, kind: "summary", text: value.summary });
       continue;
     }
+    if (value?.type === "custom_message" && value.customType === "skill-prompt") {
+      const spoken = text(value.content);
+      if (spoken) records.push({ line, kind: "user", text: spoken });
+      continue;
+    }
     if (value?.type !== "message") continue;
     const role = value.message?.role;
     const spoken = text(value.message?.content);

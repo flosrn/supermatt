@@ -21,17 +21,24 @@ Codex sessions use these models and reasoning efforts:
 | B | refactor, ship | `gpt-6-astra` | `high` |
 | C | retro | `gpt-6-astra` | `high` |
 
-For Cursor and OMP, read the current session's authoritative model ID into ACTIVE_MODEL and pass that exact ID to every new worker. If authoritative metadata does not expose it, omit `--model` and record that the harness default is inherited. Never infer a model from provider family. Cursor receives no effort flag. OMP uses these phase-specific thinking levels:
+For Cursor, read the current session's authoritative model ID into ACTIVE_MODEL and pass that exact ID to every new worker. If authoritative metadata does not expose it, omit `--model` and record that the harness default is inherited. Never infer a model from provider family. Cursor receives no effort flag.
 
-| Session | Phases | Thinking |
-|---|---|---|
-| V, T, B, C | verify, triage, refactor, ship, retro | `high` |
-| A | implement, QA restart | `medium` |
-| A | review restart, fix | `high` |
+OMP sessions use these models and efforts (OMP thinking), every one through the OmniRoute gateway. Code written on Sol is reviewed on Claude, so the review reads it from another model family:
 
-Select the Claude or Codex row, or the OMP thinking row, for every launch and restart. In Codex, Cursor, and OMP, defer the review inside `/implement` to the fresh review worker in [step 3](SKILL.md#3-check-the-worker). If Codex findings reach [step 4](SKILL.md#4-fix-findings) from a Sol worker, restart on the fix row before prompting `/fix-findings`; include each finding's full text, prior reports and checked commits, and the issue reference, since the fresh session has no record of them.
+| Session | Phases | Model | Thinking |
+|---|---|---|---|
+| V | verify | `omniroute/opus-5.5` | `high` |
+| T | triage | `omniroute/opus-5.5` | `high` |
+| A | implement, QA restart in [step 3](SKILL.md#3-check-the-worker) | `omniroute-oai/sol-6.1` | `medium` |
+| A | review restart in [step 3](SKILL.md#3-check-the-worker), fix | `omniroute/opus-5.5` | `high` |
+| B | refactor, ship | `omniroute-oai/sol-6.1` | `high` |
+| C | retro | `omniroute/opus-5.5` | `high` |
 
-For OMP, resolve OMP_WORKER_CONFIG to the absolute path of [omp-worker.yml](omp-worker.yml) beside this skill, not relative to WT. This read-only launch overlay disables configured auto-resume without changing user or project settings. A missing or invalid overlay is a launch failure. `--no-prewalk` prevents an automatic model handoff. Retain normal skill discovery and permission controls; add no auto-approval, resume, or continue flags.
+Select the Claude, Codex, or OMP row for every launch and restart. In Codex, Cursor, and OMP, defer the review inside `/implement` to the fresh review worker in [step 3](SKILL.md#3-check-the-worker), so it runs on the review row's model. If findings reach [step 4](SKILL.md#4-fix-findings) from a Sol worker, restart on the fix row before prompting `/fix-findings`; include each finding's full text, prior reports and checked commits, and the issue reference, since the fresh session has no record of them.
+
+For OMP, pass each row's handle as MODEL exactly as written, never a bare model name or the native `openai-codex` provider: native `openai-codex` rotates every ChatGPT account logged into OMP, including the one reserved for GitHub PR reviews, while the gateway serves Codex from the workers' account only. A bare `--model gpt-6.1-sol` resolves to the native provider. If the gateway handle does not resolve or answer, the launch failed: park the lane rather than fall back to another model.
+
+For OMP, resolve OMP_WORKER_CONFIG to the absolute path of [omp-worker.yml](omp-worker.yml) beside this skill, not relative to WT. This read-only launch overlay disables configured auto-resume without changing user or project settings. A missing or invalid overlay is a launch failure. `--no-prewalk` prevents an automatic model handoff from overriding the phase model. Retain normal skill discovery and permission controls; add no auto-approval, resume, or continue flags.
 
 ## Dispatch preamble
 
@@ -63,7 +70,7 @@ $DISPATCH" --wait
 
 Keep the explicit skill command at the beginning of TASK so the host recognizes it. All shorter prompt recipes below and in the linked procedures are TASK bodies, never complete prompts. Native `/exit` is the sole exception and is sent unchanged. Rebuild DISPATCH for each send, including after a fresh launch, changed phase, retry, or context-clearing dialog. Pass values as quoted data, not shell-evaluated command strings.
 
-- **Start the worker**: run `herdr pane run PANE "cd WT"` with WT shell-quoted, then use the matching recipe. Claude: `herdr agent start "$WORKER" --kind claude --pane "$PANE" -- --model "$MODEL" --effort "$EFFORT"`. Codex: `herdr agent start "$WORKER" --kind codex --pane "$PANE" -- --model "$MODEL" -c "model_reasoning_effort=$EFFORT"`. Cursor: `herdr agent start "$WORKER" --kind cursor --pane "$PANE" --` plus `--model "$ACTIVE_MODEL"` only when known. OMP: `herdr agent start "$WORKER" --kind omp --pane "$PANE" --` plus `--model "$ACTIVE_MODEL"` only when known, then `--thinking "$THINKING" --no-prewalk --config "$OMP_WORKER_CONFIG"`. If the active OMP model rejects the thinking level, retry once without `--thinking` and record the fallback. Shell-quote every substituted path and value. Then run `herdr pane report-metadata PANE --source orchestrate --display-agent "worker L"`. If `agent start` returns `agent_pane_busy` or says the name is in use, wait three seconds and retry up to five times. If it returns `agent_not_ready`, answer the visible startup dialog.
+- **Start the worker**: run `herdr pane run PANE "cd WT"` with WT shell-quoted, then use the matching recipe. Claude: `herdr agent start "$WORKER" --kind claude --pane "$PANE" -- --model "$MODEL" --effort "$EFFORT"`. Codex: `herdr agent start "$WORKER" --kind codex --pane "$PANE" -- --model "$MODEL" -c "model_reasoning_effort=$EFFORT"`. Cursor: `herdr agent start "$WORKER" --kind cursor --pane "$PANE" --` plus `--model "$ACTIVE_MODEL"` only when known. OMP: `herdr agent start "$WORKER" --kind omp --pane "$PANE" -- --model "$MODEL" --thinking "$THINKING" --no-prewalk --config "$OMP_WORKER_CONFIG"`, with MODEL and THINKING from the current phase row. Shell-quote every substituted path and value. Then run `herdr pane report-metadata PANE --source orchestrate --display-agent "worker L"`. If `agent start` returns `agent_pane_busy` or says the name is in use, wait three seconds and retry up to five times. If it returns `agent_not_ready`, answer the visible startup dialog.
 - **Stop the worker**: read `herdr agent get WORKER` `.result.agent.agent_session`. Retain every Herdr-reported session ID or path in SESSIONS. A `kind: path` value must be absolute and is retained directly. For Claude and Codex IDs, also retain the transcript path under SESSION_ROOT when found. For Cursor, never manufacture a transcript path from an ID. Capture evidence before `herdr agent prompt WORKER "/exit"`. The pane and recorded transcripts remain.
 - **Restart the worker**: stop it and confirm its harness process has exited, then start it. Use a fresh launch, not `/restart`.
 - **Show phase P**: at the start of each phase in the [Loop](SKILL.md#loop), set the lane's phase to `DISPLAY P` and run `herdr tab rename "$HERDR_TAB_ID" "<each busy lane's phase, joined by ' | '>"`.
