@@ -14,8 +14,17 @@ pre-commit:
 commit-msg:
   jobs:
     - name: conventional
+      # lefthook pastes {1} into the script unquoted, so a quoted heredoc keeps every byte of the message path literal,
+      # newlines included. Only a path line reading exactly MESSAGE_PATH could end it early. The loop joins the lines
+      # back instead of capturing them with $(...), which macOS sh cannot parse around a lone apostrophe.
       run: |
-        head -1 {1} | grep -qE '^(feat|fix|docs|chore|ci|refactor)(\(.+\))?!?: .+' || { echo "Use Conventional Commits: type(scope): description"; exit 1; }
+        nl='
+        '
+        message=
+        while IFS= read -r line; do message=${message:+$message$nl}$line; done <<'MESSAGE_PATH'
+        {1}
+        MESSAGE_PATH
+        head -1 "$message" | grep -qE '^(feat|fix|docs|chore|ci|refactor)(\(.+\))?!?: .+' || { echo "Use Conventional Commits: type(scope): description. Accepted types: feat, fix, docs, chore, ci, refactor."; exit 1; }
 
 pre-push:
   parallel: true

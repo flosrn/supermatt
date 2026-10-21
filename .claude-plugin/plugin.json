@@ -1,15 +1,15 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "supermatt",
-  "displayName": "SuperMatt",
-  "version": "0.23.0",
+  "displayName": "SuperMatt (flosrn)",
+  "version": "0.23.0-flosrn.1",
   "description": "The best of Matt Pocock's Skills, Superpowers, and Compound Engineering. One complete, simple, supercharged SDLC system for your coding agent.",
   "author": {
-    "name": "Leonid Svyatov and Matt Pocock"
+    "name": "Florian Séran (fork of Leonid Svyatov and Matt Pocock)"
   },
   "license": "MIT",
   "keywords": ["skills", "workflow", "tdd", "code-review", "planning", "debugging"],
-  "homepage": "https://github.com/svyatov/supermatt",
-  "repository": "https://github.com/svyatov/supermatt",
-  "privacyPolicyUrl": "https://github.com/svyatov/supermatt/blob/main/PRIVACY.md"
+  "homepage": "https://github.com/flosrn/supermatt",
+  "repository": "https://github.com/flosrn/supermatt",
+  "privacyPolicyUrl": "https://github.com/flosrn/supermatt/blob/main/PRIVACY.md"
 }

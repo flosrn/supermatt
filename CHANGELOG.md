@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - `implement-spec`: confines every agent's reads, writes, and shell working directory to absolute paths under its assigned worktree, apart from installed skill resources and its own temporary scratch and evidence directories, a rule each agent hands with that path to its subagents at every depth; the coordinator's starting checkout and the integration worktree are read-only to workers. Snapshots both at dispatch (status, raw staged and unstaged diff digests that a configured diff helper cannot hide, untracked contents) and checks them before each dispatch, merge, and final QA, with the integration `HEAD` checked against the last merged tip: a change since the snapshot stops integration with the changed paths named and left in place, while a starting checkout already dirty at dispatch does not stop the run.
+- `orchestrate`: on OMP, verifies each lane's worker skills with `omp skill list <worktree> --json` instead of fixed folders such as `~/.agents/skills`, so SuperMatt loaded from a custom skill directory resolves. Every required skill must resolve to the root of the running orchestrate skill, compared as the same directory rather than as text. A bare name from another root, a collision warning, a missing skill, or a failed or non-JSON listing parks the lane, naming both paths (the two in the warning, for a collision) or the exact failure. Behavioral evaluation cases cover each outcome.
+
+### Fixed
+
+- Commit message hook: lists the accepted Conventional Commit types in rejection messages and contributor guidance without changing which subjects pass. Reads the message file whatever its path contains, so spaces, quotes, `$`, backticks, backslashes, or line breaks in the file name or a parent directory (such as a linked worktree's) no longer reject a valid subject or break the hook with a shell syntax error.
+- `qa`: the shared scratch dependency preflight accepts Node built-ins as resolved and lists them by name, including built-in-only checks, while retaining canonical-path output for packages and exit 1 with the existing failure message for missing packages.
+- `refactor`: hands branch-assessment readers a written branch diff so read-only subagents need no Git access.
+- `retro`: recognizes OMP `skill-prompt` custom messages as user evidence with their original source lines while skipping other custom types and rejecting userless sessions; session-evidence tests no longer read the host's session stores or identities.
+- `ship-pr`: hands delegated history readers a written per-commit diff covering roots and every parent, including merge resolutions, with a readable text pass so content that Git attributes mark binary is still screened, and leaves blobs the reader cannot read as text to the delegating session or blocks shipping.
 
 ## [0.23.0] - 2026-10-18
 
