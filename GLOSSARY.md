@@ -21,10 +21,14 @@ A `wayfinder` unit: a child **Issue** of a `wayfinder:map` holding a *question* 
 **Triage role**:
 A canonical label, either a category or a state in the triage state machine, applied to an **Issue** during triage (e.g. `needs-triage`, `ready-for-agent`). Each role maps to a real label string in the **Issue tracker** via `docs/agents/triage-labels.md`.
 
+**Tier**:
+An **Issue**'s difficulty: `light` for a small, local, low-risk change; `standard` for a normal change (the default); or `heavy` for a large, cross-cutting, or risky change. A tier is separate from an issue's category and triage state.
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**
 - A triaged **Issue** carries one category **Triage role** and one state **Triage role**
+- An **Issue** may carry one **Tier**, independently of its category and state **Triage roles**
 - A **Ticket** is an **Issue** (a slice of a spec)
 - A **Decision ticket** is an **Issue** (a child of a `wayfinder:map`)
 

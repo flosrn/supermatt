@@ -32,7 +32,7 @@ Issues live in GitHub Issues on `flosrn/supermatt` (the fork, not upstream). See
 
 ### Triage labels
 
-Default vocabulary: each of the seven triage roles uses its own name as the label. See `docs/agents/triage-labels.md`.
+Default vocabulary: each of the seven triage roles and three separate tier roles uses its own name as the label. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 

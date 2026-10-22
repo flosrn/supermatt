@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Prints open, unassigned work as "number-or-path<TAB>title<TAB>spec|ready|triage",
+// Prints open, unassigned work as "number-or-path<TAB>title<TAB>spec|ready|triage<TAB>light|standard|heavy|none|invalid",
 // specs first, then bugs, then lowest number first. An issue qualifies at one stage:
 // - spec: a parent spec (it has sub-issues, or another issue's "## Parent" section names it)
 //   whose children are all closed, so it is due for verification.
@@ -8,7 +8,7 @@
 // Specs and triage issues qualify only when filed by the repo's owner, a member, or a
 // collaborator (a stranger's issue waits for a human). Drops issues with an open blocker
 // (native, or a "Blocked by:" line) and specs with open children.
-// Usage: next-issue.mjs [--local ROOT] READY BUG TRIAGE
+// Usage: next-issue.mjs [--local ROOT] READY BUG TRIAGE LIGHT STANDARD HEAVY
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -22,12 +22,29 @@ const parents = (issue) => issue.parents ?? [...(issue.body ?? "").matchAll(/## 
 const blockers = (issue) =>
   issue.blockers ?? (issue.body ?? "").split("\n").filter((l) => l.startsWith("Blocked by:")).flatMap((l) => [...l.matchAll(/#(\d+)/g)].map((m) => Number(m[1])));
 
-export function pick(issues, ready, bug, triage) {
+export function pick(issues, ready, bug, triage, light, standard, heavy) {
   issues = issues.filter((i) => !("pull_request" in i));
   const open = new Set(issues.filter((i) => i.state === "open").map(key));
   const children = new Map();
   for (const i of issues) for (const p of parents(i)) children.set(p, [...(children.get(p) ?? []), i]);
   const labelled = (i, name) => i.labels.some((l) => l.name === name);
+  const tiers = [[light, "light"], [standard, "standard"], [heavy, "heavy"]];
+  const tierOf = (i) => {
+    if (i.localPath !== undefined) {
+      const values = i.localTiers ?? [];
+      if (values.length === 0) return "none";
+      if (values.length !== 1) return "invalid";
+      const matches = tiers.filter(([label]) => label === values[0]);
+      return matches.length === 1 ? matches[0][1] : "invalid";
+    }
+    let tier = "none";
+    for (const [label, name] of tiers) {
+      if (!labelled(i, label)) continue;
+      if (tier !== "none") return "invalid";
+      tier = name;
+    }
+    return tier;
+  };
 
   const stageOf = (i) => {
     const team = TEAM.includes(i.author_association);
@@ -43,7 +60,7 @@ export function pick(issues, ready, bug, triage) {
   const rank = (i) => (i.stage === "spec" ? 0 : labelled(i, bug) ? 1 : 2);
 
   return issues
-    .map((i) => ({ ...i, stage: stageOf(i) }))
+    .map((i) => ({ ...i, stage: stageOf(i), tier: tierOf(i) }))
     .filter((i) =>
       i.stage && i.state === "open" &&
       i.assignees.length === 0 &&
@@ -65,6 +82,7 @@ export function loadLocal(root, cwd = process.cwd()) {
       title: (body.match(/^#\s+(.+)/m)?.[1] ?? relative(root, path)).replace(/^\d+:\s*/, "").trim(),
       state: field("Closed") || status === "closed" ? "closed" : "open",
       labels: [status, field("Category")].filter(Boolean).map(name => ({ name })),
+      localTiers: [...metadata.matchAll(/^Tier:[ \t]*([^\r\n]*)/gm)].map(match => match[1].trim()),
       assignees: field("Assignee") ? [field("Assignee")] : [], author_association: "OWNER",
       blockedBy: field("Blocked by"), blockers: [],
     };
@@ -102,13 +120,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const local = args[0] === "--local";
   const root = local ? args.splice(0, 2)[1] : null;
-  if (args.length !== 3 || (local && !root?.trim())) {
-    console.error("usage: next-issue.mjs [--local ROOT] READY BUG TRIAGE");
+  if (args.length !== 6 || (local && !root?.trim())) {
+    console.error("usage: next-issue.mjs [--local ROOT] READY BUG TRIAGE LIGHT STANDARD HEAVY");
     process.exit(1);
   }
   try {
     const issues = local ? loadLocal(root) : JSON.parse(execFileSync("gh", ["api", "repos/{owner}/{repo}/issues?state=all&per_page=100", "--paginate", "--slurp"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 })).flat();
-    for (const i of pick(issues, ...args)) console.log(`${key(i)}\t${i.title.replace(/[\t\r\n]/g, " ")}\t${i.stage}`);
+    for (const i of pick(issues, ...args)) console.log(`${key(i)}\t${i.title.replace(/[\t\r\n]/g, " ")}\t${i.stage}\t${i.tier}`);
   } catch (error) {
     console.error(error.message);
     process.exit(1);

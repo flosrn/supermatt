@@ -70,12 +70,12 @@ Then invoke setup once in each repository:
 | Cursor | `/setup-supermatt-skills` |
 | OMP | `/skill:setup-supermatt-skills` |
 
-It asks where you track issues (GitHub, GitLab, or local Markdown files), which triage labels to use, and whether reviews and juries may call an external peer. It then writes:
+It asks where you track issues (GitHub, GitLab, or local Markdown files), which triage and tier labels to use, and whether reviews and juries may call an external peer. It then writes:
 
 ```text
 CLAUDE.md or AGENTS.md          "## Agent skills" section
 docs/agents/issue-tracker.md    where issues live
-docs/agents/triage-labels.md    label names for the triage roles
+docs/agents/triage-labels.md    label names for the seven triage roles and three tier roles
 docs/agents/domain.md           where GLOSSARY.md and ADRs live
 docs/agents/cross-model.json    external peer mode, model, and effort settings
 ```
@@ -223,7 +223,7 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 | **[ship-pr](./skills/ship-pr/SKILL.md)** | Commit, push, open a pull request, repair CI within bounded attempts, then squash merge and verify post-merge workflows. |
 | **[babysit-pr](./skills/babysit-pr/SKILL.md)** | Watch a pull request until it is ready to merge: open it when the branch has none, handle review feedback before CI, recover CI within a bounded budget, keep the branch current, and stop without merging. |
 | **[fix-findings](./skills/fix-findings/SKILL.md)** | Apply every finding from the most recent review, audit, verification, or check, at the root cause and without widening scope. |
-| **[setup-supermatt-skills](./skills/setup-supermatt-skills/SKILL.md)** | Configure this repo for the engineering skills: issue tracker, triage labels, domain doc layout, and external peer policy. Run once per repo. |
+| **[setup-supermatt-skills](./skills/setup-supermatt-skills/SKILL.md)** | Configure this repo for the engineering skills: issue tracker, triage and tier labels, domain doc layout, and external peer policy. Run once per repo. |
 | **[to-spec](./skills/to-spec/SKILL.md)** | Turn the current conversation into a spec and publish it to the issue tracker. |
 | **[to-tickets](./skills/to-tickets/SKILL.md)** | Break any plan, spec, or conversation into a set of tracer-bullet tickets, each declaring its blocking edges, as text in one file per ticket locally or as native blocking links where supported, otherwise the configured textual fallback. |
 | **[implement](./skills/implement/SKILL.md)** | Build the work described by a spec, tickets, or triaged issues, driving `/tdd` at pre-agreed seams, then committing, checking it with `/qa`, and closing out with `/code-review`. |
