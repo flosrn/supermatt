@@ -49,7 +49,7 @@ Default posture: these skills were designed for GitHub. If a `git remote` points
 
 Record the choice in `docs/agents/issue-tracker.md`. The GitHub and GitLab templates carry a "PRs as a request surface" flag. Default it to **off** for new files; preserve an existing value on reruns. Don't raise it: a user who wants external PRs in the triage queue can flip the flag in the file later.
 
-**Section B: Triage and tier label vocabulary.** `to-spec`, `to-tickets`, and `triage` apply triage labels; `orchestrate` reads tier labels. This section always runs. Tier roles describe issue difficulty, not triage state: `/triage` neither sets nor reads them, and its state machine stays unchanged.
+**Section B: Triage and tier label vocabulary.** `to-spec`, `to-tickets`, and `triage` apply triage labels; `orchestrate` reads tier labels and sets missing tiers through session T after READY triage in every harness, or in a ready-issue tier-only session on OMP only. This section always runs. Tier roles describe issue difficulty, not triage state: `/triage` neither sets nor reads them, and its state machine stays unchanged.
 
 On first setup, ask:
 

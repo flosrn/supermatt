@@ -11,10 +11,10 @@ license: MIT
 
 You are the orchestrator. You do not write code. You pick issues, drive workers in the same harness that runs you, and check their results. The work runs in LANES parallel lanes: each lane is a herdr pane beside yours and a git worktree of its own, and works one issue at a time. A spec whose tickets are all closed comes first: one worker session **V** checks the whole spec against the code (see [SPEC.md](SPEC.md)). Bugs come next, then the other tickets. Each ticket runs through up to four worker sessions, each with a fresh context:
 
-1. **T**: `/triage REF`, for a team-filed issue that is not triaged yet, regardless of category, to make it ready for an agent.
+1. **T**: `/triage REF`, for a team-filed issue that is not triaged yet, regardless of category, to make it ready for an agent. In every harness, T also sets a missing tier after a READY triage outcome through the shared [tier prompt](TRIAGE.md#tier-prompt). On OMP only, an already-ready issue whose queue tier is `none` at pick gets a tier-only T session using that same prompt.
 2. **A**: `/implement REF`, which QAs, reviews, and fixes its own work, then any fixes it left.
 3. **B**: `/refactor`, then `/ship-pr` to merge.
-4. **C**: `/retro` over A and B, reporting candidates for the operator without applying them.
+4. **C**: `/retro` over the retained T, A, and B sessions, reporting candidates for the operator without applying them.
 
 Repeat until a stop condition is met. Never ask the user anything, through a question tool or otherwise: answer every question and dialog as below.
 
@@ -74,9 +74,13 @@ When a worker is `blocked`, or has an open question (QUESTION is not NONE, or it
 
 If the operator asked you to pause, the lane goes idle. Otherwise run QUEUE in the main checkout. It lists the open, unassigned issues to work on, with an open blocker (native, or a `Blocked by:` line) dropped: specs whose tickets are all closed, then bugs, then the rest, lowest number first, then path for tied local numbers. Each line is `key<TAB>title<TAB>stage<TAB>tier`: stage is `spec`, `ready`, or `triage`; tier is the canonical name `light`, `standard`, `heavy`, `none`, or `invalid`, not the configured string. GitHub specs and TRIAGE issues count only when the repo's own team (OWNER, MEMBER, or COLLABORATOR) filed them; outsider issues wait for human triage unless already READY. TRIAGE qualifies regardless of category, and READY takes precedence when both labels are present. Local files use the repository's trusted tracker; malformed or missing blocker references fail the read.
 
-On GitHub, only labels equal to LIGHT, STANDARD, or HEAVY count as tiers: none gives `none`, exactly one gives its canonical name, and more than one gives `invalid`. Other labels are ignored even with a `tier:` prefix. For local tier metadata, use [LOCAL.md](LOCAL.md#setup-and-selection). The tier never changes stage, filtering, or rank. Specs carry the same computed fourth column. Orchestrate displays the tier but does not set it or act on it yet; worker phases and model policies stay unchanged.
+On GitHub, only labels equal to LIGHT, STANDARD, or HEAVY count as tiers: none gives `none`, exactly one gives its canonical name, and more than one gives `invalid`. Other labels are ignored even with a `tier:` prefix. For local tier metadata, use [LOCAL.md](LOCAL.md#setup-and-selection). The tier never changes stage, filtering, or rank. Specs carry the same computed fourth column but never receive a tier prompt. Orchestrate sets missing tiers through session T after READY triage in every harness, and through ready-issue tier-only sessions on OMP only; worker model and effort policies remain independent of tier.
 
 Take the first line whose key is not in IN_FLIGHT. If there is none, the lane goes idle. Add its key to IN_FLIGHT, set REF and DISPLAY, and say `lane L: DISPLAY title`. Empty SESSIONS. Create the worktree: with no branch for a `spec`; otherwise on branch `fix/ID-<slug>` for an issue labelled BUG and `feat/ID-<slug>` for any other, where slug is the title in lowercase kebab case, at most 40 characters. ID is N for GitHub; for local files use K-L plus a counter incremented on each pick in that lane, so repeated numbers and titles cannot collide. If its stage column is `spec`, verify it: read [SPEC.md](SPEC.md). If it is `triage`, triage it first: read [TRIAGE.md](TRIAGE.md).
+
+For a picked `ready` issue, use the queue tier at pick as a gate only. When it is `none` and KIND is `omp`, show phase `tier` and start session T using the existing OMP T model and thinking row in [WORKER.md](WORKER.md). Send only the shared [tier prompt](TRIAGE.md#tier-prompt) as TASK through the normal dispatch preamble, substituting REF, CONFIG, and LIGHT/STANDARD/HEAVY as defined there; do not invoke `/triage`. After the attempt, stop the worker and confirm its harness process has exited, retaining its session in SESSIONS for Retro, then proceed to Implement. Every tier-prompt failure, including an unsuccessful tracker write, or absence of a resulting tier still proceeds to Implement. Existing worker launch, control-command, and session-evidence failure rules remain in force.
+
+Claude Code, Codex, and Cursor start no tier-only session. A picked `ready` issue with tier `light`, `standard`, `heavy`, or `invalid` goes directly to Implement without re-tiering. A `spec` goes only to spec verification, regardless of tier. The `triage` path keeps [TRIAGE.md](TRIAGE.md)'s READY and non-READY handling.
 
 ### 2. Implement (session A)
 
