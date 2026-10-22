@@ -51,19 +51,18 @@ Remove only the temporary profile after preserving the smoke output. Never reuse
 
 ## Check your change
 
-Run these checks before you open a pull request. CI runs them too:
+Run these checks before you open a pull request. CI runs them too, except for the TUI suite noted below:
 
 ```
 claude plugin validate --strict .
 claude plugin validate --strict ./skills
-sh tests/link-skills.test.sh
-sh tests/mutate.test.sh
-sh tests/release.test.sh
-sh tests/directory-branch.test.sh
+for t in tests/*.test.sh; do sh "$t" || exit 1; done
 bun test tests/
 ```
 
-`bun test tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`.
+`bun test tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. The local shell loop runs every `tests/*.test.sh` file and stops on the first failure, matching the pre-push hook. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`. `tests/tui.test.sh` requires tmux and tests the `qa` terminal helper, including process-cleanup regressions on a private tmux server.
+
+Linux CI excludes only `tests/tui.test.sh`: on Ubuntu 24.04 with tmux 3.4, the existing tab-width assertion gets seven spaces before `end` instead of five after a private-use folder glyph (U+F07B), including with `LANG=C.UTF-8`. This glyph-width/tab-padding mismatch is unrelated to process cleanup; the new cleanup cases pass before that assertion. The local loop above still includes the TUI suite and requires tmux.
 
 ### Codex-only discovery and behavioral evaluation
 

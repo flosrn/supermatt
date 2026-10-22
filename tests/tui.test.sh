@@ -8,7 +8,25 @@ TMP="$(mktemp -d)"
 TUI="$REPO/skills/qa/scripts/tui.sh"
 export TMUX_TMPDIR="$TMP"
 unset TMUX
-trap 'tmux kill-server 2>/dev/null || true; tmux -S "$TMP/outer.sock" kill-server 2>/dev/null || true; rm -rf "$TMP"' EXIT
+cleanup() {
+  tmux kill-server 2>/dev/null || true
+  tmux -S "$TMP/outer.sock" kill-server 2>/dev/null || true
+  TMUX_TMPDIR="$TMP/hup-server" tmux kill-server 2>/dev/null || true
+  TMUX_TMPDIR="$TMP/failure-server" tmux kill-server 2>/dev/null || true
+  TMUX_TMPDIR="$TMP/prefix-server" tmux kill-server 2>/dev/null || true
+  if [ -f "$TMP/failure-pane.pids" ]; then
+    while IFS= read -r pid; do
+      kill -KILL "$pid" 2>/dev/null || true
+    done < "$TMP/failure-pane.pids"
+  fi
+  if [ -f "$TMP/hup-shell.pids" ]; then
+    while IFS= read -r pid; do
+      kill -KILL "$pid" 2>/dev/null || true
+    done < "$TMP/hup-shell.pids"
+  fi
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -74,6 +92,156 @@ for launch in "$TMP"/tui-launch.*; do
   [ ! -e "$launch" ] || fail "argument recorder left its launch script behind"
 done
 sh "$TUI" stop qa-argv
+
+# A failed setup after session creation must remove both the session and its
+# real pane process, whether setting the option or respawning the pane fails.
+mkdir "$TMP/failure-server" "$TMP/failure-bin"
+failure_real_tmux=$(command -v tmux)
+cat > "$TMP/failure-bin/tmux" <<'EOF'
+#!/bin/sh
+if [ "$1" = "$TUI_FAIL_COMMAND" ]; then
+  touch "$TUI_FAILURE_REACHED"
+  exit 1
+fi
+if [ "$1" = new-session ]; then
+  "$TUI_REAL_TMUX" "$@" || exit $?
+  pid=$("$TUI_REAL_TMUX" display -p -t "$TUI_FAILURE_SESSION" '#{pane_pid}') || exit 1
+  printf '%s\n' "$pid" >> "$TUI_OWNED_PIDS"
+  printf '%s\n' "$pid" > "$TUI_PANE_PID"
+  exit 0
+fi
+exec "$TUI_REAL_TMUX" "$@"
+EOF
+chmod +x "$TMP/failure-bin/tmux"
+: > "$TMP/start-failures"
+for failed_command in set-option respawn-pane; do
+  session="qa-fail-$failed_command"
+  if TMUX_TMPDIR="$TMP/failure-server" TUI_REAL_TMUX="$failure_real_tmux" \
+    TUI_FAIL_COMMAND="$failed_command" TUI_FAILURE_SESSION="$session" \
+    TUI_FAILURE_REACHED="$TMP/$failed_command.reached" \
+    TUI_OWNED_PIDS="$TMP/failure-pane.pids" TUI_PANE_PID="$TMP/$failed_command.pid" \
+    PATH="$TMP/failure-bin:$PATH" \
+    sh "$TUI" start "$session" 40 10 sleep 30 \
+    >"$TMP/$failed_command.out" 2>"$TMP/$failed_command.err"; then
+    echo "$failed_command: failed start returned zero" >> "$TMP/start-failures"
+  fi
+  [ -f "$TMP/$failed_command.reached" ] ||
+    echo "$failed_command: the injected failure was not reached" >> "$TMP/start-failures"
+  if TMUX_TMPDIR="$TMP/failure-server" "$failure_real_tmux" has-session -t "$session" 2>/dev/null; then
+    echo "$failed_command: failed start left its session" >> "$TMP/start-failures"
+  fi
+  if [ -s "$TMP/$failed_command.pid" ]; then
+    pid=$(cat "$TMP/$failed_command.pid")
+    tries=50
+    while kill -0 "$pid" 2>/dev/null && [ "$tries" -gt 0 ]; do
+      sleep 0.1
+      tries=$((tries - 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "$failed_command: failed start left pane process $pid alive" >> "$TMP/start-failures"
+    fi
+  else
+    echo "$failed_command: no real pane pid was recorded" >> "$TMP/start-failures"
+  fi
+  for launch in "$TMP/failure-server"/tui-launch.*; do
+    [ ! -e "$launch" ] ||
+      echo "$failed_command: failed start left its launch script" >> "$TMP/start-failures"
+  done
+  # Keep the next case independent, including when the assertions above are red.
+  TMUX_TMPDIR="$TMP/failure-server" "$failure_real_tmux" kill-session -t "$session" 2>/dev/null || true
+done
+# Report only after both failure boundaries have been exercised.
+if [ -s "$TMP/start-failures" ]; then
+  cat "$TMP/start-failures" >&2
+  fail "failed starts did not clean up"
+fi
+
+# tmux resolves a session name that matches nothing exactly as a prefix of
+# another session. When the new session is closed before start configures or
+# respawns it, start must fail without configuring, respawning, or killing a
+# session it did not create, whether that tmux step then succeeds or fails.
+mkdir "$TMP/prefix-server" "$TMP/prefix-bin"
+prefix_real_tmux=$(command -v tmux)
+cat > "$TMP/prefix-bin/tmux" <<'EOF'
+#!/bin/sh
+# Another client closes the new session just before the chosen start step.
+if [ "$1" = "$TUI_VANISH_BEFORE" ]; then
+  "$TUI_REAL_TMUX" kill-session -t "=$TUI_VANISHING_SESSION" || exit 1
+  [ "$TUI_FAIL_AFTER_VANISH" = no ] || exit 1
+fi
+exec "$TUI_REAL_TMUX" "$@"
+EOF
+chmod +x "$TMP/prefix-bin/tmux"
+TMUX_TMPDIR="$TMP/prefix-server" tmux new-session -d -s qa-prefix-other sleep 60
+# The trailing : makes the target this session's pane: without it, display
+# resolves no pane yet exits 0 with empty values.
+other_pid=$(TMUX_TMPDIR="$TMP/prefix-server" tmux display -p -t '=qa-prefix-other:' '#{pane_pid}')
+[ -n "$other_pid" ] || fail "the prefix test could not read its sibling session's pane"
+for vanish_before in set-option respawn-pane; do
+  for fail_after_vanish in no yes; do
+    case_name="vanish before $vanish_before, that step fails: $fail_after_vanish"
+    if TMUX_TMPDIR="$TMP/prefix-server" TUI_REAL_TMUX="$prefix_real_tmux" \
+      TUI_VANISHING_SESSION=qa-prefix TUI_VANISH_BEFORE="$vanish_before" \
+      TUI_FAIL_AFTER_VANISH="$fail_after_vanish" PATH="$TMP/prefix-bin:$PATH" \
+      sh "$TUI" start qa-prefix 40 10 sleep 30 \
+      >"$TMP/prefix-$vanish_before-$fail_after_vanish.out" \
+      2>"$TMP/prefix-$vanish_before-$fail_after_vanish.err"; then
+      fail "start succeeded after its session vanished ($case_name)"
+    fi
+    TMUX_TMPDIR="$TMP/prefix-server" tmux has-session -t '=qa-prefix-other' 2>/dev/null ||
+      fail "a failed start killed another session its name prefixes ($case_name)"
+    [ "$(TMUX_TMPDIR="$TMP/prefix-server" tmux display -p -t '=qa-prefix-other:' '#{pane_pid} #{remain-on-exit}')" = "$other_pid off" ] ||
+      fail "a failed start changed another session its name prefixes ($case_name)"
+  done
+done
+TMUX_TMPDIR="$TMP/prefix-server" tmux kill-server
+
+# A user's default shell can ignore HUP while tmux replaces its placeholder.
+# Even then, stop followed by server shutdown must leave no process behind.
+mkdir "$TMP/hup-server" "$TMP/hup-bin"
+real_tmux=$(command -v tmux)
+cat > "$TMP/hup-shell" <<'EOF'
+#!/bin/sh
+trap '' HUP
+echo "$$" >> "$TUI_SHELL_PIDS"
+exec /bin/sh -c "$2"
+EOF
+cat > "$TMP/hup-bin/tmux" <<'EOF'
+#!/bin/sh
+# Keep real tmux behavior, but let the placeholder enter the warmed shell.
+if [ "$1" = respawn-pane ]; then
+  sleep 1
+fi
+exec "$TUI_REAL_TMUX" "$@"
+EOF
+chmod +x "$TMP/hup-shell" "$TMP/hup-bin/tmux"
+# The first exec of a fresh script can be slow on macOS. Warm it without
+# keeping the warmup's already-exited pid in the ownership ledger.
+TUI_SHELL_PIDS="$TMP/hup-shell.pids" "$TMP/hup-shell" -c ':'
+rm "$TMP/hup-shell.pids"
+TMUX_TMPDIR="$TMP/hup-server" SHELL="$TMP/hup-shell" \
+  TUI_SHELL_PIDS="$TMP/hup-shell.pids" TUI_REAL_TMUX="$real_tmux" \
+  PATH="$TMP/hup-bin:$PATH" \
+  sh "$TUI" start qa-hup 40 10 sh -c 'echo hup-ready; exec sleep 30' \
+  || fail "start failed with a HUP-ignoring default shell"
+TMUX_TMPDIR="$TMP/hup-server" sh "$TUI" wait qa-hup hup-ready 5 >/dev/null \
+  || fail "the HUP regression program did not become ready"
+TMUX_TMPDIR="$TMP/hup-server" sh "$TUI" stop qa-hup
+TMUX_TMPDIR="$TMP/hup-server" tmux kill-server 2>/dev/null || true
+# With direct command execution the default shell is never called, so an
+# absent ledger is valid. If called, every pid must disappear within 5 s.
+if [ -f "$TMP/hup-shell.pids" ]; then
+  while IFS= read -r pid; do
+    tries=50
+    while kill -0 "$pid" 2>/dev/null && [ "$tries" -gt 0 ]; do
+      sleep 0.1
+      tries=$((tries - 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      fail "HUP-ignoring default shell process $pid survived stop and server shutdown"
+    fi
+  done < "$TMP/hup-shell.pids"
+fi
 
 # A pane can disappear after display/send-keys succeeds. Polling must propagate
 # capture failure instead of accepting absent text or a stable empty screen.
