@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - `qa`: accepts Node built-ins in the shared scratch dependency preflight, including built-in-only checks, while preserving package resolution and missing-package failures.
+- `retro`: recognizes OMP `skill-prompt` custom messages as user evidence with their original source lines while skipping other custom types and rejecting userless sessions.
 
 ## [0.23.0] - 2026-10-18
 
