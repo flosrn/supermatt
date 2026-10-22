@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadLocal, pick } from "../skills/orchestrate/scripts/next-issue.mjs";
+import { loadLocal, pick, only } from "../skills/orchestrate/scripts/next-issue.mjs";
 
 const issue = (number, { state = "open", labels = ["ready-for-agent"], body = "", author = "OWNER", ...extra } = {}) => ({
   number, title: `t${number}`, state, body,
@@ -16,6 +16,39 @@ const issue = (number, { state = "open", labels = ["ready-for-agent"], body = ""
 
 const picked = (issues) => pick(issues, "ready-for-agent", "bug", "needs-triage", "tier:light", "tier:standard", "tier:heavy");
 const numbers = (issues) => picked(issues).map((i) => i.number);
+const scoped = (issues, keys) => only(issues, keys, "ready-for-agent", "bug", "needs-triage", "tier:light", "tier:standard", "tier:heavy");
+
+test("only keeps named keys in queue order and collapses duplicates", () => {
+  const result = scoped([issue(36), issue(35), issue(34)], ["35", "34", "35"]);
+  assert.deepEqual(result.issues.map(i => [i.number, i.stage, i.tier]), [[34, "ready", "none"], [35, "ready", "none"]]);
+  assert.deepEqual(result.skipped, []);
+});
+
+test("only explains missing refs in requested order with skip precedence", () => {
+  const result = scoped([
+    issue(1, { pull_request: {}, state: "closed", assignees: [{}] }),
+    issue(2, { state: "closed", assignees: [{}], issue_dependencies_summary: { blocked_by: 1 }, labels: [] }),
+    issue(3, { assignees: [{}], issue_dependencies_summary: { blocked_by: 1 }, labels: [] }),
+    issue(4, { issue_dependencies_summary: { blocked_by: 1 }, labels: [] }),
+    issue(5, { body: "Blocked by: #9" }),
+    issue(6, { labels: [] }),
+    issue(7, { labels: ["needs-triage"], author: "NONE" }),
+    issue(8, { body: "", labels: ["ready-for-agent"] }),
+    issue(9, { body: "## Parent\n\n#8", labels: [] }),
+  ], ["99", "1", "2", "3", "5", "4", "6", "7", "8", "99"]);
+  assert.deepEqual(result.issues, []);
+  assert.deepEqual(result.skipped, [
+    { key: "99", reason: "not found" },
+    { key: "1", reason: "not found" },
+    { key: "2", reason: "closed" },
+    { key: "3", reason: "assigned" },
+    { key: "5", reason: "blocked" },
+    { key: "4", reason: "blocked" },
+    { key: "6", reason: "not at any stage" },
+    { key: "7", reason: "not at any stage" },
+    { key: "8", reason: "not at any stage" },
+  ]);
+});
 
 test("one mapped light tier label gives the light tier", () => {
   const queue = picked([issue(1, { labels: ["ready-for-agent", "tier:light"] })]);
@@ -451,7 +484,7 @@ for (const count of [0, 3, 5, 7]) {
     });
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
-    assert.equal(result.stderr, "usage: next-issue.mjs [--local ROOT] READY BUG TRIAGE LIGHT STANDARD HEAVY\n");
+    assert.equal(result.stderr, "usage: next-issue.mjs [--local ROOT] [--only KEY[,KEY...]] READY BUG TRIAGE LIGHT STANDARD HEAVY\n");
   });
 }
 
@@ -469,7 +502,7 @@ for (const [name, localArgs] of [
     });
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
-    assert.equal(result.stderr, "usage: next-issue.mjs [--local ROOT] READY BUG TRIAGE LIGHT STANDARD HEAVY\n");
+    assert.equal(result.stderr, "usage: next-issue.mjs [--local ROOT] [--only KEY[,KEY...]] READY BUG TRIAGE LIGHT STANDARD HEAVY\n");
   });
 }
 
@@ -485,3 +518,42 @@ test("local CLI accepts exactly six mapping arguments", (t) => {
   assert.equal(result.stderr, "");
   assert.equal(result.stdout, ".scratch/feature/issues/01-work.md\tWork\tready\tstandard\n");
 });
+
+for (const onlyFirst of [false, true]) {
+  test(`local CLI scopes two bugs and reports skips with --only ${onlyFirst ? "before" : "after"} --local`, (t) => {
+    const root = localTracker(t, {
+      ".scratch/feature/issues/01-bug.md": "# First bug\nStatus: ready-for-agent\nCategory: bug\nTier: tier:light\n",
+      ".scratch/feature/issues/02-bug.md": "# Second bug\nStatus: needs-triage\nCategory: bug\nTier: tier:heavy\n",
+      ".scratch/feature/issues/03-ready.md": "# Unnamed\nStatus: ready-for-agent\n",
+      ".scratch/feature/issues/04-closed.md": "# Closed\nStatus: closed\n",
+    });
+    const script = fileURLToPath(new URL("../skills/orchestrate/scripts/next-issue.mjs", import.meta.url));
+    const onlyArgs = ["--only", ".scratch/feature/issues/02-bug.md,.scratch/feature/issues/04-closed.md,.scratch/missing.md,.scratch/feature/issues/01-bug.md,.scratch/missing.md"];
+    const localArgs = ["--local", ".scratch"];
+    const result = spawnSync(process.execPath, [script, ...(onlyFirst ? [...onlyArgs, ...localArgs] : [...localArgs, ...onlyArgs]),
+      "ready-for-agent", "bug", "needs-triage", "tier:light", "tier:standard", "tier:heavy"], {
+      cwd: root, env: { ...process.env, PATH: "" }, encoding: "utf8",
+    });
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, ".scratch/feature/issues/01-bug.md\tFirst bug\tready\tlight\n.scratch/feature/issues/02-bug.md\tSecond bug\ttriage\theavy\n");
+    assert.equal(result.stderr, "skipped\t.scratch/feature/issues/04-closed.md\tclosed\nskipped\t.scratch/missing.md\tnot found\n");
+  });
+}
+
+for (const [name, filterArgs] of [
+  ["missing", ["--only"]],
+  ["missing before mappings", ["--only", "ready-for-agent", "bug", "needs-triage", "tier:light", "tier:standard", "tier:heavy"]],
+  ["empty", ["--only", "", "ready-for-agent", "bug", "needs-triage", "tier:light", "tier:standard", "tier:heavy"]],
+  ["empty element", ["--only", "34,,35", "ready-for-agent", "bug", "needs-triage", "tier:light", "tier:standard", "tier:heavy"]],
+]) {
+  test(`CLI rejects a ${name} --only value with usage and status 1`, (t) => {
+    const root = localTracker(t, {});
+    const script = fileURLToPath(new URL("../skills/orchestrate/scripts/next-issue.mjs", import.meta.url));
+    const result = spawnSync(process.execPath, [script, "--local", root, ...filterArgs], {
+      cwd: root, env: { ...process.env, PATH: "" }, encoding: "utf8",
+    });
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "usage: next-issue.mjs [--local ROOT] [--only KEY[,KEY...]] READY BUG TRIAGE LIGHT STANDARD HEAVY\n");
+  });
+}
