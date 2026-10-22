@@ -31,10 +31,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: sh tests/link-skills.test.sh
-      - run: sh tests/mutate.test.sh
-      - run: sh tests/release.test.sh
-      - run: sh tests/directory-branch.test.sh
+      - name: Ensure tmux is installed
+        run: |
+          if ! command -v tmux >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y tmux
+          fi
+      - run: for t in tests/*.test.sh; do sh "$t" || exit 1; done
       - run: node --test tests/*.test.mjs
 
   skills:
