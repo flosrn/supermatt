@@ -51,7 +51,7 @@ Remove only the temporary profile after preserving the smoke output. Never reuse
 
 ## Check your change
 
-Run these checks before you open a pull request. CI runs them too, except for the TUI suite noted below:
+Run these checks before you open a pull request. CI runs them too, with the TUI suite's glyph-width relaxation noted below:
 
 ```
 claude plugin validate --strict .
@@ -62,7 +62,7 @@ bun test tests/
 
 `bun test tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. The local shell loop runs every `tests/*.test.sh` file and stops on the first failure, matching the pre-push hook. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`. `tests/tui.test.sh` requires tmux and tests the `qa` terminal helper, including process-cleanup regressions on a private tmux server.
 
-Linux CI excludes only `tests/tui.test.sh`: on Ubuntu 24.04 with tmux 3.4, the existing tab-width assertion gets seven spaces before `end` instead of five after a private-use folder glyph (U+F07B), including with `LANG=C.UTF-8`. This glyph-width/tab-padding mismatch is unrelated to process cleanup; the new cleanup cases pass before that assertion. The local loop above still includes the TUI suite and requires tmux.
+Linux CI installs tmux and runs every shell suite, `tests/tui.test.sh` included, with `TUI_SKIP_GLYPH_WIDTH=1`. On Ubuntu 24.04 with tmux 3.4, the screen check after a private-use folder glyph (U+F07B) gets seven spaces before `end` instead of five, including with `LANG=C.UTF-8`. With the variable set to `1`, the TUI suite prints a notice to stderr and checks that line without counting those spaces; every other assertion, the process-cleanup cases included, runs unchanged. Leave the variable unset locally and in the pre-push hook, so the exact five-space comparison runs.
 
 ### Codex-only discovery and behavioral evaluation
 

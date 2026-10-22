@@ -31,10 +31,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Linux private-use-glyph widths produce different tab padding in the TUI suite.
-      - run: |
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      # Ubuntu's tmux pads seven spaces after U+F07B instead of five; skip only that count.
+      - env:
+          TUI_SKIP_GLYPH_WIDTH: "1"
+        run: |
           for t in tests/*.test.sh; do
-            [ "$t" = tests/tui.test.sh ] && continue
             sh "$t" || exit 1
           done
       - run: node --test tests/*.test.mjs
