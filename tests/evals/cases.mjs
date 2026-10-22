@@ -967,6 +967,30 @@ $ git --git-dir=/Users/dev/app/.git/modules/vendor/legacy --work-tree=/Users/dev
     rubric: ["Parking lane 1 does not release resources still used by its live process.", "Lane 2 receives distinct resources or waits for verified release.", "The report names the owner and the evidence needed before reassignment."],
   },
   {
+    id: "orchestrate-main-checkout-sync", skill: "orchestrate", unchanged: true,
+    files: {
+      "state.md": `# Captured Close out state
+
+Lane 1 is at Close out step 3. Its PR is merged, and steps 1 and 2 are complete.
+Main checkout: /Users/dev/app
+DEFAULT: trunk
+
+$ git -C /Users/dev/app branch --show-current
+trunk
+$ git -C /Users/dev/app status --porcelain=v1 --untracked-files=all
+(no output)
+
+The main checkout has not yet been synchronized after the merge.
+`,
+    },
+    prompt: "Apply only Close out step 3 to the captured state.md. Report the commands to synchronize the main checkout, in order, and the lane outcome if either synchronization command fails. Do not execute commands, run Herdr setup, contact GitHub, start or stop processes, launch agents, edit files, or advance to later Close out steps in this scoped probe.",
+    rubric: [
+      "The main checkout at /Users/dev/app runs git fetch origin followed, only on success, by git merge --ff-only origin/trunk, using the captured DEFAULT rather than assuming main.",
+      "No git pull is run or proposed, including git pull --ff-only.",
+      "Failure of either fetch or merge parks the lane with the failing command and error, without retrying the synchronization or continuing Close out.",
+    ],
+  },
+  {
     id: "performance", skill: "diagnosing-bugs", unchanged: true,
     files: { "measurements.json": '{"baseline_ms":[100,103,98,101,99],"candidate_ms":[99,101,102,98,100],"fast_wrong_ms":[50,51,49],"fast_wrong_correct":false,"metric":"single-request latency","budget":"one more paired comparison"}\n' },
     prompt: "Use only the performance branch to assess these already captured measurements. Decide whether either candidate is an improvement and describe the bounded next experiment. No code edits or invented benchmark runs.",
