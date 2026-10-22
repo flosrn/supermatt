@@ -63,15 +63,17 @@ start() {
     printf exec
     perl -e 'for (@ARGV) { s/\x27/\x27\\\x27\x27/g; print " \x27$_\x27" } print "\n"' -- "$@"
   } > "$launch" || { rm -f "$launch"; return 1; }
-  if ! tmux new-session -d -s "$session" -x "$cols" -y "$rows" -c "$PWD" sleep 86400; then
+  # Address the new session by its ID: a name that no longer matches exactly
+  # would resolve as a prefix of another session.
+  if ! id=$(tmux new-session -d -P -F '#{session_id}' -s "$session" -x "$cols" -y "$rows" -c "$PWD" sleep 86400); then
     rm -f "$launch"
     return 1
   fi
-  if tmux set-option -t "$session" remain-on-exit on > /dev/null &&
-    tmux respawn-pane -k -t "$session" sh "$launch"; then
+  if tmux set-option -t "$id" remain-on-exit on > /dev/null &&
+    tmux respawn-pane -k -t "$id" sh "$launch"; then
     return 0
   fi
-  tmux kill-session -t "$session"
+  tmux kill-session -t "$id"
   rm -f "$launch"
   return 1
 }
