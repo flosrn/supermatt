@@ -157,15 +157,15 @@ if [ -s "$TMP/start-failures" ]; then
 fi
 
 # tmux resolves a session name that matches nothing exactly as a prefix of
-# another session. When the new session is closed before start configures it,
-# start must fail without configuring, respawning, or killing a session it did
-# not create, whether the next tmux step then succeeds or fails.
+# another session. When the new session is closed before start configures or
+# respawns it, start must fail without configuring, respawning, or killing a
+# session it did not create, whether that tmux step then succeeds or fails.
 mkdir "$TMP/prefix-server" "$TMP/prefix-bin"
 prefix_real_tmux=$(command -v tmux)
 cat > "$TMP/prefix-bin/tmux" <<'EOF'
 #!/bin/sh
-# Another client closes the new session just before start configures it.
-if [ "$1" = set-option ]; then
+# Another client closes the new session just before the chosen start step.
+if [ "$1" = "$TUI_VANISH_BEFORE" ]; then
   "$TUI_REAL_TMUX" kill-session -t "=$TUI_VANISHING_SESSION" || exit 1
   [ "$TUI_FAIL_AFTER_VANISH" = no ] || exit 1
 fi
@@ -173,19 +173,26 @@ exec "$TUI_REAL_TMUX" "$@"
 EOF
 chmod +x "$TMP/prefix-bin/tmux"
 TMUX_TMPDIR="$TMP/prefix-server" tmux new-session -d -s qa-prefix-other sleep 60
-other_pid=$(TMUX_TMPDIR="$TMP/prefix-server" tmux display -p -t '=qa-prefix-other' '#{pane_pid}')
-for fail_after_vanish in no yes; do
-  if TMUX_TMPDIR="$TMP/prefix-server" TUI_REAL_TMUX="$prefix_real_tmux" \
-    TUI_VANISHING_SESSION=qa-prefix TUI_FAIL_AFTER_VANISH="$fail_after_vanish" \
-    PATH="$TMP/prefix-bin:$PATH" \
-    sh "$TUI" start qa-prefix 40 10 sleep 30 \
-    >"$TMP/prefix-$fail_after_vanish.out" 2>"$TMP/prefix-$fail_after_vanish.err"; then
-    fail "start succeeded after its session vanished (next step fails: $fail_after_vanish)"
-  fi
-  TMUX_TMPDIR="$TMP/prefix-server" tmux has-session -t '=qa-prefix-other' 2>/dev/null ||
-    fail "a failed start killed another session its name prefixes (next step fails: $fail_after_vanish)"
-  [ "$(TMUX_TMPDIR="$TMP/prefix-server" tmux display -p -t '=qa-prefix-other' '#{pane_pid} #{remain-on-exit}')" = "$other_pid off" ] ||
-    fail "a failed start changed another session its name prefixes (next step fails: $fail_after_vanish)"
+# The trailing : makes the target this session's pane: without it, display
+# resolves no pane yet exits 0 with empty values.
+other_pid=$(TMUX_TMPDIR="$TMP/prefix-server" tmux display -p -t '=qa-prefix-other:' '#{pane_pid}')
+[ -n "$other_pid" ] || fail "the prefix test could not read its sibling session's pane"
+for vanish_before in set-option respawn-pane; do
+  for fail_after_vanish in no yes; do
+    case_name="vanish before $vanish_before, that step fails: $fail_after_vanish"
+    if TMUX_TMPDIR="$TMP/prefix-server" TUI_REAL_TMUX="$prefix_real_tmux" \
+      TUI_VANISHING_SESSION=qa-prefix TUI_VANISH_BEFORE="$vanish_before" \
+      TUI_FAIL_AFTER_VANISH="$fail_after_vanish" PATH="$TMP/prefix-bin:$PATH" \
+      sh "$TUI" start qa-prefix 40 10 sleep 30 \
+      >"$TMP/prefix-$vanish_before-$fail_after_vanish.out" \
+      2>"$TMP/prefix-$vanish_before-$fail_after_vanish.err"; then
+      fail "start succeeded after its session vanished ($case_name)"
+    fi
+    TMUX_TMPDIR="$TMP/prefix-server" tmux has-session -t '=qa-prefix-other' 2>/dev/null ||
+      fail "a failed start killed another session its name prefixes ($case_name)"
+    [ "$(TMUX_TMPDIR="$TMP/prefix-server" tmux display -p -t '=qa-prefix-other:' '#{pane_pid} #{remain-on-exit}')" = "$other_pid off" ] ||
+      fail "a failed start changed another session its name prefixes ($case_name)"
+  done
 done
 TMUX_TMPDIR="$TMP/prefix-server" tmux kill-server
 
