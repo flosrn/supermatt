@@ -11,9 +11,10 @@
 #
 # Drives a terminal program in a detached tmux session.
 #
-# start runs COMMAND in a COLS x ROWS session from a launch script, so no
-# command line is typed into the pane. Tabs reach the screen as spaces, and the
-# pane stays after COMMAND exits, so its last screen and its exit status
+# start has tmux execute a placeholder and then sh with a launch script as
+# separate arguments, never through the user's default shell. No command line
+# is typed into the pane. Tabs reach the screen as spaces, and the pane stays
+# after COMMAND exits, so its last screen and its exit status
 # (tmux display -p -t SESSION '#{pane_dead_status}') remain to read. Put the
 # environment on COMMAND: env HOME=... PATH=... PROGRAM.
 #
@@ -62,12 +63,15 @@ start() {
     printf exec
     perl -e 'for (@ARGV) { s/\x27/\x27\\\x27\x27/g; print " \x27$_\x27" } print "\n"' -- "$@"
   } > "$launch" || { rm -f "$launch"; return 1; }
-  quoted_launch=$(printf '%s' "$launch" | LC_ALL=C sed "s/'/'\\\\''/g")
-  if tmux new-session -d -s "$session" -x "$cols" -y "$rows" -c "$PWD" 'sleep 86400' &&
-    tmux set-option -t "$session" remain-on-exit on > /dev/null &&
-    tmux respawn-pane -k -t "$session" "sh '$quoted_launch'"; then
+  if ! tmux new-session -d -s "$session" -x "$cols" -y "$rows" -c "$PWD" sleep 86400; then
+    rm -f "$launch"
+    return 1
+  fi
+  if tmux set-option -t "$session" remain-on-exit on > /dev/null &&
+    tmux respawn-pane -k -t "$session" sh "$launch"; then
     return 0
   fi
+  tmux kill-session -t "$session"
   rm -f "$launch"
   return 1
 }
