@@ -62,6 +62,14 @@ bun test tests/
 
 `bun test tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. The local shell loop runs every `tests/*.test.sh` file and stops on the first failure, matching the pre-push hook. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`. `tests/tui.test.sh` requires tmux and tests the `qa` terminal helper, including process-cleanup regressions on a private tmux server.
 
+CI runs the JavaScript tests with this command:
+
+```
+node --test tests/*.test.mjs
+```
+
+`bun test tests/` and `node --test tests/*.test.mjs` each take about 3 to 3.5 minutes. Run each runner in its own tool call with a timeout of at least 10 minutes, never chained with the other checks or with each other. A red runner still blocks the commit, so check its exit status before you commit. Keep the runner's full output, unfiltered: the summary comes at the end, and Node prints it as `ℹ tests N`, `ℹ pass N`, and `ℹ fail N` lines, not as TAP `#` lines, so a filter for `# tests` finds nothing.
+
 Linux CI installs tmux and runs every shell suite, `tests/tui.test.sh` included, with `TUI_SKIP_GLYPH_WIDTH=1`. On Ubuntu 24.04 with tmux 3.4, the screen check after a private-use folder glyph (U+F07B) gets seven spaces before `end` instead of five, including with `LANG=C.UTF-8`. With the variable set to `1`, the TUI suite prints a notice to stderr and checks that line without counting those spaces; every other assertion, the process-cleanup cases included, runs unchanged. Leave the variable unset locally and in the pre-push hook, so the exact five-space comparison runs.
 
 ### Codex-only discovery and behavioral evaluation
