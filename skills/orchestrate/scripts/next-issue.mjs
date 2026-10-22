@@ -8,7 +8,7 @@
 // Specs and triage issues qualify only when filed by the repo's owner, a member, or a
 // collaborator (a stranger's issue waits for a human). Drops issues with an open blocker
 // (native, or a "Blocked by:" line) and specs with open children.
-// Usage: next-issue.mjs [--local ROOT] READY BUG TRIAGE LIGHT STANDARD HEAVY
+// Usage: next-issue.mjs [--local ROOT] [--only KEY[,KEY...]] READY BUG TRIAGE LIGHT STANDARD HEAVY
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -22,7 +22,7 @@ const parents = (issue) => issue.parents ?? [...(issue.body ?? "").matchAll(/## 
 const blockers = (issue) =>
   issue.blockers ?? (issue.body ?? "").split("\n").filter((l) => l.startsWith("Blocked by:")).flatMap((l) => [...l.matchAll(/#(\d+)/g)].map((m) => Number(m[1])));
 
-export function pick(issues, ready, bug, triage, light, standard, heavy) {
+function selection(issues, ready, bug, triage, light, standard, heavy) {
   issues = issues.filter((i) => !("pull_request" in i));
   const open = new Set(issues.filter((i) => i.state === "open").map(key));
   const children = new Map();
@@ -59,14 +59,35 @@ export function pick(issues, ready, bug, triage, light, standard, heavy) {
   };
   const rank = (i) => (i.stage === "spec" ? 0 : labelled(i, bug) ? 1 : 2);
 
-  return issues
-    .map((i) => ({ ...i, stage: stageOf(i), tier: tierOf(i) }))
-    .filter((i) =>
-      i.stage && i.state === "open" &&
-      i.assignees.length === 0 &&
-      !(i.issue_dependencies_summary?.blocked_by > 0) &&
-      !blockers(i).some((n) => open.has(n)))
+  const reasonOf = (i) => {
+    if (!i) return "not found";
+    if (i.state !== "open") return "closed";
+    if (i.assignees.length !== 0) return "assigned";
+    if (i.issue_dependencies_summary?.blocked_by > 0 || blockers(i).some((n) => open.has(n))) return "blocked";
+    if (!i.stage) return "not at any stage";
+    return null;
+  };
+  const staged = issues.map((i) => ({ ...i, stage: stageOf(i), tier: tierOf(i) }));
+  const queue = staged.filter((i) => !reasonOf(i))
     .sort((a, b) => rank(a) - rank(b) || a.number - b.number || String(key(a)).localeCompare(String(key(b))));
+  return { queue, staged, reasonOf };
+}
+
+export function pick(issues, ready, bug, triage, light, standard, heavy) {
+  return selection(issues, ready, bug, triage, light, standard, heavy).queue;
+}
+
+export function only(issues, keys, ...labels) {
+  const wanted = new Set(keys.map(String));
+  const { queue, staged, reasonOf } = selection(issues, ...labels);
+  const byKey = new Map(staged.map(i => [String(key(i)), i]));
+  return {
+    issues: queue.filter(i => wanted.has(String(key(i)))),
+    skipped: [...wanted].flatMap(key => {
+      const reason = reasonOf(byKey.get(key));
+      return reason ? [{ key, reason }] : [];
+    }),
+  };
 }
 
 // Local ticket numbers belong to their feature directory, not the whole repo.
@@ -118,15 +139,26 @@ export function loadLocal(root, cwd = process.cwd()) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  const local = args[0] === "--local";
-  const root = local ? args.splice(0, 2)[1] : null;
-  if (args.length !== 6 || (local && !root?.trim())) {
-    console.error("usage: next-issue.mjs [--local ROOT] READY BUG TRIAGE LIGHT STANDARD HEAVY");
+  let local = false, root = null, keys;
+  while (args[0] === "--local" || args[0] === "--only") {
+    const option = args.shift();
+    const value = args.shift();
+    if (option === "--local") {
+      local = true;
+      root = value;
+    } else {
+      keys = value?.split(",");
+    }
+  }
+  if (args.length !== 6 || (local && !root?.trim()) || keys?.some(key => key === "")) {
+    console.error("usage: next-issue.mjs [--local ROOT] [--only KEY[,KEY...]] READY BUG TRIAGE LIGHT STANDARD HEAVY");
     process.exit(1);
   }
   try {
     const issues = local ? loadLocal(root) : JSON.parse(execFileSync("gh", ["api", "repos/{owner}/{repo}/issues?state=all&per_page=100", "--paginate", "--slurp"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 })).flat();
-    for (const i of pick(issues, ...args)) console.log(`${key(i)}\t${i.title.replace(/[\t\r\n]/g, " ")}\t${i.stage}\t${i.tier}`);
+    const result = keys === undefined ? { issues: pick(issues, ...args), skipped: [] } : only(issues, keys, ...args);
+    for (const i of result.issues) console.log(`${key(i)}\t${i.title.replace(/[\t\r\n]/g, " ")}\t${i.stage}\t${i.tier}`);
+    for (const { key, reason } of result.skipped) console.error(`skipped\t${key}\t${reason}`);
   } catch (error) {
     console.error(error.message);
     process.exit(1);
