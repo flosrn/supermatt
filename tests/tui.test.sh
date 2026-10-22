@@ -284,7 +284,17 @@ EOF
 sh "$TUI" start qa-t 40 10 sh "$TMP/prog.sh" "it's here" || fail "start exited nonzero"
 
 out="$(sh "$TUI" wait qa-t ready 5)" || fail "wait did not see ready: $out"
-[ "$out" = "ready [U+F07B] it's here     end" ] || fail "unexpected screen: $out"
+# Ubuntu 24.04 with tmux 3.4 pads seven spaces after U+F07B instead of five, so
+# CI sets TUI_SKIP_GLYPH_WIDTH=1 to check the line without its space count.
+if [ "${TUI_SKIP_GLYPH_WIDTH:-}" = 1 ]; then
+  echo "notice: TUI_SKIP_GLYPH_WIDTH=1 skips the space count before 'end' in the U+F07B screen check" >&2
+  gap=${out#"ready [U+F07B] it's here"}
+  gap=${gap%end}
+  case $out in "ready [U+F07B] it's here"*end) ;; *) fail "unexpected screen: $out" ;; esac
+  case $gap in '' | *[!\ ]*) fail "unexpected screen: $out" ;; esac
+else
+  [ "$out" = "ready [U+F07B] it's here     end" ] || fail "unexpected screen: $out"
+fi
 [ "$(sh "$TUI" show qa-t | wc -l)" -eq 1 ] || fail "show printed the blank rows below the text"
 
 sh "$TUI" wait qa-t "not on screen" 1 >/dev/null 2>&1 && fail "wait passed on text that never showed"
