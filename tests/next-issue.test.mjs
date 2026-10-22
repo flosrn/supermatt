@@ -52,13 +52,44 @@ test("keeps untriaged bugs from the repo team", () => {
   assert.deepEqual(numbers([issue(1), issue(3, { labels: ["bug", "needs-triage"], author: "COLLABORATOR" })]), [3, 1]);
 });
 
-test("drops untriaged bugs from outsiders and untriaged enhancements", () => {
+test("keeps team TRIAGE enhancements while dropping outsider bugs and enhancements", () => {
   assert.deepEqual(numbers([
     issue(1),
     issue(2, { labels: ["bug", "needs-triage"], author: "NONE" }),
     issue(3, { labels: ["enhancement", "needs-triage"] }),
+    issue(5, { labels: ["enhancement", "needs-triage"], author: "CONTRIBUTOR" }),
     issue(4, { labels: ["bug", "needs-info"] }),
-  ]), [1]);
+  ]), [1, 3]);
+});
+
+test("team TRIAGE enhancements follow specs and all bugs, with other issues lowest first", () => {
+  assert.deepEqual(picked([
+    issue(8, { labels: ["enhancement", "needs-triage"] }),
+    issue(9, { labels: ["bug", "ready-for-agent"] }),
+    issue(2),
+    issue(10, { labels: ["bug", "needs-triage"] }),
+    issue(1, { labels: [], sub_issues_summary: { total: 1, completed: 1 } }),
+    issue(3, { labels: ["enhancement", "needs-triage"] }),
+  ]).map(i => [i.number, i.stage]), [
+    [1, "spec"], [9, "ready"], [10, "triage"], [2, "ready"], [3, "triage"], [8, "triage"],
+  ]);
+});
+
+test("keeps uncategorized team TRIAGE issues", () => {
+  assert.deepEqual(picked([issue(1, { labels: ["needs-triage"] })]).map(i => [i.number, i.stage]), [[1, "triage"]]);
+});
+
+test("OWNER, MEMBER and COLLABORATOR can file TRIAGE enhancements", () => {
+  for (const author of ["OWNER", "MEMBER", "COLLABORATOR"]) {
+    assert.deepEqual(picked([issue(1, { labels: ["enhancement", "needs-triage"], author })]).map(i => [i.number, i.stage]), [[1, "triage"]], author);
+  }
+});
+
+test("READY takes precedence over TRIAGE for bugs and enhancements", () => {
+  assert.deepEqual(picked([
+    issue(1, { labels: ["enhancement", "ready-for-agent", "needs-triage"] }),
+    issue(2, { labels: ["bug", "ready-for-agent", "needs-triage"] }),
+  ]).map(i => [i.number, i.stage]), [[2, "ready"], [1, "ready"]]);
 });
 
 test("drops closed, unlabelled, assigned, and pull requests", () => {
@@ -150,6 +181,21 @@ test("local metadata supports configured labels, CRLF, and closed specs", (t) =>
   ]);
 });
 
+test("local TRIAGE enhancements share number and path ordering with ready issues", (t) => {
+  const root = localTracker(t, {
+    "zeta/issues/01-enhancement.md": "# Enhancement\nStatus: needs-triage\nCategory: enhancement\n",
+    "alpha/issues/01-ready.md": "# Ready\nStatus: ready-for-agent\n",
+    "alpha/issues/02-uncategorized.md": "# Uncategorized\nStatus: needs-triage\n",
+    "alpha/issues/03-bug.md": "# Bug\nStatus: needs-triage\nCategory: bug\n",
+  });
+  assert.deepEqual(picked(loadLocal(root, root)).map(i => [i.localPath, i.stage]), [
+    ["alpha/issues/03-bug.md", "triage"],
+    ["alpha/issues/01-ready.md", "ready"],
+    ["zeta/issues/01-enhancement.md", "triage"],
+    ["alpha/issues/02-uncategorized.md", "triage"],
+  ]);
+});
+
 test("local queues fail on missing or ambiguous blockers instead of releasing them", (t) => {
   for (const files of [
     { "feature/issues/01-first.md": "# First\nStatus: ready-for-agent\nBlocked by: 99\n" },
@@ -163,12 +209,15 @@ test("local queues fail on missing or ambiguous blockers instead of releasing th
 
 test("local CLI uses Markdown without calling gh and preserves paths with spaces", (t) => {
   const root = localTracker(t, {
+    ".scratch/my feature/issues/00-enhancement.md": "# Enhancement\nStatus: needs-triage\nCategory: enhancement\n",
     ".scratch/my feature/issues/01-first.md": "# 01: First\nStatus: ready-for-agent\n",
     ".scratch/my feature/issues/02-next.md": "# 02: Next\nStatus: ready-for-agent\nBlocked by: 01\n",
   });
   const script = fileURLToPath(new URL("../skills/orchestrate/scripts/next-issue.mjs", import.meta.url));
   const args = [script, "--local", ".scratch", "ready-for-agent", "bug", "needs-triage"];
   const run = () => execFileSync(process.execPath, args, { cwd: root, env: { ...process.env, PATH: "" }, encoding: "utf8" });
+  assert.equal(run(), ".scratch/my feature/issues/00-enhancement.md\tEnhancement\ttriage\n.scratch/my feature/issues/01-first.md\tFirst\tready\n");
+  writeFileSync(join(root, ".scratch/my feature/issues/00-enhancement.md"), "# Enhancement\nStatus: needs-triage\nCategory: enhancement\nClosed: 2026-10-12\n");
   assert.equal(run(), ".scratch/my feature/issues/01-first.md\tFirst\tready\n");
   writeFileSync(join(root, ".scratch/my feature/issues/01-first.md"), "# First\nStatus: ready-for-agent\nClosed: 2026-10-12\n");
   assert.equal(run(), ".scratch/my feature/issues/02-next.md\tNext\tready\n");

@@ -11,7 +11,7 @@ license: MIT
 
 You are the orchestrator. You do not write code. You pick issues, drive workers in the same harness that runs you, and check their results. The work runs in LANES parallel lanes: each lane is a herdr pane beside yours and a git worktree of its own, and works one issue at a time. A spec whose tickets are all closed comes first: one worker session **V** checks the whole spec against the code (see [SPEC.md](SPEC.md)). Bugs come next, then the other tickets. Each ticket runs through up to four worker sessions, each with a fresh context:
 
-1. **T**: `/triage REF`, only for a bug that is not triaged yet, to make it ready for an agent.
+1. **T**: `/triage REF`, for a team-filed issue that is not triaged yet, regardless of category, to make it ready for an agent.
 2. **A**: `/implement REF`, which QAs, reviews, and fixes its own work, then any fixes it left.
 3. **B**: `/refactor`, then `/ship-pr` to merge.
 4. **C**: `/retro` over A and B, reporting candidates for the operator without applying them.
@@ -72,7 +72,7 @@ When a worker is `blocked`, or has an open question (QUESTION is not NONE, or it
 
 ### 1. Pick the issue
 
-If the operator asked you to pause, the lane goes idle. Otherwise run QUEUE in the main checkout. It lists the open, unassigned issues to work on, with an open blocker (native, or a `Blocked by:` line) dropped: specs whose tickets are all closed, then bugs, then the rest, lowest number first, then path for tied local numbers. Each line is `key<TAB>title<TAB>spec|ready|triage`. GitHub specs and TRIAGE bugs count only when the repo's own team filed them. Local files use the repository's trusted tracker; malformed or missing blocker references fail the read.
+If the operator asked you to pause, the lane goes idle. Otherwise run QUEUE in the main checkout. It lists the open, unassigned issues to work on, with an open blocker (native, or a `Blocked by:` line) dropped: specs whose tickets are all closed, then bugs, then the rest, lowest number first, then path for tied local numbers. Each line is `key<TAB>title<TAB>spec|ready|triage`. GitHub specs and TRIAGE issues count only when the repo's own team (OWNER, MEMBER, or COLLABORATOR) filed them; outsider issues wait for human triage unless already READY. TRIAGE qualifies regardless of category, and READY takes precedence when both labels are present. Local files use the repository's trusted tracker; malformed or missing blocker references fail the read.
 
 Take the first line whose key is not in IN_FLIGHT. If there is none, the lane goes idle. Add its key to IN_FLIGHT, set REF and DISPLAY, and say `lane L: DISPLAY title`. Empty SESSIONS. Create the worktree: with no branch for a `spec`; otherwise on branch `fix/ID-<slug>` for an issue labelled BUG and `feat/ID-<slug>` for any other, where slug is the title in lowercase kebab case, at most 40 characters. ID is N for GitHub; for local files use K-L plus a counter incremented on each pick in that lane, so repeated numbers and titles cannot collide. If its last column is `spec`, verify it: read [SPEC.md](SPEC.md). If it is `triage`, triage it first: read [TRIAGE.md](TRIAGE.md).
 
@@ -156,7 +156,7 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
 
 ## Stop conditions
 
-Park the lane when: triage left a bug untriaged, a spec found gaps on its second verification, `/implement` made no commits, a question stays open after three answer rounds (five in session T), a dialog stays open after two answers, the worker asks to run an unsafe action, findings stay unfixed after `/fix-findings`, Check the worker's coverage gate cannot be completed, a rebase stays unfinished after `/resolving-merge-conflicts` or its QA fails, CI recovery stops with an unresolved failure or blocker, a push or merge is refused, the read-only retrospective changes files, a worktree with changes refuses removal, or a herdr, gh, or git control command about the lane fails outside a handled recovery path. A nonzero CI check result follows CI recovery instead of this command-failure stop.
+Park the lane when: triage left an issue untriaged, a spec found gaps on its second verification, `/implement` made no commits, a question stays open after three answer rounds (five in session T), a dialog stays open after two answers, the worker asks to run an unsafe action, findings stay unfixed after `/fix-findings`, Check the worker's coverage gate cannot be completed, a rebase stays unfinished after `/resolving-merge-conflicts` or its QA fails, CI recovery stops with an unresolved failure or blocker, a push or merge is refused, the read-only retrospective changes files, a worktree with changes refuses removal, or a herdr, gh, or git control command about the lane fails outside a handled recovery path. A nonzero CI check result follows CI recovery instead of this command-failure stop.
 
 Stop the run when every lane is idle or parked (including lanes retained at the merge hold after another lane's recovery stopped): the queue has nothing left that no lane holds, or the operator paused. Stop it at once when a Setup step fails or a herdr command about the run itself fails. On stop, close the panes of idle lanes, and leave the panes and worktrees of parked lanes open, so the operator can inspect them.
 

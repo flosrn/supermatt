@@ -4,8 +4,8 @@
 // - spec: a parent spec (it has sub-issues, or another issue's "## Parent" section names it)
 //   whose children are all closed, so it is due for verification.
 // - ready: it has the READY label.
-// - triage: a BUG with the TRIAGE label.
-// Specs and triage bugs qualify only when filed by the repo's owner, a member, or a
+// - triage: it has the TRIAGE label, whatever its category (READY takes precedence).
+// Specs and triage issues qualify only when filed by the repo's owner, a member, or a
 // collaborator (a stranger's issue waits for a human). Drops issues with an open blocker
 // (native, or a "Blocked by:" line) and specs with open children.
 // Usage: next-issue.mjs [--local ROOT] READY BUG TRIAGE
@@ -37,7 +37,7 @@ export function pick(issues, ready, bug, triage) {
       return done && team ? "spec" : null;
     }
     if (labelled(i, ready)) return "ready";
-    if (labelled(i, bug) && labelled(i, triage) && team) return "triage";
+    if (labelled(i, triage) && team) return "triage";
     return null;
   };
   const rank = (i) => (i.stage === "spec" ? 0 : labelled(i, bug) ? 1 : 2);

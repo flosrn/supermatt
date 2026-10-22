@@ -1,4 +1,4 @@
-# Triage a bug (session T)
+# Triage an issue (session T)
 
 1. Show phase `triage`. Start the worker.
 2. Prompt `/triage REF. I am away: where you would ask me, decide with the option you recommend. The goal is an agent brief and the READY triage state, unless the evidence says otherwise.` (`--wait`, no timeout) and wait for the worker. Its questions go through Answer a question: take the clear answer yourself, and use `/what-would-you-do` when the choice is not clear.
