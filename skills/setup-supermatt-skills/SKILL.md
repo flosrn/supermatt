@@ -1,6 +1,6 @@
 ---
 name: setup-supermatt-skills
-description: "Configure this repo for the engineering skills: set up its issue tracker, triage labels, domain doc layout, and external peer policy. Run once before first use of the other engineering skills."
+description: "Configure this repo for the engineering skills: set up its issue tracker, triage and tier labels, domain doc layout, and external peer policy. Run once before first use of the other engineering skills."
 disable-model-invocation: true
 license: MIT
 ---
@@ -10,7 +10,7 @@ license: MIT
 Scaffold the per-repo configuration that the engineering skills assume:
 
 - **Issue tracker**: where issues live (GitHub by default; GitLab and local markdown are also supported out of the box)
-- **Triage labels**: the strings used for the seven canonical triage roles (two category, five state)
+- **Triage and tier labels**: the strings used for the seven canonical triage roles (two category, five state) and three separate tier roles
 - **Domain docs**: where `GLOSSARY.md` and ADRs live, and the consumer rules for reading them
 - **External peers**: whether `code-review` and `jury` stay on the current host or call a configured Claude, Codex, Cursor Agent, or OMP CLI
 
@@ -49,15 +49,15 @@ Default posture: these skills were designed for GitHub. If a `git remote` points
 
 Record the choice in `docs/agents/issue-tracker.md`. The GitHub and GitLab templates carry a "PRs as a request surface" flag. Default it to **off** for new files; preserve an existing value on reruns. Don't raise it: a user who wants external PRs in the triage queue can flip the flag in the file later.
 
-**Section B: Triage label vocabulary.** `to-spec`, `to-tickets`, and `triage` all apply these labels, so this section always runs.
+**Section B: Triage and tier label vocabulary.** `to-spec`, `to-tickets`, and `triage` apply triage labels; `orchestrate` reads tier labels and sets missing tiers through session T after READY triage in every harness, or in a ready-issue tier-only session on OMP only. This section always runs. Tier roles describe issue difficulty, not triage state: `/triage` neither sets nor reads them, and its state machine stays unchanged.
 
 On first setup, ask:
 
-> Do you want to keep the default triage labels? (recommended: **yes**)
+> Do you want to keep the default triage and tier labels? (recommended: **yes**)
 
-The defaults are the seven canonical roles, each label string equal to its name: `bug`, `enhancement`, `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. On **yes**, use them as-is. On **no**, collect the overrides so the skills apply existing labels instead of creating duplicates.
+The defaults are the seven canonical triage roles, each label string equal to its name: `bug`, `enhancement`, `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`, beside three separate tier roles: `tier:light` (small, local, low-risk change), `tier:standard` (normal change, the default), and `tier:heavy` (large, cross-cutting, or risky change). Each tier label string also defaults to its role name. On **yes**, use them as-is. On **no**, collect the overrides so the skills apply existing labels instead of creating duplicates.
 
-On reruns, show the current mappings and ask whether to **keep current** (recommended), **reset to defaults**, or **supply replacements**. The selected mappings are authoritative for both the draft and final file; a reset discards prior overrides.
+On reruns, show the current triage and tier mappings and ask whether to **keep current** (recommended), **reset to defaults**, or **supply replacements**. Keeping current preserves every existing override and fills missing tier rows with their defaults. The selected mappings are authoritative for both the draft and final file; a reset discards prior overrides.
 
 **Section C: Domain docs.** Preserve the resolved layout and paths from exploration. An existing map or a map selected by the configured layout establishes **multi-context**, even without monorepo signals. Otherwise keep the configured layout, or default to **single-context**. Ask only to resolve conflicting discoveries or to offer multi-context when monorepo signals exist and no layout is established.
 

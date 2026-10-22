@@ -9,6 +9,7 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
 - Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
 - Triage state is recorded as a `Status:` line near the top of each issue file (role strings come from `triage-labels.md` when it exists)
 - Triaged issues also carry a `Category:` line (`bug` or `enhancement`)
+- An optional `Tier:` line records one configured tier label string from `triage-labels.md` (`tier:light`, `tier:standard`, or `tier:heavy` by default), written by orchestrate's session T. Keep it in the metadata block before the first level-two heading, separate from `Status:` and `Category:`. `/triage` neither sets nor reads it. The queue reports no line as `none`, exactly one configured value as the canonical tier (`light`, `standard`, or `heavy`), and repeated lines or an unknown value as `invalid`.
 - Incoming reports that belong to no feature yet go in `.scratch/inbox/issues/<NN>-<slug>.md`
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
 - **Read an issue**: read the entire referenced file, including its fields, body, and comments.

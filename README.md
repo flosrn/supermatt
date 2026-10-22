@@ -70,12 +70,12 @@ Then invoke setup once in each repository:
 | Cursor | `/setup-supermatt-skills` |
 | OMP | `/skill:setup-supermatt-skills` |
 
-It asks where you track issues (GitHub, GitLab, or local Markdown files), which triage labels to use, and whether reviews and juries may call an external peer. It then writes:
+It asks where you track issues (GitHub, GitLab, or local Markdown files), which triage and tier labels to use, and whether reviews and juries may call an external peer. It then writes:
 
 ```text
 CLAUDE.md or AGENTS.md          "## Agent skills" section
 docs/agents/issue-tracker.md    where issues live
-docs/agents/triage-labels.md    label names for the triage roles
+docs/agents/triage-labels.md    label names for the seven triage roles and three tier roles
 docs/agents/domain.md           where GLOSSARY.md and ADRs live
 docs/agents/cross-model.json    external peer mode, model, and effort settings
 ```
@@ -134,7 +134,7 @@ flowchart LR
 
 Run `retro` before clearing the session, or provide a verified session ID or path later. It reads local Claude Code, Codex, Cursor, and OMP transcript evidence and reports gaps instead of guessing from the newest file. After a bug fix, use it to identify what would have prevented the bug; use `improve-architecture` when the finding is a missing test seam.
 
-With triaged GitHub issues or local Markdown tickets, `orchestrate` runs steps 4 and 5 unattended for each issue, several issues in parallel if you ask, in worker sessions inside Herdr. Workers use the harness that started it: Claude Code, Codex, Cursor, or OMP. Cursor workers receive the authoritative active model ID when available, otherwise they keep the harness default; OMP workers run on the OmniRoute gateway handles in orchestrate's worker table. On OMP, each worktree's required skills are checked with `omp skill list <worktree> --json` and must come from the skill root that loaded `orchestrate`, wherever OMP found it. Local tracker files stay in the main checkout; code changes ship through GitHub PRs.
+With GitHub issues or local Markdown tickets, `orchestrate` runs steps 4 and 5 unattended for each issue, several issues in parallel if you ask, in worker sessions inside Herdr. It first triages issues marked as needing triage regardless of category; GitHub triage work must be filed by the repository's own team, while outsider issues wait for human triage unless already ready for an agent. In every harness, session T sets a missing tier after triage reaches READY. An already-ready issue whose queue tier is `none` at pick receives a tier-only T session on OMP before implementation; Claude Code, Codex, and Cursor go directly to implementation. Specs never receive a tier prompt, and existing or invalid tiers at pick are not reassessed. On OMP, an unreadable or missing resulting tier runs as `standard`, with the reason recorded in the friction log; existing launch-failure rules remain in force. T's transcript is retained for the retrospective. Workers use the harness that started it: Claude Code, Codex, Cursor, or OMP. Cursor workers receive the authoritative active model ID when available, otherwise they keep the harness default. OMP workers take their model and effort from orchestrate's phase by tier table before every launch and restart: Opus writes and refactors, Sol reviews `light` and `standard` work, and Astra reviews `heavy` work. T runs on Opus `high` before a tier exists; spec verification runs on Opus `high` without a tier. OMP lane reports show the tier and its source plus each launched phase's handle and effort. Claude Code, Codex, and Cursor keep their existing model and effort policies and ignore the tier. On OMP, each worktree's required skills are checked with `omp skill list <worktree> --json` and must come from the skill root that loaded `orchestrate`, wherever OMP found it. Local tracker files stay in the main checkout; code changes ship through GitHub PRs.
 
 An explicit `orchestrate` invocation delegates only its [listed worker commands](./references/harnesses.md#orchestrator-dispatch) within that run. Other user-invoked skills still require a human command; existing safety and approval gates remain in force.
 
@@ -223,7 +223,7 @@ The full record of changes is in [CHANGELOG.md](./CHANGELOG.md).
 | **[ship-pr](./skills/ship-pr/SKILL.md)** | Commit, push, open a pull request, repair CI within bounded attempts, then squash merge and verify post-merge workflows. |
 | **[babysit-pr](./skills/babysit-pr/SKILL.md)** | Watch a pull request until it is ready to merge: open it when the branch has none, handle review feedback before CI, recover CI within a bounded budget, keep the branch current, and stop without merging. |
 | **[fix-findings](./skills/fix-findings/SKILL.md)** | Apply every finding from the most recent review, audit, verification, or check, at the root cause and without widening scope. |
-| **[setup-supermatt-skills](./skills/setup-supermatt-skills/SKILL.md)** | Configure this repo for the engineering skills: issue tracker, triage labels, domain doc layout, and external peer policy. Run once per repo. |
+| **[setup-supermatt-skills](./skills/setup-supermatt-skills/SKILL.md)** | Configure this repo for the engineering skills: issue tracker, triage and tier labels, domain doc layout, and external peer policy. Run once per repo. |
 | **[to-spec](./skills/to-spec/SKILL.md)** | Turn the current conversation into a spec and publish it to the issue tracker. |
 | **[to-tickets](./skills/to-tickets/SKILL.md)** | Break any plan, spec, or conversation into a set of tracer-bullet tickets, each declaring its blocking edges, as text in one file per ticket locally or as native blocking links where supported, otherwise the configured textual fallback. |
 | **[implement](./skills/implement/SKILL.md)** | Build the work described by a spec, tickets, or triaged issues, driving `/tdd` at pre-agreed seams, then committing, checking it with `/qa`, and closing out with `/code-review`. |
