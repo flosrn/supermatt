@@ -549,12 +549,17 @@ test("a reclaimer that finds a live owner in place, after seeing a dead one, lea
   assert.equal(readFileSync(`${stateFile}.lock`, "utf8"), String(owner.pid));
 });
 
-test("a GitHub read that hangs is cut off, and the lock is released", async (t) => {
+// macOS spends up to about 2 s on the first exec of a freshly written file, so the
+// stub is executed once before the clock starts and the 2 s budget measures only the hang.
+test("a GitHub read that hangs is cut off, and the lock is released", { timeout: 20_000 }, async (t) => {
   const { stateFile } = babysat(t);
   const bin = mkdtempSync(join(tmpdir(), "babysit-stub-gh-"));
   t.after(() => rmSync(bin, { recursive: true, force: true }));
   const marker = join(bin, "called");
-  writeFileSync(join(bin, "gh"), `#!/bin/sh\n: > "${marker}"\nexec sleep 30\n`, { mode: 0o755 });
+  const gh = join(bin, "gh");
+  writeFileSync(gh, `#!/bin/sh\n[ "$1" = "--warm-up" ] && exit 0\n: > "${marker}"\nexec sleep 30\n`, { mode: 0o755 });
+  execFileSync(gh, ["--warm-up"]);
+  assert.equal(existsSync(marker), false, "the warm-up exec does not count as a gh call");
   const cli = fileURLToPath(new URL("../skills/babysit-pr/scripts/babysit-state.mjs", import.meta.url));
   const started = Date.now();
   const child = spawn(process.execPath, [cli, "snapshot", "--state", stateFile], {
