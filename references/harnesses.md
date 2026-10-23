@@ -43,6 +43,10 @@ Use the host's native question, approval, subagent, file-writing, and background
 
 A parent-context simulation is not an independent subagent.
 
+A subagent whose work runs commands or writes files is launched on a host agent type that has a shell and file-writing tools. A read-only agent type does not qualify, even when the skill offers a host-run fallback. When the host has no such type, state the exact gap.
+
+- OMP: launch these subagents on the `task` agent, never `scout`, which has no shell and writes only to `xd://` devices and `local://` scratch. This covers `code-review` readers and validators and `triage`'s check subagent.
+
 ## External peer resolver
 
 Run this resolver once at the start of each `code-review` or `jury` run. Read `docs/agents/cross-model.json` from the repository root. When it is absent, use this backward-compatible virtual value without writing it:
