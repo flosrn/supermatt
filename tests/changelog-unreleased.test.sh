@@ -305,6 +305,40 @@ printf '# Changelog\n\n## [1.2.0]\n\n- initial entry.\n' > CHANGELOG.md
 git add CHANGELOG.md && git commit -q -m 'add changelog'
 assert_pass "$NO_CHANGELOG" HEAD
 
+# A large base changelog with its first released heading near the top: the
+# guard must not stop reading its input early, or the writer reports a broken
+# pipe when SIGPIPE is ignored (as on CI runners). About 2 MiB fails reliably.
+start_case large-base
+awk 'BEGIN {
+  print "# Changelog\n\n## [Unreleased]\n\n- next.\n\n## [1.2.0] - 2026-01-02\n"
+  for (i = 1; i <= 50000; i++) print "- released entry " i ", padded to make the changelog large."
+}' > CHANGELOG.md
+git add CHANGELOG.md && git commit -q -m 'large released section'
+LARGE=$(git rev-parse HEAD)
+edit_unreleased
+git commit -q -m 'edit unreleased in large changelog'
+(trap '' PIPE; assert_pass "$LARGE" HEAD)
+
+# A large diff of released content: the release-PR shape passes cleanly.
+git checkout -q -B large-release "$LARGE"
+sed 's/^- released entry/- edited released entry/' CHANGELOG.md > "$TMP/changelog"
+cp "$TMP/changelog" CHANGELOG.md
+sed 's/1\.2\.0/1.3.0/' .claude-plugin/plugin.json > "$TMP/plugin"
+cp "$TMP/plugin" .claude-plugin/plugin.json
+git add CHANGELOG.md .claude-plugin/plugin.json && git commit -q -m 'large release'
+(trap '' PIPE; assert_pass "$LARGE" HEAD)
+
+# Without the bump, stderr holds the one diagnostic and nothing else.
+git checkout -q -B large-released "$LARGE"
+sed 's/^- released entry/- edited released entry/' CHANGELOG.md > "$TMP/changelog"
+cp "$TMP/changelog" CHANGELOG.md
+git add CHANGELOG.md && git commit -q -m 'large released edit'
+(
+  trap '' PIPE
+  assert_rejected 9 '## [1.2.0] - 2026-01-02' "$LARGE" HEAD
+  [ "$(wc -l < "$TMP/stderr")" -eq 1 ] || fail "large released edit: extra stderr: $error"
+)
+
 # An absent origin/main falls back to HEAD for staged comparisons.
 start_case local-only
 git update-ref -d refs/remotes/origin/main
