@@ -1390,6 +1390,23 @@ test("agent prompt --wait gives the first skill prompt time to start ten seconds
   assert.ok(took > 9500, `the first prompt waited for the delayed turn (${took}ms)`);
 });
 
+test("a legacy v3 replay cache at EOF recounts skill cards", (t) => {
+  const w = worker(t);
+  w.frame(50, [["add", "legacy-skill", "main", null, { id: "legacy-skill", k: "card", p: { role: "omp.skill" } }]]);
+  assert.equal(w.run("agent", "get", "app-work-1-1").code, 0);
+  const cache = join(w.stateDir, "replays", readdirSync(join(w.stateDir, "replays"))[0]);
+  const doc = JSON.parse(readFileSync(cache, "utf8"));
+  assert.equal(doc.prompts, 1);
+  assert.equal(doc.offset, Buffer.byteLength(readFileSync(w.record(50))));
+  doc.v = 3;
+  doc.prompts = 0;
+  writeFileSync(cache, JSON.stringify(doc));
+
+  const r = w.run("agent", "get", "app-work-1-1");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(readFileSync(cache, "utf8")).prompts, 1, "legacy count must be refreshed");
+});
+
 test("agent prompt --wait reads a later skill turn that ended before its first read as done", (t) => {
   const w = worker(t);
   const first = w.run("agent", "prompt", "app-work-1-1", "go", "--wait");
