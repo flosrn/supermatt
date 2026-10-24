@@ -60,8 +60,9 @@ offense=$(printf '%s\n' "$diff" | awk -v boundary="$boundary" '
     if ((oldcount > 0 && oldstart + oldcount - 1 >= boundary) ||
         (oldcount == 0 && oldstart >= boundary)) {
       oldline = oldstart < boundary ? boundary : oldstart
-      # Mixed nonempty hunks report their whole new-side range; deletions keep Git anchors.
-      if (newcount > 0 && oldstart < boundary && oldstart + oldcount - 1 >= boundary)
+      # A violating hunk that starts before the boundary spans it: mixed nonempty
+      # hunks report their whole new-side range; deletions keep Git anchors.
+      if (newcount > 0 && oldstart < boundary)
         print oldline, newstart "-" (newstart + newcount - 1), "mixed"
       else
         print oldline, newstart, "precise"
