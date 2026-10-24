@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
-- Changelog guard: a pre-commit hook and a Validate workflow job reject any `CHANGELOG.md` change at or below the first released `## [X.Y.Z]` heading unless the same change bumps `version` in `.claude-plugin/plugin.json`, so ordinary notes land under Unreleased. The local check judges the branch's net change against its merge base with `origin/main`, like CI, so a fix commit that reverts a released-section edit passes (#59). Diagnostics locate the protected part of hunks that span Unreleased and released sections.
+- Changelog guard: a pre-commit hook and a Validate workflow job reject any `CHANGELOG.md` change at or below the first released `## [X.Y.Z]` heading unless the same change bumps `version` in `.claude-plugin/plugin.json`, so ordinary notes land under Unreleased. The local check judges the branch's net change against its merge base with `origin/main`, like CI, so a fix commit that reverts a released-section edit passes (#59). Diagnostics locate the protected part of hunks that span Unreleased and released sections, keeping the first renamed released heading rather than a later release in the same hunk.
 
 ### Changed
 

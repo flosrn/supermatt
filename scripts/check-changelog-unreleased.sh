@@ -52,10 +52,8 @@ fi
 offense=$(printf '%s\n' "$diff" | awk -v boundary="$boundary" '
   function report() {
     if (!pending) return
-    # The first replacement release heading separates upcoming additions from
-    # released additions, including new entries after the modified heading.
-    if (published_heading) target = published_heading
-    else if (replacement_heading) target = replacement_heading
+    # The first replacement heading identifies the changed release boundary.
+    if (replacement_heading) target = replacement_heading
     print line, target
     pending = 0
   }
@@ -83,10 +81,7 @@ offense=$(printf '%s\n' "$diff" | awk -v boundary="$boundary" '
   pending && /^\+/ {
     text = substr($0, 2)
     if (map_heading && text ~ /^## /) {
-      # A renamed heading is the fallback if no release heading survives.
       if (!replacement_heading) replacement_heading = new_position
-      if (text ~ /^## \[[0-9]+\.[0-9]+\.[0-9]+\]/ && !published_heading)
-        published_heading = new_position
     }
     new_position++
     next

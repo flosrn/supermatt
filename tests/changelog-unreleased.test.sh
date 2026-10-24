@@ -182,6 +182,18 @@ cp "$TMP/changelog" CHANGELOG.md
 git add CHANGELOG.md
 assert_rejected 7 '## [1.2.0]' --staged
 
+# A renamed boundary precedes the next changed release heading in the same hunk.
+start_case renamed-boundary-before-next-heading
+sed '5,11c\
+- next, edited.\
+## Archived current\
+- current, edited.\
+## [1.1.0] - 2026-01-03
+' CHANGELOG.md > "$TMP/changelog"
+cp "$TMP/changelog" CHANGELOG.md
+git add CHANGELOG.md
+assert_rejected 6 '## [1.2.0]' --staged
+
 start_case after-heading
 sed '/^## \[1.2.0\]/a\
 - inserted into the release.
