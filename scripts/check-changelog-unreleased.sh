@@ -78,10 +78,9 @@ base_version=$(printf '%s\n' "$base_manifest" | sed -n 's/^ *"version": *"\([^"]
 new_version=$(printf '%s\n' "$new_manifest" | sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p')
 [ "$base_version" = "$new_version" ] || exit 0
 
-old_line=${offense%% *}
-location_and_kind=${offense#* }
-new_line=${location_and_kind% *}
-kind=${location_and_kind##* }
+# offense is "<old-line> <new-side location> <kind>", digits, dashes and letters only.
+set -- $offense
+old_line=$1 new_line=$2 kind=$3
 detail=
 if [ "$kind" = mixed ]; then
   detail='changed hunk spans Unreleased and released content; '
