@@ -49,7 +49,7 @@ A subagent whose work runs commands or writes files is launched on a host agent 
 
 ## External peer resolver
 
-Run this resolver once at the start of each `code-review` or `jury` run. Read `docs/agents/cross-model.json` from the repository root. When it is absent, use this backward-compatible virtual value without writing it:
+Run this resolver once at the start of each `code-review` or `jury` run. Check whether `docs/agents/cross-model.json` exists at the repository root with a file-existence check, not a read, and read it only when it exists. When it is absent, use this backward-compatible virtual value without writing it:
 
 ```json
 {
@@ -80,7 +80,7 @@ Resolve the active model from authoritative session provider metadata:
 | Known provider other than Anthropic or OpenAI that is not a routing layer | Other |
 | Missing or ambiguous, including a routing or gateway provider that does not name its upstream vendor | Unknown |
 
-A routing or gateway provider (for example `omniroute` or `omniroute-oai`) can fail over across vendors, so its metadata does not prove which vendor answered. Unless its metadata names the upstream vendor, it is ambiguous and resolves to Unknown. Its provider name, a provider-name suffix such as `-oai`, and its model names never map it to Anthropic, OpenAI, or Other. Model-name prefixes are supporting evidence only and never override provider metadata. Use this order only for `auto`:
+A routing or gateway provider (for example `omniroute` or `omniroute-oai`) can fail over across vendors, so its own provider name does not prove which vendor answered. When its authoritative metadata names the upstream vendor that answered, resolve that upstream vendor through the rows above in place of the routing provider; otherwise the routing provider is ambiguous and resolves to Unknown. Its provider name, a provider-name suffix such as `-oai`, and its model names never map it to Anthropic, OpenAI, or Other. Model-name prefixes are supporting evidence only and never override provider metadata. Use this order only for `auto`:
 
 | Host family | Peer order |
 | --- | --- |
