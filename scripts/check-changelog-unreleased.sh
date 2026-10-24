@@ -42,7 +42,7 @@ changelog=$(git show "$base:CHANGELOG.md" 2>/dev/null || :)
 # writing to a closed pipe, which reports an error when SIGPIPE is ignored.
 boundary=$(printf '%s\n' "$changelog" | awk '
   !boundary && /^## \[[0-9]+\.[0-9]+\.[0-9]+\]/ { boundary = NR }
-  END { if (boundary) print boundary }')
+  END { print boundary }')
 [ -n "$boundary" ] || exit 0
 
 # Disable external diff drivers, text conversion, renames and merged hunks so
@@ -54,7 +54,7 @@ else
 fi
 
 offense=$(printf '%s\n' "$diff" | awk -v boundary="$boundary" '
-  /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@/ {
+  !found && /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@/ {
     split(substr($2, 2), old, ",")
     split(substr($3, 2), new, ",")
     oldstart = old[1] + 0
@@ -70,7 +70,7 @@ offense=$(printf '%s\n' "$diff" | awk -v boundary="$boundary" '
         print oldline, newstart "-" (newstart + newcount - 1), "mixed"
       else
         print oldline, newstart, "precise"
-      exit
+      found = 1
     }
   }
   ')

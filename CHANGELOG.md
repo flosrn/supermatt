@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
-- Changelog guard: a pre-commit hook and a Validate workflow job reject any `CHANGELOG.md` change at or below the first released `## [X.Y.Z]` heading unless the same change bumps `version` in `.claude-plugin/plugin.json`, so ordinary notes land under Unreleased. The local check judges the branch's net change against its merge base with `origin/main`, like CI, so a fix commit that reverts a released-section edit passes (#59). Diagnostics for mixed Unreleased/released hunks name the protected base heading and report the complete new-side range, because replacement lines cannot be unambiguously aligned. Edits wholly within protected content retain their new-side start line; pure deletions use Git's new-side anchor.
+- Changelog guard: a pre-commit hook and a Validate workflow job reject any `CHANGELOG.md` change at or below the first released `## [X.Y.Z]` heading unless the same change bumps `version` in `.claude-plugin/plugin.json`, so ordinary notes land under Unreleased. The local check judges the branch's net change against its merge base with `origin/main`, like CI, so a fix commit that reverts a released-section edit passes (#59). Diagnostics for mixed Unreleased/released hunks name the protected base heading and report the complete new-side range, because replacement lines cannot be unambiguously aligned. Edits wholly within protected content retain their new-side start line; pure deletions use Git's new-side anchor. The guard reads its whole changelog and diff input, so a large file no longer leaves a `printf` broken-pipe or I/O error on stderr when SIGPIPE is ignored, as on CI runners (#69).
 
 ### Changed
 
