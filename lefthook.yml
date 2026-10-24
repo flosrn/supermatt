@@ -10,6 +10,9 @@ pre-commit:
       fail_text: "En or em dash found. AGENTS.md bans them: rewrite the sentence."
     - name: whitespace
       run: git diff --cached --check
+    - name: changelog-unreleased
+      glob: "CHANGELOG.md"
+      run: sh scripts/check-changelog-unreleased.sh --staged
 
 commit-msg:
   jobs:
