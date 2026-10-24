@@ -147,6 +147,41 @@ cp "$TMP/changelog" CHANGELOG.md
 git add CHANGELOG.md
 assert_rejected 11 '## [1.2.0]' --staged
 
+# A hunk crossing the boundary reports the shifted released heading, not its Unreleased edit.
+start_case overlapping-heading
+sed -e 's/- next\./- next, with a note./' \
+  -e '6d' \
+  -e 's/2026-01-02/2026-01-03/' CHANGELOG.md > "$TMP/changelog"
+cp "$TMP/changelog" CHANGELOG.md
+git add CHANGELOG.md
+assert_rejected 6 '## [1.2.0]' --staged
+
+# Expanding a boundary-crossing hunk reports the new heading, not the old offset.
+start_case frontier-expansion
+sed '5,7c\
+- next, edited.\
+- extra upcoming one.\
+- extra upcoming two.\
+- upcoming separator replacement.\
+## [1.2.0] - 2026-01-03
+' CHANGELOG.md > "$TMP/changelog"
+cp "$TMP/changelog" CHANGELOG.md
+git add CHANGELOG.md
+assert_rejected 9 '## [1.2.0]' --staged
+
+# Guard the boundary fix: trailing released additions must not shift the changed heading.
+start_case mixed-boundary-trailing-adds
+sed '5,7c\
+- next, edited.\
+- upcoming separator replacement.\
+## [1.2.0] - 2026-01-03\
+- extra released one.\
+- extra released two.
+' CHANGELOG.md > "$TMP/changelog"
+cp "$TMP/changelog" CHANGELOG.md
+git add CHANGELOG.md
+assert_rejected 7 '## [1.2.0]' --staged
+
 start_case after-heading
 sed '/^## \[1.2.0\]/a\
 - inserted into the release.

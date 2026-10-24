@@ -50,17 +50,49 @@ else
 fi
 
 offense=$(printf '%s\n' "$diff" | awk -v boundary="$boundary" '
+  function report() {
+    if (!pending) return
+    # The first replacement release heading separates upcoming additions from
+    # released additions, including new entries after the modified heading.
+    if (published_heading) target = published_heading
+    else if (replacement_heading) target = replacement_heading
+    print line, target
+    pending = 0
+  }
   /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@/ {
+    if (pending) { report(); exit }
     split(substr($2, 2), old, ",")
     split(substr($3, 2), new, ",")
     count = index($2, ",") ? old[2] + 0 : 1
     if ((count > 0 && old[1] + count - 1 >= boundary) ||
         (count == 0 && old[1] >= boundary)) {
       line = old[1] < boundary ? boundary : old[1]
-      print line, new[1]
-      exit
+      new_count = index($3, ",") ? new[2] + 0 : 1
+      offset = line - old[1]
+      # With no recognizable replacement heading, retain positional mapping.
+      # Pure deletion uses the Git anchor before the deleted range.
+      if (new_count == 0) offset = 0
+      else if (offset >= new_count) offset = new_count - 1
+      target = new[1] + offset
+      pending = 1
+      new_position = new[1] + 0
+      map_heading = count > 0 && line == boundary
     }
-  }')
+    next
+  }
+  pending && /^\+/ {
+    text = substr($0, 2)
+    if (map_heading && text ~ /^## /) {
+      # A renamed heading is the fallback if no release heading survives.
+      if (!replacement_heading) replacement_heading = new_position
+      if (text ~ /^## \[[0-9]+\.[0-9]+\.[0-9]+\]/ && !published_heading)
+        published_heading = new_position
+    }
+    new_position++
+    next
+  }
+  END { report() }
+  ')
 [ -n "$offense" ] || exit 0
 
 base_manifest=$(git show "$base:.claude-plugin/plugin.json" 2>/dev/null || :)
