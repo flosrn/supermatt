@@ -48,7 +48,7 @@ For each OMP phase launched, capture its phase name, exact handle, and effort fo
 
 For OMP, pass each row's handle as MODEL exactly as written, never a bare model name or the native `openai-codex` provider: native `openai-codex` rotates every ChatGPT account logged into OMP, including the one reserved for GitHub PR reviews, while the gateway serves Codex from the workers' account only. A bare `--model gpt-6.1-sol` resolves to the native provider. If the gateway handle does not resolve or answer, the launch failed: park the lane rather than fall back to another model.
 
-For OMP, resolve OMP_WORKER_CONFIG to the absolute path of [omp-worker.yml](omp-worker.yml) beside this skill, not relative to WT. This read-only launch overlay disables configured auto-resume without changing user or project settings. A missing or invalid overlay is a launch failure. `--no-prewalk` prevents an automatic model handoff from overriding the phase model. Retain normal skill discovery and permission controls; add no auto-approval, resume, or continue flags.
+For OMP, resolve OMP_WORKER_CONFIG to the absolute path of [omp-worker.yml](omp-worker.yml) beside this skill, not relative to WT. This read-only launch overlay disables configured auto-resume and OMP's `orchestrate` magic keyword, so a worker prompt that contains the word never receives the coordinator's hidden orchestration notice, without changing user or project settings. A missing or invalid overlay is a launch failure. `--no-prewalk` prevents an automatic model handoff from overriding the phase model. Retain normal skill discovery and permission controls; add no auto-approval, resume, or continue flags.
 
 ## Dispatch preamble
 
@@ -57,12 +57,12 @@ Every instruction prompt in this skill and its linked procedures goes through **
 Before sending, build DISPATCH from the lane's current state, substituting actual values:
 
 ```text
-This worker is assigned by the user's explicit orchestrate invocation.
+This worker is assigned by the user's explicit `orchestrate` invocation.
 Assigned issue/spec: <REF and DISPLAY>.
 Worktree: <absolute WT>; code and Git operations stay here.
 Phase: <current phase and session letter>.
 Approval scope: <the user's actual delegated actions and restrictions for this phase>.
-Use only orchestrate's delegated commands and model-invoked dependencies. Preserve the called skills' safety and mandatory human-consent gates. Stop and report any action outside this scope; the coordinator cannot supply separate human consent.
+Use only `orchestrate`'s delegated commands and model-invoked dependencies. Preserve the called skills' safety and mandatory human-consent gates. Stop and report any action outside this scope; the coordinator cannot supply separate human consent.
 Resources and tracker: <current resource ownership; tracker configuration; for local Markdown, the absolute paths and ownership rules from LOCAL.md>.
 Prior evidence: <relevant handoffs, decisions, unresolved questions, full findings and QA/review reports with checked commits and retained artifact paths, plus intervening changes>.
 Recovery history: <attempts, outcomes, remaining limits, and shipping record when applicable>.
