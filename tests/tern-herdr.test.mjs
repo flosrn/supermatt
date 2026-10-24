@@ -22,12 +22,15 @@ const test = (name, fn) => nodeTest(name, { timeout: 30_000 }, fn);
 // and pastes do. Per `inspect`, a pane's `states` queue moves omp to its next
 // state (idle, working, blocked, exit, suspend; null keeps it); `afterEnter`
 // replaces that queue when Enter submits a prompt (which also adds the user's
-// message card to the chat) or answers the dialog. `statesAfterPaste` replaces
+// message card to the chat, or an omp.skill card with an omp.skill.prompt child
+// when `skillCard` is set) or answers the dialog. `statesAfterPaste` replaces
 // it at a paste, `echoDelayMs` and `submitDelayMs` have omp write a paste's or
-// an Enter's frame that many milliseconds later, `pasteLost` and `enterLost`
-// make omp ignore them, `noTurn` makes an Enter empty the composer and start
-// nothing, `exitOnEnter` ends omp at the next Enter, and `processFails` fails
-// that many `tern process` calls. A world's `failure` fails `remaining` calls
+// an Enter's frame that many milliseconds later. `turnDelayMs` holds the card
+// and working row back after the composer empties, without advancing `states`
+// before that delayed frame lands. `pasteLost` and `enterLost` make omp ignore
+// them, `noTurn` makes an Enter empty the composer and start nothing,
+// `exitOnEnter` ends omp at the next Enter, and `processFails` fails that many
+// `tern process` calls. A world's `failure` fails `remaining` calls
 // of its `command` with its `message`, after letting `skip` of them succeed.
 // `failureAfterRun`, `failureAfterPaste` and `failureAfterEnter` arm that same
 // mechanism at the named stage; a failure's `after` arms the next failure
@@ -89,16 +92,24 @@ const shell = (pid) => ({ pid, name: "zsh", argv: ["/bin/zsh"], cwd: "/repo" });
 const ompFg = (p) => p.omp && p.omp.state !== "exited" && p.foreground && p.foreground.pid !== p.child.pid;
 function submit(p, delay) {
   const o = p.omp;
+  const text = o.text;
   o.text = "";
   const ops = [["text", "j.line/input", "replace", ""]];
   if (!p.noTurn) {
     p.prompts = (p.prompts || 0) + 1;
-    ops.push(["add", "p" + p.prompts, "main", null, { id: "p" + p.prompts, k: "card", p: { role: "omp.user" } }]);
+    const id = "p" + p.prompts;
+    const card = p.skillCard
+      ? { id, k: "card", p: { role: "omp.skill" }, c: [{ id: id + ".prompt", k: "md", p: { role: "omp.skill.prompt", text } }] }
+      : { id, k: "card", p: { role: "omp.user" } };
+    ops.push(["add", id, "main", null, card]);
     if (!o.working) { ops.push(["add", "q", "b", null, workingRow]); o.working = true; o.state = "working"; }
     p.states = [...(p.afterEnter || ["idle"])];
     delete p.afterEnter;
   }
-  frame(o, ops, delay);
+  if (p.turnDelayMs && !p.noTurn) {
+    frame(o, ops.splice(0, 1), delay);
+    frame(o, ops, delay + p.turnDelayMs);
+  } else frame(o, ops, delay);
   o.submitted = o.s;
 }
 // Whether omp's last submit frame (none: nothing pending) has reached its record.
@@ -1368,12 +1379,77 @@ test("tern process calls that fail for a moment do not cost a live worker its na
   assert.equal(w.run("agent", "prompt", "app-work-1-1", "go", "--wait").json?.result.agent.agent_status, "done");
 });
 
-test("agent prompt --wait reports agent_prompt_stalled when omp takes the prompt but starts nothing", (t) => {
+// The prompt's own reads take a few seconds before the gate starts, so the turn
+// starts ten seconds after the Enter to land past a five-second gate.
+test("agent prompt --wait gives the first skill prompt time to start ten seconds after the Enter", (t) => {
   const w = worker(t);
+  w.edit((x) => { x.panes[50].skillCard = true; x.panes[50].turnDelayMs = 10_000; });
+  const [r, took] = timed(() => w.run("agent", "prompt", "app-work-1-1", "/skill:implement issue://4 fix the worker", "--wait"));
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.result.agent.agent_status, "done");
+  assert.ok(took > 9500, `the first prompt waited for the delayed turn (${took}ms)`);
+});
+
+test("agent prompt --wait reads a later skill turn that ended before its first read as done", (t) => {
+  const w = worker(t);
+  const first = w.run("agent", "prompt", "app-work-1-1", "go", "--wait");
+  assert.equal(first.json?.result.agent.agent_status, "done", first.stderr);
+  w.edit((x) => { x.panes[50].skillCard = true; x.panes[50].afterEnter = ["idle"]; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "/skill:implement issue://4 fix the worker", "--wait");
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.result.agent.agent_status, "done");
+});
+
+test("agent prompt --wait stalls after five seconds when a later turn takes ten seconds to start", (t) => {
+  const w = worker(t);
+  const first = w.run("agent", "prompt", "app-work-1-1", "go", "--wait");
+  assert.equal(first.json?.result.agent.agent_status, "done", first.stderr);
+  w.edit((x) => { x.panes[50].turnDelayMs = 10_000; });
+  const [r, took] = timed(() => w.run("agent", "prompt", "app-work-1-1", "go again", "--wait"));
+  assert.equal(r.error?.code, "agent_prompt_stalled", r.stderr);
+  assert.match(r.error.message, /no activity within 5000ms/);
+  assert.ok(took >= 5000, `the later prompt waited out its five-second gate (${took}ms)`);
+});
+
+test("agent prompt --wait reports a twenty-second stall when omp takes its first prompt but starts nothing", (t) => {
+  const w = worker(t, { fakeTime: true });
   w.edit((x) => { x.panes[50].noTurn = true; });
   const r = w.run("agent", "prompt", "app-work-1-1", "/nothing", "--wait");
-  assert.equal(r.error?.code, "agent_prompt_stalled");
-  assert.match(r.error.message, /no activity/);
+  assert.equal(r.error?.code, "agent_prompt_stalled", r.stderr);
+  assert.match(r.error.message, /no activity within 20000ms/);
+});
+
+test("agent prompt --wait reports a five-second stall when omp takes a later prompt but starts nothing", (t) => {
+  const w = worker(t, { fakeTime: true });
+  const first = w.run("agent", "prompt", "app-work-1-1", "go", "--wait");
+  assert.equal(first.json?.result.agent.agent_status, "done", first.stderr);
+  w.edit((x) => { x.panes[50].noTurn = true; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "/nothing", "--wait");
+  assert.equal(r.error?.code, "agent_prompt_stalled", r.stderr);
+  assert.match(r.error.message, /no activity within 5000ms/);
+});
+
+test("an eight-second timeout ends the first prompt before its twenty-second activity gate", (t) => {
+  const w = worker(t, { fakeTime: true });
+  w.edit((x) => { x.panes[50].noTurn = true; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "/nothing", "--wait", "--timeout", "8000");
+  assert.equal(r.error?.code, "timeout", r.stderr);
+});
+
+test("agent start gives a relaunched omp its twenty-second first-prompt gate in the same pane and name", (t) => {
+  const w = worker(t, { fakeTime: true });
+  const first = w.run("agent", "prompt", "app-work-1-1", "go", "--wait");
+  assert.equal(first.json?.result.agent.agent_status, "done", first.stderr);
+  w.edit((x) => { x.panes[50].states = ["exit"]; });
+  assert.equal(w.run("agent", "get", "app-work-1-1").error?.code, "agent_not_found");
+  w.edit((x) => { x.launch = { ...x.launch, pid: 4243, session: "/s/restarted-worker.jsonl" }; });
+  const restarted = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50");
+  assert.equal(restarted.code, 0, restarted.stderr);
+  assert.equal(restarted.json.result.agent.pane_id, "50");
+  w.edit((x) => { x.panes[50].noTurn = true; });
+  const r = w.run("agent", "prompt", "app-work-1-1", "/nothing", "--wait");
+  assert.equal(r.error?.code, "agent_prompt_stalled", r.stderr);
+  assert.match(r.error.message, /20000ms/);
 });
 
 test("a --timeout shorter than the activity gate ends the prompt with timeout", (t) => {
