@@ -61,7 +61,7 @@ On top of whatever the repo documents, the Standards axis always carries [STANDA
 
 ### 4. Resolve the external peer
 
-Read and resolve `docs/agents/cross-model.json` exactly once through the [harness contract](../../references/harnesses.md). Record the resolved CLI, model (`default` when null), effort (`default` when null, `unsupported` for Cursor), family status, and isolation level.
+Resolve the repository peer settings exactly once through the [harness contract](../../references/harnesses.md). First check whether `docs/agents/cross-model.json` exists at the repository root, for example by listing `docs/agents/`. Read it only when it exists; when it is absent, apply the contract's virtual value directly, without attempting a read. Record the resolved CLI, model (`default` when null), effort (`default` when null, `unsupported` for Cursor), family status, and isolation level.
 
 In host-only mode, do not prepare peer bundles, emit a peer-send notice, launch a peer, or use a CLI as a capacity fallback. Queue host readers and validators within native capacity. If native capacity never becomes available, keep the existing incomplete-axis result. Preserve the resolver's exact disabled, invalid-settings, unavailable-CLI, usage-limit, authentication, or rejected-value reason.
 

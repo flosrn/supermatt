@@ -77,10 +77,10 @@ Resolve the active model from authoritative session provider metadata:
 | --- | --- |
 | `anthropic` | Anthropic |
 | `openai` or `openai-codex` | OpenAI |
-| Known provider other than Anthropic or OpenAI | Other |
-| Missing or ambiguous | Unknown |
+| Known provider other than Anthropic or OpenAI that is not a routing layer | Other |
+| Missing or ambiguous, including a routing or gateway provider that does not name its upstream vendor | Unknown |
 
-Model-name prefixes are supporting evidence only and never override provider metadata. Use this order only for `auto`:
+A routing or gateway provider (for example `omniroute` or `omniroute-oai`) can fail over across vendors, so its metadata does not prove which vendor answered. Unless its metadata names the upstream vendor, it is ambiguous and resolves to Unknown. Its provider name, a provider-name suffix such as `-oai`, and its model names never map it to Anthropic, OpenAI, or Other. Model-name prefixes are supporting evidence only and never override provider metadata. Use this order only for `auto`:
 
 | Host family | Peer order |
 | --- | --- |
