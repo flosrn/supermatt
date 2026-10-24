@@ -38,7 +38,11 @@ else
 fi
 
 changelog=$(git show "$base:CHANGELOG.md" 2>/dev/null || :)
-boundary=$(printf '%s\n' "$changelog" | awk '/^## \[[0-9]+\.[0-9]+\.[0-9]+\]/ { print NR; exit }')
+# Each awk below reads its whole input: exiting early would leave printf
+# writing to a closed pipe, which reports an error when SIGPIPE is ignored.
+boundary=$(printf '%s\n' "$changelog" | awk '
+  !boundary && /^## \[[0-9]+\.[0-9]+\.[0-9]+\]/ { boundary = NR }
+  END { if (boundary) print boundary }')
 [ -n "$boundary" ] || exit 0
 
 # Disable external diff drivers, text conversion, renames and merged hunks so
