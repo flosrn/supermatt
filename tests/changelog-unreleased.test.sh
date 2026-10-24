@@ -35,6 +35,18 @@ assert_rejected() {
   esac
 }
 
+assert_boundary_rejected() {
+  expected_location=$1
+  diagnostic_kind=$2
+  shift 2
+  assert_rejected "$expected_location" '## [1.2.0]' "$@"
+  case $diagnostic_kind:$error in
+    mixed:*'changed hunk spans Unreleased and released content;'*) ;;
+    mixed:*) fail "missing mixed-hunk diagnostic: $error" ;;
+    *'changed hunk spans Unreleased and released content;'*) fail "unexpected mixed-hunk diagnostic: $error" ;;
+  esac
+}
+
 assert_usage() {
   status=0
   sh scripts/check-changelog-unreleased.sh "$@" > "$TMP/stdout" 2> "$TMP/stderr" || status=$?
@@ -147,52 +159,81 @@ cp "$TMP/changelog" CHANGELOG.md
 git add CHANGELOG.md
 assert_rejected 11 '## [1.2.0]' --staged
 
-# A hunk crossing the boundary reports the shifted released heading, not its Unreleased edit.
-start_case overlapping-heading
-sed -e 's/- next\./- next, with a note./' \
-  -e '6d' \
-  -e 's/2026-01-02/2026-01-03/' CHANGELOG.md > "$TMP/changelog"
-cp "$TMP/changelog" CHANGELOG.md
-git add CHANGELOG.md
-assert_rejected 6 '## [1.2.0]' --staged
-
-# Expanding a boundary-crossing hunk reports the new heading, not the old offset.
-start_case frontier-expansion
-sed '5,7c\
+# Mixed replacements have no individual-line alignment. These manually worked
+# locations cover their full new-side ranges, while precise edits and pure
+# deletions retain their new-side line or Git anchor in both comparison modes.
+while IFS='|' read -r boundary_case expected_location diagnostic_kind; do
+  start_case "$boundary_case"
+  case $boundary_case in
+    overlapping-heading)
+      sed -e 's/- next\./- next, with a note./' \
+        -e '6d' \
+        -e 's/2026-01-02/2026-01-03/' CHANGELOG.md > "$TMP/changelog"
+      ;;
+    frontier-expansion)
+      sed '5,7c\
 - next, edited.\
 - extra upcoming one.\
 - extra upcoming two.\
 - upcoming separator replacement.\
 ## [1.2.0] - 2026-01-03
 ' CHANGELOG.md > "$TMP/changelog"
-cp "$TMP/changelog" CHANGELOG.md
-git add CHANGELOG.md
-assert_rejected 9 '## [1.2.0]' --staged
-
-# Guard the boundary fix: trailing released additions must not shift the changed heading.
-start_case mixed-boundary-trailing-adds
-sed '5,7c\
+      ;;
+    mixed-boundary-trailing-adds)
+      sed '5,7c\
 - next, edited.\
 - upcoming separator replacement.\
 ## [1.2.0] - 2026-01-03\
 - extra released one.\
 - extra released two.
 ' CHANGELOG.md > "$TMP/changelog"
-cp "$TMP/changelog" CHANGELOG.md
-git add CHANGELOG.md
-assert_rejected 7 '## [1.2.0]' --staged
-
-# A renamed boundary precedes the next changed release heading in the same hunk.
-start_case renamed-boundary-before-next-heading
-sed '5,11c\
+      ;;
+    renamed-boundary-before-next-heading)
+      sed '5,11c\
 - next, edited.\
 ## Archived current\
 - current, edited.\
 ## [1.1.0] - 2026-01-03
 ' CHANGELOG.md > "$TMP/changelog"
-cp "$TMP/changelog" CHANGELOG.md
-git add CHANGELOG.md
-assert_rejected 6 '## [1.2.0]' --staged
+      ;;
+    upcoming-details)
+      sed '5,7c\
+- next, edited.\
+## Upcoming details\
+- extra upcoming note.\
+## [1.2.0] - 2026-01-03
+' CHANGELOG.md > "$TMP/changelog"
+      ;;
+    same-size)
+      sed '5,7c\
+- next, edited.\
+- upcoming separator replacement.\
+## [1.2.0] - 2026-01-03
+' CHANGELOG.md > "$TMP/changelog"
+      ;;
+    protected-heading-only)
+      sed 's/2026-01-02/2026-01-03/' CHANGELOG.md > "$TMP/changelog"
+      ;;
+    pure-crossing-deletion)
+      sed '5,7d' CHANGELOG.md > "$TMP/changelog"
+      ;;
+    *) fail "unknown boundary fixture: $boundary_case" ;;
+  esac
+  cp "$TMP/changelog" CHANGELOG.md
+  git add CHANGELOG.md
+  assert_boundary_rejected "$expected_location" "$diagnostic_kind" --staged
+  git commit -q -m "boundary fixture: $boundary_case"
+  assert_boundary_rejected "$expected_location" "$diagnostic_kind" "$BASE" HEAD
+done <<'EOF'
+overlapping-heading|5-6|mixed
+frontier-expansion|5-9|mixed
+mixed-boundary-trailing-adds|5-9|mixed
+renamed-boundary-before-next-heading|5-8|mixed
+upcoming-details|5-8|mixed
+same-size|5-7|mixed
+protected-heading-only|7|precise
+pure-crossing-deletion|4|anchor
+EOF
 
 start_case after-heading
 sed '/^## \[1.2.0\]/a\
