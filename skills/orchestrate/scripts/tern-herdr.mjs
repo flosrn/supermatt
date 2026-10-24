@@ -16,6 +16,10 @@ const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 // bound the two waits, past any frames omp holds back.
 const ECHO_MAX_MS = 10_000;
 const SUBMIT_MAX_MS = 10_000;
+// The activity gate of `agent prompt --wait`. omp started by `agent start` takes
+// its first prompt while it is still starting up, and has shown its first
+// assistant output up to 12.3s later (measured); later prompts get five seconds.
+const FIRST_PROMPT_GATE_MS = 20_000;
 const PROMPT_GATE_MS = 5000;
 // zsh's ctrl+u clears one line of a multi-line input per press, and an extra
 // press on an empty line does nothing; ctrl+c would clear it all at once, but it
@@ -100,6 +104,8 @@ const nameFile = (name) => join(DIR, "names", `${name}.json`);
 const metaFile = (pane) => join(DIR, "meta", `${pane}.json`);
 const RECORDS = join(DIR, "records");
 const replayFile = (record) => join(DIR, "replays", `${basename(record)}.json`);
+// Present once the omp writing `record` has taken a prompt.
+const promptedFile = (record) => join(DIR, "prompted", `${basename(record)}.json`);
 function names() {
   try {
     return readdirSync(join(DIR, "names")).filter((f) => f.endsWith(".json")).map((f) => ({ name: f.slice(0, -5), ...readJson(join(DIR, "names", f)) }));
@@ -113,6 +119,7 @@ function forget(name) {
 function dropRecord(record) {
   rmSync(record, { force: true });
   rmSync(replayFile(record), { force: true });
+  rmSync(promptedFile(record), { force: true });
 }
 
 // ---- omp's surface, replayed from the record it writes
@@ -133,6 +140,7 @@ function dropRecord(record) {
 
 const SESSION_REGIONS = new Set(["dock", "layer"]);
 const SCREEN_REGIONS = new Set(["main", "dock", "layer"]);
+const PROMPT_CARDS = new Set(["omp.user", "omp.skill"]);
 const CREDITS = 2;
 const ACK_TIMEOUT_MS = 5000;
 const FLUSH_MARGIN_MS = 250;
@@ -147,7 +155,7 @@ function surface(record) {
   try {
     const size = fstatSync(fd).size;
     let doc = readJson(replayFile(record));
-    if (doc?.v !== 3 || doc.offset > size) doc = { v: 3, offset: 0, session: null, open: false, suspended: false, screens: {}, prompts: 0 };
+    if (doc?.v !== 4 || doc.offset > size) doc = { v: 4, offset: 0, session: null, open: false, suspended: false, screens: {}, prompts: 0 };
     if (size > doc.offset) {
       const bytes = Buffer.alloc(size - doc.offset);
       readSync(fd, bytes, 0, bytes.length, doc.offset);
@@ -187,8 +195,9 @@ function replay(doc, line) {
       if (target !== doc.session) apply(target, SCREEN_REGIONS, op);
       else if (op[0] === "suspend" || op[0] === "resume") doc.suspended = op[0] === "suspend";
       else {
-        // A user message card in the chat: omp took a prompt as a turn.
-        if (op[0] === "add" && op[2] === "main" && op[4]?.p?.role === "omp.user") doc.prompts += 1;
+        // A user message or skill command card in the chat: omp took a prompt
+        // as a turn. omp may redraw a card, so this counts activity, not prompts.
+        if (op[0] === "add" && op[2] === "main" && PROMPT_CARDS.has(op[4]?.p?.role)) doc.prompts += 1;
         apply(target, SESSION_REGIONS, op);
       }
     }
@@ -646,20 +655,24 @@ const commands = {
       throw withNote(e, PASTE_UNSEEN);
     }
     if (sent.composer) throw new Failure("agent_prompt_stalled", `agent ${who} kept the prompt in its composer after Enter; ${TEXT_UNSENT}`);
+    const first = !readJson(promptedFile(before.record));
+    if (first) writeJson(promptedFile(before.record), true);
     if (!flags.wait) return { agent };
     // Herdr's gate: a prompt sent to an agent that is not working must show
-    // activity within five seconds, or it probably never landed. A user message
-    // in the chat counts too, since a short turn can start and end within frames
-    // omp held back.
+    // activity within five seconds, or it probably never landed; the first
+    // prompt omp takes gets FIRST_PROMPT_GATE_MS. A user message or skill
+    // command card in the chat counts too, since a short turn can start and end
+    // within frames omp held back.
     if (agent.agent_status !== "working") {
-      const gate = Math.min(deadline ?? Infinity, Date.now() + PROMPT_GATE_MS);
+      const gateMs = first ? FIRST_PROMPT_GATE_MS : PROMPT_GATE_MS;
+      const gate = Math.min(deadline ?? Infinity, Date.now() + gateMs);
       try {
         poll(gate, () => {
           const now = current(agent);
           return ["working", "blocked"].includes(now.agent_status) || now[SURFACE].prompts > before.prompts ? true : undefined;
         }, deadline ?? Infinity);
       } catch (e) {
-        if (e.code === "timeout" && Date.now() < (deadline ?? Infinity)) throw new Failure("agent_prompt_stalled", `agent ${who} showed no activity within ${PROMPT_GATE_MS}ms of the prompt`);
+        if (e.code === "timeout" && Date.now() < (deadline ?? Infinity)) throw new Failure("agent_prompt_stalled", `agent ${who} showed no activity within ${gateMs}ms of the prompt`);
         throw withNote(e, PASTE_UNSEEN);
       }
     }
