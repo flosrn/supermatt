@@ -6,7 +6,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- `qa`: accepts Node built-ins in the shared scratch dependency preflight, including built-in-only checks, while preserving package resolution and missing-package failures.
 - `refactor`: hands branch-assessment readers a written branch diff so read-only subagents need no Git access.
+- `retro`: recognizes OMP `skill-prompt` custom messages as user evidence with their original source lines while skipping other custom types and rejecting userless sessions.
 - `ship-pr`: hands delegated history readers per-commit evidence with a readable text pass for content that Git attributes mark binary; requires the delegating session to screen unreadable blobs or blocks shipping.
 
 ## [0.23.0] - 2026-10-18
