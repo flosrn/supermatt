@@ -19,7 +19,7 @@ Both forms confine writes to the copy and `$DIR` with no network (Codex's worksp
 
 QA runs before `code-review`: once QA shows the change does what was asked, the review can spend itself on how the code is written and how it fails.
 
-QA reports to its caller and leaves the code and the issue tracker as it found them: it files, comments on, and labels no issue, since a fail in unmerged work is the caller's to fix, not a ticket. Scratch state, scenario lists, reports, screenshots, and raw evidence go in `$DIR`, a fresh `mktemp -d` in the OS temporary directory outside the repository. Return the report to the caller with paths to retained evidence there. Saving or committing QA artifacts in the repository requires an explicit user request; callers keep the same storage rule when handing off or shipping the work. The caller fixes each fail, test-first, and runs QA again.
+QA reports to its caller and leaves the code and the issue tracker as it found them: it files, comments on, and labels no issue, since a fail in unmerged work is the caller's to fix, not a ticket. Scratch state, scenario lists, reports, screenshots, and raw evidence go in `$DIR`, a fresh `mktemp -d` in the OS temporary directory outside the repository. Return the report to the caller with paths to retained evidence there. Saving or committing QA artifacts in the repository requires an explicit user request; callers keep them out of the repository when handing off or shipping the work, though a caller may copy the evidence a report cites to its own durable directory outside the repository. The caller fixes each fail, test-first, and runs QA again.
 
 ## Process
 
