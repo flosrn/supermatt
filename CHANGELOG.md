@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- `ship-pr`: follows the repository's documented **Merge** operation in `docs/agents/merge.md` when present, including for post-merge repair PRs, while retaining squash merges as the fallback. Confirms the PR is merged and reads its actual merge commit SHA before post-merge verification.
 - `qa`: accepts Node built-ins in the shared scratch dependency preflight, including built-in-only checks, while preserving package resolution and missing-package failures.
 - `retro`: recognizes OMP `skill-prompt` custom messages as user evidence with their original source lines while skipping other custom types and rejecting userless sessions.
 
