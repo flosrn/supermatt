@@ -52,6 +52,8 @@ Ready means the entire spec is integrated, required checks pass, QA has no fails
 
 Leave the integration branch, its worktree, and any PR available for shipping. Keep the spec and ticket issues open until the work merges into the default branch. When ready, tell the user to run `/ship-pr` in Claude linked installs or Cursor, `/supermatt:ship-pr` from the Claude plugin, `$ship-pr` in Codex, or `/skill:ship-pr` in OMP. This skill does not invoke that user-only skill or merge the PR.
 
+Defer the full host-cleanup offer to `ship-pr` after a verified merge; the integration branch and worktree must remain available until shipping.
+
 Before removing a worker worktree, retain its reports and session references, confirm the worker and its subagents have exited, verify a clean tree, and verify all its commits are reachable from the integration branch. Remove only worktrees created by this run that meet those conditions. Retain dirty, unmerged, or failed worktrees and name them in the handoff; never force removal. Apply the same lifecycle rule when a run stops early.
 
 Report the integration branch and commit, PR URL if any, integrated and blocked tickets, QA and review verdicts, retained evidence, and worktrees that remain. Before the user clears the session, recommend `/retro` in Claude linked installs or Cursor, `/supermatt:retro` from the Claude plugin, `$retro` in Codex, or `/skill:retro` in OMP, or pass the session logs for a later retrospective.

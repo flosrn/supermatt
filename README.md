@@ -134,6 +134,8 @@ With triaged GitHub issues or local Markdown tickets, `orchestrate` runs steps 4
 
 An explicit `orchestrate` invocation delegates only its [listed worker commands](./references/harnesses.md#orchestrator-dispatch) within that run. Other user-invoked skills still require a human command; existing safety and approval gates remain in force.
 
+When `tern-wt` is installed, standalone `ship-pr` offers a cleanup dry run after verified shipping; `orchestrate` offers it only after the run stops and parked lanes are reported. Each offer summarizes removals and retained work, applies only with your approval, and preserves parked worktrees for inspection. `implement-spec` keeps its integration branch and worktree until shipping and defers this offer to `ship-pr`.
+
 ## How it differs from mattpocock/skills
 
 SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) at commit `c55ee46`, with selected v1.3.1 updates, and keeps its idea: small, composable skills that stay under your control. The main change is that each skill checks its own work and hands the result to the next skill, so the set runs as one flow from an idea to a reviewed, closed issue.

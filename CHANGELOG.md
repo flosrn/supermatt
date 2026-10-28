@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- `orchestrate`: offers an optional `tern-wt clean` dry run after stopping and reporting parked lanes, applies only with operator approval, and preserves parked worktrees for inspection.
+- `implement-spec`: defers full host cleanup to `ship-pr` after a verified merge, retaining the integration branch and worktree until shipping.
+- `ship-pr`: offers an optional `tern-wt clean` dry run after verified shipping, applies only with user approval, and defers orchestrated cleanup to the coordinator after the run stops.
+- `ask-supermatt`: maps the optional post-shipping and post-orchestration cleanup offers and the integration-worktree retention boundary.
+
 ### Fixed
 
 - `qa`: accepts Node built-ins in the shared scratch dependency preflight, including built-in-only checks, while preserving package resolution and missing-package failures.
