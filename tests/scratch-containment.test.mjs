@@ -49,7 +49,7 @@ test("scratch containment blocks a virtualenv linking to a system file the user 
   virtualenv(scratch, "/dev/null");
   const result = run(scratch);
   assert.equal(result.status, 1, result.stdout);
-  assert.match(result.stderr, /symlink escapes scratch: .*python -> \/dev\/null/);
+  assert.match(result.stderr, /symlink escapes scratch: .*python(?:3)? -> \/dev\/null/);
 });
 
 test("scratch containment blocks a virtualenv linking to an interpreter in another writable checkout", (t) => {
@@ -60,7 +60,7 @@ test("scratch containment blocks a virtualenv linking to an interpreter in anoth
   virtualenv(scratch, interpreter);
   const result = run(scratch);
   assert.equal(result.status, 1, result.stdout);
-  assert.match(result.stderr, /symlink escapes scratch: .*python -> .*other-checkout/);
+  assert.match(result.stderr, /symlink escapes scratch: .*python(?:3)? -> .*other-checkout/);
   assert.equal(readFileSync(interpreter, "utf8"), "unchanged");
 });
 
@@ -81,7 +81,7 @@ test("scratch containment blocks a virtualenv linking to a read-only interpreter
   virtualenv(scratch, interpreter);
   const result = run(scratch, { ...process.env, HOME: join(root, "missing-home") });
   assert.equal(result.status, 1, result.stdout);
-  assert.match(result.stderr, /symlink escapes scratch: .*python -> .*toolchain\/python3/);
+  assert.match(result.stderr, /symlink escapes scratch: .*python(?:3)? -> .*toolchain\/python3/);
 });
 
 test("scratch containment blocks a system interpreter inside the user's linked home", needsSystemPython, (t) => {
@@ -90,7 +90,7 @@ test("scratch containment blocks a system interpreter inside the user's linked h
   symlinkSync("/usr", join(root, "home"));
   const result = run(scratch, { ...process.env, HOME: join(root, "home") });
   assert.equal(result.status, 1, result.stdout);
-  assert.match(result.stderr, /symlink escapes scratch: .*python -> \/usr\/bin\//);
+  assert.match(result.stderr, /symlink escapes scratch: .*python(?:3)? -> \/usr\/bin\//);
 });
 
 test("scratch containment permits a system interpreter when the user's home does not exist", needsSystemPython, (t) => {
