@@ -38,6 +38,7 @@ Whatever the depth, run each check whose surface the diff touches:
 - **Data and migrations**: a NOT NULL column with no default or backfill on a table that has rows, a rename or drop while old code still runs during the deploy, a write that truncates or converts data it cannot restore.
 - **Reliability** (network calls, retries, jobs, resources): a call with no timeout, a retry with no backoff or no limit, a file, lock, or connection not released on the error path.
 - **Concurrency**: a check and its use split by a gap another caller can enter, shared state written without a lock, two runs of one job at once.
+- **Replay and recovery** (jobs, imports, migrations, webhooks, retrying writes): verify isolated test stores and service endpoints before replay or failure injection. Without verified isolation, trace the path and report the verification gap. With isolation, repeat the same logical operation after completion and after interruption between durable effects. Check for duplicated effects, lost work, and incorrect recovery against the intended contract. Distinguish retries from intentional new operations. Report unavailable failure injection as a verification gap.
 
 ## Each finding
 

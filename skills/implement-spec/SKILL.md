@@ -27,6 +27,7 @@ Create each worker's worktree on its own new branch from the current integration
 Before dispatching parallel workers, read [Parallel resources](../../references/parallel-resources.md) and record their resource ownership with the task graph. Dispatch frontier tickets only where their edits and mutable resources can proceed independently. Give each implementer its ticket, relevant spec sections, worktree, starting SHA, resource assignment, and this contract:
 
 - Work only in the assigned worktree. Load and follow the `tdd` skill through the host's skill mechanism at the agreed test seams. For a refactor without tests, first pin current behavior with characterization tests in a separate commit.
+- Before changing data contracts, state transitions, shared mutable state, or retryable effects, load `codebase-design` through the host's skill mechanism. Follow its state-contract guidance for the affected behavior.
 - Use focused checks during TDD cycles. Before committing a completed behavior, complete the repository's full required gate. Reuse passing checks only when their relevant files, dependencies, configuration, and environment are unchanged.
 - Commit the completed work with the ticket reference. Report the commit SHA, acceptance-criterion coverage, check results, evidence paths, and any unresolved question. Leave tracker issues open and let the coordinator integrate the branch.
 
