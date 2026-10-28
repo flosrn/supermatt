@@ -1,6 +1,6 @@
 ---
 name: codebase-design
-description: Shared vocabulary for designing deep modules. Use when the user wants to design or improve a module's interface, deepen a chosen module, decide where a seam goes, make code more testable or AI-navigable, or when another skill needs the deep-module vocabulary.
+description: Shared vocabulary for designing deep modules. Use when designing interfaces, data contracts, state transitions, shared mutable state, or retryable effects; deepening a module; choosing test seams; or consulting the deep-module vocabulary.
 metadata:
   credits-skill: software-design
   credits-author: Luke Ramsden
@@ -103,6 +103,10 @@ Good interfaces make testing natural:
    ```
 
 3. **Small surface area.** Fewer methods = fewer tests needed. Fewer params = simpler test setup.
+
+## State contracts
+
+When changing data contracts, state transitions, shared mutable state, or retryable effects, read [STATE-CONTRACTS.md](STATE-CONTRACTS.md) before implementing the affected behavior.
 
 ## Relationships
 
