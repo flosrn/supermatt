@@ -105,8 +105,9 @@ expect_status() {
 }
 expect_status 0 client --ping
 case $(cat "$TMP/stdout") in *'native-eval ok'*'Codex login diagnostic'*) ;; *) fail 'ping did not include login status' ;; esac
-TEST_CODEX_STATUS=1 expect_status 69 client --ping
-TEST_CODEX_STATUS=1 expect_status 69 server "native-eval run --model test-model --baseline $BASE"
+# A subshell keeps each override to its call: macOS sh (bash in POSIX mode) keeps an assignment made before a function call.
+(TEST_CODEX_STATUS=1 expect_status 69 client --ping)
+(TEST_CODEX_STATUS=1 expect_status 69 server "native-eval run --model test-model --baseline $BASE")
 [ ! -s "$TMP/stdout" ] || fail 'missing login contaminated run stdout'
 for request in \
   "native-eval run --model test;touch --baseline $BASE" \
@@ -145,9 +146,9 @@ case $(cat "$TMP/stderr") in *'evaluator progress on stdout'*'evaluator diagnost
 # Direct server stdout must be a gzip tar, even when the evaluator fails.
 git update-ref refs/heads/candidate HEAD
 git bundle create "$TMP/good.bundle" refs/heads/candidate "^$BASE" >&2
-TEST_EVAL_STATUS=23 expect_status 23 server "native-eval run --model test-model --baseline $BASE --cases candidate-new" < "$TMP/good.bundle"
+(TEST_EVAL_STATUS=23 expect_status 23 server "native-eval run --model test-model --baseline $BASE --cases candidate-new" < "$TMP/good.bundle")
 tar -tzf "$TMP/stdout" > "$TMP/members" || fail 'server stdout is not a valid tar.gz'
-TEST_EVAL_STATUS=23 expect_status 23 client --out "$TMP/failed" --model test-model --baseline "$BASE"
+(TEST_EVAL_STATUS=23 expect_status 23 client --out "$TMP/failed" --model test-model --baseline "$BASE")
 [ -f "$TMP/failed/report.json" ] || fail 'failed evaluation report not retained'
 expect_status 0 client --out "$TMP/plan" --model test-model --baseline "$BASE" --dry-run
 [ -f "$TMP/plan/plan.json" ] || fail 'dry-run plan missing'
