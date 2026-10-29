@@ -55,13 +55,33 @@ if [ "$dashes" = 1 ]; then
 fi
 
 whitespace=0
-report=$(git diff --check "$base" "$2") || whitespace=1
+# Git starts the lines it writes with --line-prefix, while a path holding a
+# newline goes on in lines without it, so a random prefix that no path can
+# predict marks where each diagnostic and each echoed line begins. Only the
+# blank line at EOF diagnostic comes without the prefix.
+prefix="check-dashes-whitespace:$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'):"
+report=$(git diff --check --line-prefix="$prefix" "$base" "$2") || whitespace=1
 if [ "$whitespace" = 1 ]; then
   # Git follows each whitespace diagnostic ("path:N: <error>.") with the
   # offending line, except a blank line at EOF; a leftover conflict marker gets
-  # no period and no echo. A path holding a newline spans several lines, and
-  # only a diagnostic's last line carries ":N: ". Keep the diagnostics.
-  printf '%s\n' "$report" | awk 'echo { echo = 0; next } { print; echo = /:[0-9]+: .*\.$/ && !/: new blank line at EOF\.$/ }' >&2
+  # no period and no echo. No message holds ": ", so the text after a group's
+  # last ": " is its last message. An echoed line is one line: what follows it
+  # in its group is blank line at EOF diagnostics. Print the diagnostics only.
+  printf '%s\n' "$report" | awk -v prefix="$prefix" '
+    function flush(  message, i) {
+      if (echo) {
+        i = index(group, "\n")
+        group = i ? substr(group, i + 1) : ""
+      }
+      if (group != "") print group
+      message = group
+      while ((i = index(message, ": ")) > 0) message = substr(message, i + 2)
+      echo = message ~ /\.$/ && message != "new blank line at EOF."
+    }
+    index($0, prefix) == 1 { flush(); group = substr($0, length(prefix) + 1); grouped = 1; next }
+    { group = grouped ? group "\n" $0 : $0; grouped = 1 }
+    END { flush() }
+    ' >&2
 fi
 
 [ "$dashes" = 0 ] && [ "$whitespace" = 0 ]

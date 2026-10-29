@@ -34,6 +34,7 @@ assert_rejected() {
   shift
   run_check "$@"
   [ "$status" -eq 1 ] || fail "$name: expected rejection, got $status: $output"
+  case $output in "$NL"* | *"$NL$NL"*) fail "$name: blank line in: $output" ;; esac
 }
 
 NL='
@@ -179,6 +180,31 @@ commit_case 'add trailing whitespace to a file whose name holds a newline'
 assert_rejected newline-path "$BASE" HEAD
 assert_reports newline-path "b.txt:1: trailing whitespace."
 assert_hides newline-path "nl-sentinel-value"
+
+# Nor may a path line that looks like a whitespace diagnostic, which Git would
+# then seem to follow with the real diagnostic as its echoed line.
+start_case diagnostic-shaped-path
+printf 'shaped-sentinel-value \n' > "$(printf 'a:1: trailing whitespace.\nb.txt')"
+commit_case 'add trailing whitespace to a file whose name looks like a diagnostic'
+assert_rejected diagnostic-shaped-path "$BASE" HEAD
+assert_reports diagnostic-shaped-path "b.txt:1: trailing whitespace."
+assert_hides diagnostic-shaped-path "shaped-sentinel-value"
+
+# Git writes a blank line at EOF without the line prefix, right after the
+# file's last echoed line or diagnostic; it is reported and the echo is not.
+# The marker file sorts last, so the run ends on diagnostics without an echo.
+start_case eof-after-echo
+printf 'text \n' > 0-trailing.md
+printf 'eof-sentinel-value \n\n' > a-both.md
+printf 'text\n<<<<<<< ours\n\n' > b-marker.md
+commit_case 'add whitespace errors before blank lines at EOF'
+assert_rejected eof-after-echo "$BASE" HEAD
+assert_reports eof-after-echo "0-trailing.md:1: trailing whitespace."
+assert_reports eof-after-echo "a-both.md:1: trailing whitespace."
+assert_reports eof-after-echo "a-both.md:2: new blank line at EOF."
+assert_reports eof-after-echo "b-marker.md:2: leftover conflict marker"
+assert_reports eof-after-echo "b-marker.md:3: new blank line at EOF."
+assert_hides eof-after-echo "eof-sentinel-value"
 
 # One run reports every kind of offence, not only the first.
 start_case both
