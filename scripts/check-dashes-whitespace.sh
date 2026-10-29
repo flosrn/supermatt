@@ -3,7 +3,9 @@
 #
 # Rejects en and em dashes on lines that head adds to text files since its
 # merge base with base, like the no-dashes pre-commit hook does for staged
-# files, and the whitespace errors those lines add, with Git's --check output.
+# files, and the whitespace errors those lines add, with Git's --check
+# diagnostics. Reports name locations only, so a secret on an offending line
+# never reaches the CI log.
 set -eu
 
 usage() {
@@ -40,7 +42,8 @@ printf '%s\n' "$diff" | LC_ALL=C awk -v en="$en" -v em="$em" '
   }
   /^\+/ {
     if (index($0, en) || index($0, em)) {
-      print file ":" line ":" substr($0, 2)
+      # Location only: the line may hold a secret that the CI log must not repeat.
+      print file ":" line ": en or em dash."
       found = 1
     }
     line++
@@ -52,6 +55,12 @@ if [ "$dashes" = 1 ]; then
 fi
 
 whitespace=0
-git diff --check "$base" "$2" >&2 || whitespace=1
+report=$(git diff --check "$base" "$2") || whitespace=1
+if [ "$whitespace" = 1 ]; then
+  # Git follows each whitespace diagnostic ("path:N: <error>.") with the
+  # offending line, except a blank line at EOF; a leftover conflict marker gets
+  # no period and no echo. Keep the diagnostics.
+  printf '%s\n' "$report" | awk 'echo { echo = 0; next } { print; echo = /\.$/ && !/: new blank line at EOF\.$/ }' >&2
+fi
 
 [ "$dashes" = 0 ] && [ "$whitespace" = 0 ]

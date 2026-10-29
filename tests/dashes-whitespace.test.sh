@@ -43,6 +43,10 @@ assert_reports() {
   case $NL$output in *"$NL$2"*) ;; *) fail "$1: missing line starting '$2' in: $output" ;; esac
 }
 
+assert_hides() {
+  case $output in *"$2"*) fail "$1: output repeats '$2': $output" ;; esac
+}
+
 start_case() {
   git checkout -q -B "$1" "$BASE"
 }
@@ -83,7 +87,7 @@ start_case en-dash
 sed -e '2s/.*/intro/' -e "5s/.*/third $EN line/" README.md > "$TMP/file" && cp "$TMP/file" README.md
 commit_case 'add an en dash'
 assert_rejected en-dash "$BASE" HEAD
-assert_reports en-dash "README.md:5:third $EN line"
+assert_reports en-dash "README.md:5:"
 
 # Any text file counts, not only Markdown, and a new file numbers its lines from 1.
 start_case text-file
@@ -91,6 +95,14 @@ printf '#!/bin/sh\necho "one %s two"\n' "$EM" > tool.sh
 commit_case 'add a script with an em dash'
 assert_rejected text-file "$BASE" HEAD
 assert_reports text-file "tool.sh:2:"
+
+# A reported line may hold a secret, so the report names its location without its content.
+start_case dash-redacted
+printf 'token=dash-sentinel-value %s\n' "$EM" > secret.env
+commit_case 'add a secret on a line with an em dash'
+assert_rejected dash-redacted "$BASE" HEAD
+assert_reports dash-redacted "secret.env:1:"
+assert_hides dash-redacted "dash-sentinel-value"
 
 # An added line that starts with "++" reads "+++" in the diff, like a file header, but is content.
 start_case plus-prefix
@@ -130,6 +142,34 @@ sed '3s/.*/first line  /' README.md > "$TMP/file" && cp "$TMP/file" README.md
 commit_case 'add trailing whitespace'
 assert_rejected trailing-whitespace "$BASE" HEAD
 assert_reports trailing-whitespace "README.md:3: trailing whitespace."
+
+# Git echoes each offending line after its diagnostic; the report keeps every diagnostic only.
+start_case whitespace-redacted
+printf 'token=ws-sentinel-value  \nsecond=ws-other-value \n' > secret.env
+commit_case 'add secrets on lines with trailing whitespace'
+assert_rejected whitespace-redacted "$BASE" HEAD
+assert_reports whitespace-redacted "secret.env:1: trailing whitespace."
+assert_reports whitespace-redacted "secret.env:2: trailing whitespace."
+assert_hides whitespace-redacted "ws-sentinel-value"
+assert_hides whitespace-redacted "ws-other-value"
+
+# Git echoes no line after a blank line at EOF, so the next diagnostic must survive.
+start_case blank-eof
+printf 'text\n\n' > a-eof.md
+printf 'text \n' > b-trailing.md
+commit_case 'add a blank line at EOF, then trailing whitespace'
+assert_rejected blank-eof "$BASE" HEAD
+assert_reports blank-eof "a-eof.md:2: new blank line at EOF."
+assert_reports blank-eof "b-trailing.md:1: trailing whitespace."
+
+# Nor after a leftover conflict marker, which Git reports without echoing the line.
+start_case conflict-marker
+printf 'text\n<<<<<<< ours\n' > a-marker.md
+printf 'text \n' > b-trailing.md
+commit_case 'add a conflict marker, then trailing whitespace'
+assert_rejected conflict-marker "$BASE" HEAD
+assert_reports conflict-marker "a-marker.md:2: leftover conflict marker"
+assert_reports conflict-marker "b-trailing.md:1: trailing whitespace."
 
 # One run reports every kind of offence, not only the first.
 start_case both

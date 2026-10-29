@@ -72,7 +72,7 @@ To run the `lint` job's dash and whitespace checks locally, compare your branch 
 sh scripts/check-dashes-whitespace.sh origin/main HEAD
 ```
 
-It judges only the lines your branch adds since its merge base with `main`: each added line holding an en or em dash is reported with its file and line, and whitespace errors come from `git diff --check`. In CI, the job runs this script over the pull request's range (on a push to `main`, the pushed range) and scans the range's commits with a checksum-pinned betterleaks v1.9.0, which prints findings redacted.
+It judges only the lines your branch adds since its merge base with `main`: each added line holding an en or em dash is reported with its file and line, and whitespace errors with the diagnostics `git diff --check` prints. Reports name the location and never the line's content, so a secret on an offending line stays out of the CI log; open the file at that line to see it. In CI, the job runs this script over the pull request's range (on a push to `main`, the pushed range) and scans the range's commits with a checksum-pinned betterleaks v1.9.0, which prints findings redacted.
 
 CI runs the JavaScript tests with this command:
 
