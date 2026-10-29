@@ -116,6 +116,42 @@ bun scripts/evaluate-skills.mjs --adjudicate /absolute/report/directory --review
 
 This rechecks trace integrity and mechanical assertions against the matching corpus, writes a separate adjudicated report, and preserves the original. An empty reviews array rechecks evidence without assigning semantic passes. An incomplete run stays blocked. Deterministic evaluator controls run in CI; authenticated behavioral comparisons and native discovery run explicitly on a maintainer machine. If authentication, permissions, or the selected model is unavailable, report that gap without weakening the boundary.
 
+#### Run native evaluation through a maintainer machine
+
+When a worker lacks local Codex authentication, use a maintainer machine with an existing native Codex login. This still measures Codex only, not the worker's harness or operating system. Commit the candidate first; the client refuses tracked or untracked changes and requires `origin/HEAD` to identify the remote-tracking default branch.
+
+```sh
+export SUPERMATT_NATIVE_EVAL_SSH=flo@macbook
+sh scripts/native-eval-remote.sh --ping
+sh scripts/native-eval-remote.sh --out /absolute/new-report-directory \
+  --model MODEL --baseline FULL_40_HEX_BASE_COMMIT --cases CASE_ID --runs 1 --dry-run
+sh scripts/native-eval-remote.sh --out /absolute/another-new-report-directory \
+  --model MODEL --baseline FULL_40_HEX_BASE_COMMIT --cases CASE_ID --runs 1
+```
+
+`--dest user@host` overrides `SUPERMATT_NATIVE_EVAL_SSH`. Choose a new `--out` for each attempt, including failed runs. The client sends a Git bundle of HEAD as `refs/heads/candidate`, excluding the remote-tracking default branch's history, and extracts the returned report even when evaluation returns nonzero. A dry run returns `plan.json`; an executed run returns the evaluator's report, traces and observations. Logs go to stderr, and the server's stdout contains only a gzip tar archive. Preserve `native-eval.json`, which records the remote hostname, trusted evaluator commit, candidate commit, baseline and exit status. Record that hostname with observed coverage; unavailable local coverage remains unobserved.
+
+Set up the maintainer machine before granting workers access:
+
+1. Install Git, Bun, Node >=22.13 and Codex, and authenticate Codex locally. Put their executables on the noninteractive SSH PATH, for example in `~/.local/bin`, `~/.bun/bin`, `~/.local/share/mise/shims`, `/opt/homebrew/bin`, or `/usr/local/bin`. The server does not install tools or copy credentials. Confirm `codex login status` on that machine.
+2. After this support reaches the trusted origin default branch, install a reviewed, pinned copy of `scripts/native-eval-serve.sh` outside authoring checkouts, for example `/Users/flo/.local/share/harnessos/native-eval/native-eval-serve.sh`, mode `0755`. Update the installed copy only after reviewing a new revision. Enable macOS Remote Login for the intended account.
+3. Create a dedicated worker SSH key. Add only its public key to the maintainer account's `~/.ssh/authorized_keys`, with this prefix and the actual absolute installed path:
+
+   ```text
+   restrict,from="100.64.0.0/10",command="/Users/flo/.local/share/harnessos/native-eval/native-eval-serve.sh" ssh-ed25519 PUBLIC_KEY native-eval
+   ```
+
+   `restrict` disables forwarding, PTYs and user RC execution. The forced command accepts only `native-eval ping` or `native-eval run --model MODEL --baseline SHA [--cases ID[,ID...]] [--runs 1..10] [--dry-run]` through `SSH_ORIGINAL_COMMAND`, with literal token validation and no shell evaluation. Do not install this key without those options or reuse a general operator key.
+4. Verify the Mac's SSH host-key fingerprint locally, then pin the corresponding public host key in each worker account's `known_hosts` for the chosen SSH name. Configure its dedicated identity with `IdentitiesOnly yes`; the client uses `BatchMode=yes` and `StrictHostKeyChecking=yes`. Set `SUPERMATT_NATIVE_EVAL_SSH` in the worker harness environment.
+5. In the tailnet admin policy, grant only `src = ["tag:compute"]`, `dst = ["100.67.222.13"]`, `ip = ["tcp:22"]` for this forced-command key. Review the rendered policy before applying it. The grant permits TCP SSH transport, not a general shell authorization. Run `--ping` from the worker after the operator completes setup.
+
+The server serializes runs with a cache lock, returning 75 while another run holds it. It keeps a bare origin cache under `${XDG_CACHE_HOME:-$HOME/.cache}/supermatt-native-eval/` and removes private run directories on exit. Invalid requests return 64, invalid or unsatisfiable bundles return 65, and missing Codex login returns 69. It never changes authoring checkouts. `SUPERMATT_NATIVE_EVAL_ORIGIN_URL` replaces the fixed `https://github.com/flosrn/supermatt.git` origin only for offline tests; do not set it in production.
+
+The evaluator and its imports run from the origin default-branch tip fetched by the server, never from the bundled candidate's JavaScript. Candidate source is Git data passed with `--repo` and `--candidate`. The candidate case catalogue is exported separately as JSON with an empty environment, Node's permission model, read access only to the candidate snapshot, no child-process, worker, addon, WASI or filesystem-write grants, and a five-second/four-MiB limit. Symlinks and non-JSON data are rejected. This permits candidate-added cases without replacing the trusted evaluator or grader; a new grading algorithm must reach the trusted default branch first.
+
+This is not a hostile-code sandbox. [Node's permission model](https://nodejs.org/api/permissions.html) is a guardrail for trusted code, not a security guarantee against malicious code; Node 22/24 also leave network access available. The empty environment and filesystem allowlist remove ordinary access to operator credentials, but do not prove protection from a runtime bypass. Candidate skills and fixtures must remain trusted, as with local evaluation. The SSH restrictions alone do not make an untrusted boat safe to authorize against an operator account. No live Mac or tailnet changes are part of adding these scripts.
+
+
 ## Rules for a change
 
 [AGENTS.md](./AGENTS.md) states what an acceptable change must satisfy. Read it before you edit a skill. It covers the skill layout, the README entry, the `ask-supermatt` router, the maintainer-controlled release policy, the Unreleased `CHANGELOG.md` entry, and the ban on em dashes.
