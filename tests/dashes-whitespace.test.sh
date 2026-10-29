@@ -171,6 +171,15 @@ assert_rejected conflict-marker "$BASE" HEAD
 assert_reports conflict-marker "a-marker.md:2: leftover conflict marker"
 assert_reports conflict-marker "b-trailing.md:1: trailing whitespace."
 
+# Git prints a path with a newline across lines, so a period ending its first
+# line must not pass for a diagnostic whose echoed line comes next.
+start_case newline-path
+printf 'nl-sentinel-value \n' > "$(printf 'a.\nb.txt')"
+commit_case 'add trailing whitespace to a file whose name holds a newline'
+assert_rejected newline-path "$BASE" HEAD
+assert_reports newline-path "b.txt:1: trailing whitespace."
+assert_hides newline-path "nl-sentinel-value"
+
 # One run reports every kind of offence, not only the first.
 start_case both
 sed -e "3s/.*/first $EM line/" -e '5s/.*/third line /' README.md > "$TMP/file" && cp "$TMP/file" README.md

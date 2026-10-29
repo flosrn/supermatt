@@ -59,8 +59,9 @@ report=$(git diff --check "$base" "$2") || whitespace=1
 if [ "$whitespace" = 1 ]; then
   # Git follows each whitespace diagnostic ("path:N: <error>.") with the
   # offending line, except a blank line at EOF; a leftover conflict marker gets
-  # no period and no echo. Keep the diagnostics.
-  printf '%s\n' "$report" | awk 'echo { echo = 0; next } { print; echo = /\.$/ && !/: new blank line at EOF\.$/ }' >&2
+  # no period and no echo. A path holding a newline spans several lines, and
+  # only a diagnostic's last line carries ":N: ". Keep the diagnostics.
+  printf '%s\n' "$report" | awk 'echo { echo = 0; next } { print; echo = /:[0-9]+: .*\.$/ && !/: new blank line at EOF\.$/ }' >&2
 fi
 
 [ "$dashes" = 0 ] && [ "$whitespace" = 0 ]
