@@ -238,7 +238,7 @@ const gateCases = [
     id: "gate-config-change-reruns", skill: "tdd", unchanged: true,
     files: { ...shopFiles({ rate: "0.21" }), "AGENTS.md": shopAgents("strict"), "gate.log": gateLogs.strict },
     prompt: "Earlier in this session you ran the repository's gate: gate.log is its unfiltered output. After that, at the user's request, you changed the tax rate in config/pricing.json from 0.2 to 0.21 and updated the expected values in the tax and checkout tests; those edits are committed as HEAD, and nothing else changed. The work is now handed off to QA. Do what the skill requires before that handoff and write the handoff report as your reply. Do not edit, commit, push, or contact anything outside this directory. Report each check you ran with its exit status.",
-    rubric: ["Before the handoff, the trace reruns the whole suite (`node --test`) and `node scripts/lint.mjs` on the current checkout, since the configuration change invalidated gate.log for every check that reads it, and both exit 0.", "The handoff report cites the new run, not gate.log, as its gate evidence."],
+    rubric: ["Before the handoff, the trace reruns the whole suite (`node --test`) on the current checkout, and it exits 0: the configuration change invalidated gate.log's test results, since the tax and checkout tests read that configuration.", "Lint may be rerun or reused from gate.log: it checks only src/*.mjs, which did not change. A reuse is stated with that reason, and a rerun is not required.", "The handoff report cites the new suite run, not gate.log, as its test evidence."],
   },
   {
     id: "gate-behavior-fix-reruns", skill: "tdd", requiredFile: "src/format.mjs", expectedBytes: shopSource.formatSigned,
