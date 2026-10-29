@@ -53,7 +53,7 @@ Remove only the temporary profile after preserving the smoke output. Never reuse
 
 ## Check your change
 
-Run these checks before you open a pull request. CI runs them too, with the TUI suite's glyph-width relaxation noted below:
+Run these checks before you open a pull request. CI runs them too:
 
 ```
 claude plugin validate --strict .
@@ -86,7 +86,7 @@ node --test tests/*.test.mjs
 
 `bun test tests/` and `node --test tests/*.test.mjs` each take about 3 to 3.5 minutes. Run each runner in its own tool call with a timeout of at least 10 minutes, never chained with the other checks or with each other. A red runner still blocks the commit, so check its exit status before you commit. Keep the runner's full output, unfiltered: the summary comes at the end, and Node prints it as `ℹ tests N`, `ℹ pass N`, and `ℹ fail N` lines, not as TAP `#` lines, so a filter for `# tests` finds nothing.
 
-Linux CI installs tmux and runs every shell suite, `tests/tui.test.sh` included, with `TUI_SKIP_GLYPH_WIDTH=1`. On Ubuntu 24.04 with tmux 3.4, the screen check after a private-use folder glyph (U+F07B) gets seven spaces before `end` instead of five, including with `LANG=C.UTF-8`. With the variable set to `1`, the TUI suite prints a notice to stderr and checks that line without counting those spaces; every other assertion, the process-cleanup cases included, runs unchanged. Leave the variable unset locally and in the pre-push hook, so the exact five-space comparison runs.
+The shell loop and pre-push hook need no TUI environment overrides. `tests/tui.test.sh` checks the exact spacing after the private-use folder glyph (U+F07B) using the pane's terminal settings. On Linux, `tui.sh` enables kernel tab expansion (`TAB3`): with `IUTF8` enabled, the kernel counts the glyph as one column and inserts seven spaces before `end`; without it, the kernel counts its three UTF-8 bytes and inserts five. This difference occurs before tmux renders the text, not in its `wcwidth` implementation. The suite also exercises the exact five-space case explicitly on Linux; other platforms keep the original five-space comparison. No space-count assertion is skipped in CI or locally.
 
 ### Codex-only discovery and behavioral evaluation
 

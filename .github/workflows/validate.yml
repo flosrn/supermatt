@@ -32,10 +32,7 @@ jobs:
         with:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y tmux
-      # Ubuntu's tmux pads seven spaces after U+F07B instead of five; skip only that count.
-      - env:
-          TUI_SKIP_GLYPH_WIDTH: "1"
-        run: |
+      - run: |
           for t in tests/*.test.sh; do
             sh "$t" || exit 1
           done
