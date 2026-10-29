@@ -90,6 +90,16 @@ commit_case 'add an en dash'
 assert_rejected en-dash "$BASE" HEAD
 assert_reports en-dash "README.md:5:"
 
+# User Git settings must not merge context into the zero-context line parser.
+start_case joined-hunks
+sed -e "1s/.*/heading $EM line/" -e "3s/.*/first $EN line/" README.md > "$TMP/file" && cp "$TMP/file" README.md
+commit_case 'add dashes in nearby hunks'
+git config diff.interHunkContext 5
+assert_rejected joined-hunks "$BASE" HEAD
+assert_reports joined-hunks 'README.md:1:'
+assert_reports joined-hunks 'README.md:3:'
+git config --unset diff.interHunkContext
+
 # Any text file counts, not only Markdown, and a new file numbers its lines from 1.
 start_case text-file
 printf '#!/bin/sh\necho "one %s two"\n' "$EM" > tool.sh
@@ -120,6 +130,32 @@ commit_case 'add a file with a non-ASCII name'
 assert_rejected non-ascii-path "$BASE" HEAD
 assert_reports non-ascii-path "$NAME:1:"
 assert_reports non-ascii-path "$NAME:2: trailing whitespace."
+
+# The patch header separator is not part of a pathname containing spaces.
+start_case spaced-path
+printf 'private-path-sentinel %s\n' "$EM" > 'space name.md'
+commit_case 'add a dash to a spaced pathname'
+assert_rejected spaced-path "$BASE" HEAD
+assert_reports spaced-path 'space name.md:1:'
+assert_hides spaced-path 'private-path-sentinel'
+
+# Quoting belongs to Git framing, not the actual filename in the diagnostic.
+start_case quoted-path
+NAME=$(printf 'tab\tquote"slash\\line\nname.md')
+printf 'quoted-path-sentinel %s\n' "$EN" > "$NAME"
+commit_case 'add a dash to a quoted pathname'
+assert_rejected quoted-path "$BASE" HEAD
+assert_reports quoted-path "$NAME:1:"
+assert_hides quoted-path 'quoted-path-sentinel'
+
+# Git also quotes other control bytes, including octal escapes.
+start_case control-path
+NAME=$(printf 'bell\007back\010form\014return\015vertical\013escape\033.md')
+printf 'control-path-sentinel %s\n' "$EM" > "$NAME"
+commit_case 'add a dash to a control-byte pathname'
+assert_rejected control-path "$BASE" HEAD
+assert_reports control-path "$NAME:1:"
+assert_hides control-path 'control-path-sentinel'
 
 # Git's binary detection skips files whose bytes hold a dash.
 start_case binary
@@ -246,5 +282,16 @@ assert_usage main
 assert_usage main main extra
 assert_usage --cached main
 assert_usage main --cached
+
+# Git warnings can include source bytes even when its stdout is location-only.
+start_case attribute-warning-redacted
+TOKEN=$(printf 'gh%s_%s' p 'ABCdef1234567890ABCdef1234567890ABCD12')
+printf '* %s!  \n' "$TOKEN" > .gitattributes
+# Keep fixture-setup warnings private; only the public script's output is tested.
+commit_case 'add an invalid attribute with trailing whitespace' 2> "$TMP/setup-stderr"
+run_check "$BASE" HEAD
+case $output in *"$TOKEN"*) fail 'attribute-warning-redacted: credential leaked through Git stderr' ;; esac
+[ "$status" -eq 1 ] || fail "attribute-warning-redacted: expected rejection, got $status"
+assert_reports attribute-warning-redacted '.gitattributes:1: trailing whitespace.'
 
 echo "ok"

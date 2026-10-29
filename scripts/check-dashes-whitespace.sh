@@ -21,10 +21,23 @@ case $2 in -*) usage ;; esac
 cd "$(dirname "$0")/.."
 base=$(git merge-base -- "$1" "$2")
 
+# Git warnings can quote source content (for example an invalid attribute name).
+# Keep raw stderr private and replace it with a content-free diagnostic.
+errors=$(mktemp)
+trap 'rm -f "$errors"' EXIT
+git_diff() {
+  result=0
+  git "$@" 2> "$errors" || result=$?
+  if [ -s "$errors" ]; then
+    echo 'Git diff emitted diagnostics; source-bearing details omitted.' >&2
+  fi
+  return "$result"
+}
+
 # Keep non-ASCII paths unquoted and disable color, external diff drivers and
 # text conversion so every added line reaches awk verbatim; Git reports binary
 # files without their lines.
-diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --no-textconv -U0 "$base" "$2")
+diff=$(git_diff -c core.quotePath=false diff --no-color --no-ext-diff --no-textconv --inter-hunk-context=0 -U0 "$base" "$2")
 
 # Built from octal escapes, as the hook does, so this script holds no dash of its own.
 en=$(printf '\342\200\223')
@@ -32,8 +45,36 @@ em=$(printf '\342\200\224')
 dashes=0
 # LC_ALL=C makes index() compare bytes whatever the line's encoding.
 printf '%s\n' "$diff" | LC_ALL=C awk -v en="$en" -v em="$em" '
+  function pathname(value,  result, i, c, octal, j) {
+    sub(/\t$/, "", value)
+    if (substr(value, 1, 1) == "\"") {
+      value = substr(value, 2, length(value) - 2)
+      for (i = 1; i <= length(value); i++) {
+        c = substr(value, i, 1)
+        if (c == "\\") {
+          c = substr(value, ++i, 1)
+          if (c == "t") c = "\t"
+          else if (c == "n") c = "\n"
+          else if (c == "a") c = sprintf("%c", 7)
+          else if (c == "b") c = "\b"
+          else if (c == "f") c = "\f"
+          else if (c == "r") c = "\r"
+          else if (c == "v") c = "\v"
+          else if (c ~ /[0-7]/) {
+            octal = c + 0
+            for (j = 0; j < 2; j++) octal = octal * 8 + substr(value, ++i, 1)
+            c = sprintf("%c", octal)
+          }
+        }
+        result = result c
+      }
+      value = result
+    }
+    sub(/^b\//, "", value)
+    return value
+  }
   /^diff --git / { header = 1; next }
-  header && /^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
+  header && /^\+\+\+ / { file = pathname(substr($0, 5)); next }
   /^@@ / {
     header = 0
     split($3, new, ",")
@@ -60,7 +101,7 @@ whitespace=0
 # predict marks where each diagnostic and each echoed line begins. Only the
 # blank line at EOF diagnostic comes without the prefix.
 prefix="check-dashes-whitespace:$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'):"
-report=$(git diff --check --line-prefix="$prefix" "$base" "$2") || whitespace=1
+report=$(git_diff diff --check --line-prefix="$prefix" "$base" "$2") || whitespace=1
 if [ "$whitespace" = 1 ]; then
   # Git follows each whitespace diagnostic ("path:N: <error>.") with the
   # offending line, except a blank line at EOF; a leftover conflict marker gets

@@ -74,6 +74,10 @@ sh scripts/check-dashes-whitespace.sh origin/main HEAD
 
 It judges only the lines your branch adds since its merge base with `main`: each added line holding an en or em dash is reported with its file and line, and whitespace errors with the diagnostics `git diff --check` prints. Reports name the location and never the line's content, so a secret on an offending line stays out of the CI log; open the file at that line to see it. In CI, the job runs this script over the pull request's range (on a push to `main`, the pushed range) and scans the range's commits with a checksum-pinned betterleaks v1.9.0, which prints findings redacted.
 
+Dash locations decode Git's quoted pathnames and ignore inter-hunk context settings, so spaced or escaped names and nearby changes keep their actual locations. Git warnings can quote source content too: the script replaces their stderr with a content-free notice while preserving command failure status.
+
+The workflow also captures betterleaks stderr, which can relay Git warnings outside the scanner's finding redaction, and substitutes a content-free notice. Redacted findings on stdout remain visible; a scanner error still fails the job.
+
 CI runs the JavaScript tests with this command:
 
 ```

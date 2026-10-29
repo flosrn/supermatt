@@ -103,7 +103,13 @@ jobs:
           # Run both checks so one run reports every offence.
           status=0
           sh scripts/check-dashes-whitespace.sh "$base" "$head" || status=1
-          betterleaks git --no-banner --redact --verbose --log-opts="$base..$head" . || status=1
+          # The scanner can relay source-bearing Git warnings despite --redact.
+          errors=$(mktemp)
+          trap 'rm -f "$errors"' EXIT
+          betterleaks git --no-banner --redact --verbose --log-opts="$base..$head" . 2> "$errors" || status=1
+          if [ -s "$errors" ]; then
+            echo 'Secrets scan emitted diagnostics; source-bearing details omitted.' >&2
+          fi
           exit "$status"
 
   skills:
