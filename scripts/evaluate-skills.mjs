@@ -9,13 +9,14 @@ import { fileURLToPath } from "node:url";
 import { cases, variants } from "../tests/evals/cases.mjs";
 import { digest, installPlugin, listSkills, manifest, privateEnvironment, project, run, save, snapshot, verifyDiscovery } from "./lib/skill-evidence.mjs";
 import { absentResult, collectState, comparisonStatus, grade, parseTrace, planComparison, redact, reviewResults, selectCases } from "./lib/skill-evals.mjs";
+import { readCatalogue } from "./export-eval-catalogue.mjs";
 
 const { values } = parseArgs({ options: {
   model: { type: "string" }, baseline: { type: "string" }, candidate: { type: "string", default: "working" },
   repo: { type: "string", default: "." }, codex: { type: "string", default: "codex" },
   cases: { type: "string" }, variants: { type: "string", default: "supportive,neutral,competing" },
   runs: { type: "string", default: "3" }, timeout: { type: "string", default: "300" },
-  "dry-run": { type: "boolean" }, adjudicate: { type: "string" }, reviews: { type: "string" },
+  "dry-run": { type: "boolean" }, adjudicate: { type: "string" }, reviews: { type: "string" }, catalogue: { type: "string" },
 } });
 
 function configuration({ cwd, plugin, runtime, temp, toolchain }) {
@@ -99,14 +100,27 @@ async function freeze(repo, work) {
 
 const skillSets = manifests => Object.fromEntries(Object.entries(manifests).map(([arm, m]) => [arm, new Set(m.skills.map(s => s.name))]));
 
+function adjudicationCatalogue(root, report) {
+  if (report.catalogueDigest || report.harnessFiles?.["catalogue.json"]) {
+    assert.ok(report.catalogueDigest && report.harnessFiles?.["catalogue.json"] === report.catalogueDigest, "Saved catalogue integrity metadata is missing or inconsistent");
+    const loaded = readCatalogue(join(root, "harness/catalogue.json"));
+    assert.equal(digest(loaded.bytes), report.catalogueDigest, "Saved catalogue changed");
+    if (values.catalogue) assert.equal(digest(readCatalogue(values.catalogue).bytes), report.catalogueDigest, "--catalogue differs from the saved catalogue");
+    return loaded.data;
+  }
+  assert.ok(!values.catalogue, "This report has no saved catalogue; use the matching trusted corpus and evaluator or rerun");
+  const corpusPath = fileURLToPath(new URL("../tests/evals/cases.mjs", import.meta.url));
+  assert.equal(report.harnessFiles?.["tests/evals/cases.mjs"], digest(readFileSync(corpusPath)), "Corpus changed; use the matching corpus and evaluator or rerun");
+  return { cases, variants };
+}
+
 async function main() {
   if (values.adjudicate) {
     assert.ok(values.reviews, "--reviews is required with --adjudicate");
     const root = realpathSync(values.adjudicate);
     const report = JSON.parse(readFileSync(join(root, "report.json"), "utf8"));
     const reviews = JSON.parse(readFileSync(values.reviews, "utf8"));
-    const corpusPath = fileURLToPath(new URL("../tests/evals/cases.mjs", import.meta.url));
-    assert.equal(report.harnessFiles?.["tests/evals/cases.mjs"], digest(readFileSync(corpusPath)), "Corpus changed; use the matching corpus and evaluator or rerun");
+    const catalogue = adjudicationCatalogue(root, report);
     for (const result of report.results) {
       if (!result.evidenceDigest) continue;
       const bytes = readFileSync(join(root, result.id, "observation.json"));
@@ -114,9 +128,10 @@ async function main() {
       const observation = JSON.parse(bytes);
       const trace = readFileSync(join(root, result.id, "trace.jsonl"), "utf8");
       assert.equal(digest(trace), observation.traceDigest, "Saved trace changed");
-      const identity = result.id.match(/^(baseline|candidate)-(.+)-(supportive|neutral|competing)-\d+$/);
-      const testCase = cases.find(c => c.id === identity?.[2]);
-      assert.ok(testCase, "Unknown case in report");
+      const matches = catalogue.cases.filter(c => Object.keys(catalogue.variants).some(condition =>
+        new RegExp(`^(baseline|candidate)-${c.id}-${condition}-[1-9]\\d*$`).test(result.id)));
+      assert.equal(matches.length, 1, "Unknown or ambiguous case in report");
+      const [testCase] = matches;
       let checked;
       try {
         checked = observation.captureErrors?.length ? { status: "blocked", findings: observation.captureErrors }
@@ -137,11 +152,14 @@ async function main() {
     return;
   }
   assert.ok(values.model && values.baseline, "--model and --baseline are required");
+  const loaded = values.catalogue ? readCatalogue(values.catalogue)
+    : { data: { cases, variants }, bytes: Buffer.from(JSON.stringify({ cases, variants }) + "\n") };
+  const { cases: activeCases, variants: activeVariants } = loaded.data;
   const repetitions = Number(values.runs), timeout = Number(values.timeout) * 1000;
   assert.ok(Number.isInteger(repetitions) && repetitions > 0 && repetitions <= 10, "--runs must be 1..10");
   assert.ok(Number.isFinite(timeout) && timeout >= 1000 && timeout <= 300000, "--timeout must be 1..300 seconds");
-  const selected = selectCases(cases, values.cases), conditions = values.variants.split(",");
-  assert.ok(new Set(conditions).size === conditions.length && conditions.every(v => Object.hasOwn(variants, v)), "Unknown or duplicate variant");
+  const selected = selectCases(activeCases, values.cases), conditions = values.variants.split(",");
+  assert.ok(new Set(conditions).size === conditions.length && conditions.every(v => Object.hasOwn(activeVariants, v)), "Unknown or duplicate variant");
   if (values["dry-run"]) {
     const scratch = realpathSync(mkdtempSync(join(tmpdir(), "supermatt-evals-plan-")));
     let plan;
@@ -155,10 +173,20 @@ async function main() {
   const evidence = realpathSync(mkdtempSync(join(tmpdir(), "supermatt-evals-")));
   const work = join(evidence, "work"); mkdirSync(work);
   const report = { status: "blocked", requestedModel: values.model, reportedModel: null, reasoningEffort: "medium", plannedRuns: null,
-    startedRuns: 0, providerRequests: null, claude: "unavailable", corpusDigest: digest(JSON.stringify({ selected, variants })), results: [], snapshots: {} };
+    startedRuns: 0, providerRequests: null, claude: "unavailable", corpusDigest: digest(JSON.stringify({ selected, variants: activeVariants })),
+    catalogueDigest: digest(loaded.bytes), results: [], snapshots: {} };
   const secrets = [];
   const safeSave = (path, value) => writeFileSync(path, redact(JSON.stringify(value, null, 2) + "\n", secrets), { mode: 0o600 });
   try {
+    const harness = join(evidence, "harness"); mkdirSync(harness);
+    report.harnessFiles = {};
+    for (const path of ["scripts/evaluate-skills.mjs", "scripts/export-eval-catalogue.mjs", "scripts/lib/skill-evidence.mjs", "scripts/lib/skill-evals.mjs", "tests/evals/cases.mjs"]) {
+      const source = resolve(dirname(fileURLToPath(import.meta.url)), "..", path);
+      mkdirSync(dirname(join(harness, path)), { recursive: true }); cpSync(source, join(harness, path));
+      report.harnessFiles[path] = digest(readFileSync(source));
+    }
+    writeFileSync(join(harness, "catalogue.json"), loaded.bytes, { mode: 0o600 });
+    report.harnessFiles["catalogue.json"] = report.catalogueDigest;
     const repo = realpathSync(values.repo), runtime = realpathSync(process.execPath);
     const codex = values.codex.includes("/") ? resolve(values.codex) : (await run("which", [values.codex])).trim();
     const bin = join(work, "bin"); mkdirSync(bin);
@@ -167,16 +195,10 @@ async function main() {
     for (const [name, executable] of [["git", git], ["node", node], [process.versions.bun ? "bun" : "node-runtime", runtime]]) symlinkSync(executable, join(bin, name));
     const toolchain = { path: `${bin}:/usr/bin:/bin`, roots: [bin, dirname(realpathSync(git)), dirname(realpathSync(node))] };
     report.toolchain = { git, node, runtime };
-    const harness = join(evidence, "harness"); mkdirSync(harness);
-    report.harnessFiles = {};
-    for (const path of ["scripts/evaluate-skills.mjs", "scripts/lib/skill-evidence.mjs", "scripts/lib/skill-evals.mjs", "tests/evals/cases.mjs"]) {
-      const source = resolve(dirname(fileURLToPath(import.meta.url)), "..", path);
-      mkdirSync(dirname(join(harness, path)), { recursive: true }); cpSync(source, join(harness, path));
-      report.harnessFiles[path] = digest(readFileSync(source));
-    }
     report.cli = (await run(codex, ["--version"])).trim();
-    report.sourceHead = (await run("git", ["-C", repo, "rev-parse", "HEAD"])).trim();
-    report.sourceStatus = await run("git", ["-C", repo, "status", "--porcelain"]);
+    const bare = (await run("git", ["-C", repo, "rev-parse", "--is-bare-repository"])).trim() === "true";
+    report.sourceHead = (await run("git", ["-C", repo, "rev-parse", bare ? `${values.candidate}^{commit}` : "HEAD"])).trim();
+    report.sourceStatus = bare ? null : await run("git", ["-C", repo, "status", "--porcelain"]);
     // Freeze both arms before the first model call, including an uncommitted
     // candidate. Editing the checkout during a long run cannot change its arm.
     // The selected corpus is checked against both before any run starts.
@@ -235,7 +257,7 @@ async function main() {
         rmSync(temp, { recursive: true }); mkdirSync(temp);
         const skill = { path: join(installed.root, "skills", c.skill, "SKILL.md") };
         skill.body = readFileSync(skill.path, "utf8");
-        const prompt = `Use $${c.skill}. First, read the full skill at ${skill.path} with one cat command before doing any work.\n${c.prompt}\n${variants[condition]}\nThis is a scoped synthetic fixture. Available files are in the working directory. Only the requested fixture work is authorized.\n`;
+        const prompt = `Use $${c.skill}. First, read the full skill at ${skill.path} with one cat command before doing any work.\n${c.prompt}\n${activeVariants[condition]}\nThis is a scoped synthetic fixture. Available files are in the working directory. Only the requested fixture work is authorized.\n`;
         const initial = collectState(cwd); assert.deepEqual(initial.errors, [], "Fixture capture failed");
         const before = initial.state, start = Date.now();
         const args = ["exec", "--strict-config", "--ignore-rules", "--ephemeral", "--json", "--skip-git-repo-check", "--model", values.model, "--cd", cwd, "-"];
