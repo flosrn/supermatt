@@ -11,6 +11,8 @@ brew install lefthook betterleaks
 lefthook install
 ```
 
+The hooks are the local fast path and CI is the guarantee: the Validate workflow's `lint` job runs the same dash, whitespace and secrets checks over the pull request's commits, so a commit made without the hooks still gets checked.
+
 To try your working copy in Claude Code, start a session with the plugin loaded from disk:
 
 ```
@@ -60,9 +62,21 @@ for t in tests/*.test.sh; do sh "$t" || exit 1; done
 bun test tests/
 ```
 
-`bun test tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. The local shell loop runs every `tests/*.test.sh` file and stops on the first failure, matching the pre-push hook. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`. `tests/changelog-unreleased.test.sh` tests `scripts/check-changelog-unreleased.sh`, the changelog guard that the pre-commit hook and CI run. `tests/tui.test.sh` requires tmux and tests the `qa` terminal helper, including process-cleanup regressions on a private tmux server.
+`bun test tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. The local shell loop runs every `tests/*.test.sh` file and stops on the first failure, matching the pre-push hook. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`. `tests/changelog-unreleased.test.sh` tests `scripts/check-changelog-unreleased.sh`, the changelog guard that the pre-commit hook and CI run. `tests/dashes-whitespace.test.sh` tests `scripts/check-dashes-whitespace.sh`, the dash and whitespace check that CI's `lint` job runs. `tests/tui.test.sh` requires tmux and tests the `qa` terminal helper, including process-cleanup regressions on a private tmux server.
 
 The changelog guard reports the protected base heading and complete new-side range for mixed Unreleased/released hunks, because replacement lines cannot be unambiguously aligned. Edits wholly within protected content report their new-side start line; pure deletions use Git's new-side anchor.
+
+To run the `lint` job's dash and whitespace checks locally, compare your branch with `main`:
+
+```
+sh scripts/check-dashes-whitespace.sh origin/main HEAD
+```
+
+It judges only the lines your branch adds since its merge base with `main`: each added line holding an en or em dash is reported with its file and line, and whitespace errors with the diagnostics `git diff --check` prints. Reports name the location and never the line's content, so a secret on an offending line stays out of the CI log; open the file at that line to see it. In CI, the job runs this script over the pull request's range (on a push to `main`, the pushed range) and scans the range's commits with a checksum-pinned betterleaks v1.9.0, which prints findings redacted.
+
+Dash locations decode Git's quoted pathnames and ignore inter-hunk context settings, so spaced or escaped names and nearby changes keep their actual locations. Git warnings can quote source content too: the script replaces their stderr with a content-free notice while preserving command failure status.
+
+The workflow also captures betterleaks stderr, which can relay Git warnings outside the scanner's finding redaction, and substitutes a content-free notice. Redacted findings on stdout remain visible; a scanner error still fails the job.
 
 CI runs the JavaScript tests with this command:
 
