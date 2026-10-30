@@ -251,21 +251,51 @@ test("CLI run against a baseline that predates the Cursor manifest installs it a
   assert.deepEqual([report.baselineAbsent, report.plannedRuns, report.absentRuns], [["babysit-feedback-first"], 6, 2]);
 });
 
-// The real Codex CLI applies the generated permission profile. Without native auth the run stops
-// right after the preflight, so no model is called. Codex keeps a writable root's .git read-only
-// unless the profile grants it, and the preflight's commit probe fails with an index.lock error.
-const codexInstalled = spawnSync("codex", ["--version"], { encoding: "utf8" }).status === 0;
-test("CLI preflight commits in the fixture repository under the real Codex sandbox", { skip: !codexInstalled && "codex is not installed" }, t => {
+// Runs the evaluator on the real Codex CLI for one handoff run. Without an API key it stops right
+// after the preflight. With `stubExec`, a dummy key lets it reach the run, where the sandboxed-exec
+// fixture stands in for the model; a launcher hands that fixture the real CLI's path on each call.
+const realCodex = spawnSync("sh", ["-c", "command -v codex"], { encoding: "utf8" }).stdout.trim();
+const skipNative = { skip: !realCodex && "codex is not installed" };
+function nativeRun(t, { stubExec = false } = {}) {
   const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-native-"));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
   const codexHome = join(scratch, "codex-home"); mkdirSync(codexHome);
   const env = { ...process.env, CODEX_HOME: codexHome, TMPDIR: scratch };
   delete env.OPENAI_API_KEY;
-  const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--baseline", "HEAD", "--candidate", "HEAD",
+  let codex = realCodex;
+  if (stubExec) {
+    codex = join(scratch, "codex");
+    writeFileSync(codex, `#!/bin/sh\nREAL_CODEX=${JSON.stringify(realCodex)} exec ${JSON.stringify(resolve("tests/fixtures/codex-sandboxed-exec.sh"))} "$@"\n`, { mode: 0o755 });
+    env.OPENAI_API_KEY = "dummy-key-for-a-stub-run";
+  }
+  const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--codex", codex, "--baseline", "HEAD", "--candidate", "HEAD",
     "--cases", "handoff", "--variants", "neutral", "--runs", "1"], { encoding: "utf8", env });
-  const summary = JSON.parse(result.stdout);
-  const report = JSON.parse(readFileSync(join(summary.evidence, "report.json"), "utf8"));
+  // Each started run prints a progress line before the closing JSON summary.
+  const summary = JSON.parse(result.stdout.slice(result.stdout.search(/^\{/m)));
+  return { summary, report: JSON.parse(readFileSync(join(summary.evidence, "report.json"), "utf8")) };
+}
+
+// Codex keeps a writable root's .git read-only unless the profile grants it, and the preflight's
+// commit probe then fails with an index.lock error.
+test("CLI preflight commits in the fixture repository under the real Codex sandbox", skipNative, t => {
+  const { summary, report } = nativeRun(t);
   assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status], ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
+});
+
+test("a run's observation keeps commits a reset dropped and merge-resolution paths, and a file Git's configuration writes during capture blocks the run", skipNative, t => {
+  const { summary, report } = nativeRun(t, { stubExec: true });
+  assert.equal(summary.startedRuns, 1, summary.error);
+  const observation = JSON.parse(readFileSync(join(summary.evidence, "baseline-handoff-neutral-1", "observation.json"), "utf8"));
+  const commits = Object.fromEntries(observation.gitCommits.trim().split(/\n(?=[0-9a-f]{40} )/).map(entry => {
+    const [header, ...paths] = entry.split("\n").filter(Boolean);
+    return [header.slice(41), paths.sort()];
+  }));
+  assert.deepEqual(commits, { "dropped commit": ["A\tdropped.txt"], side: ["A\tside.txt"], main: ["A\tmain.txt"],
+    "merge side": ["A\tresolution-only.txt", "A\tside.txt"] });
+  // The run is graded on the state before Git's reads, and their change to the fixture blocks it.
+  assert.equal(observation.after["late.txt"], undefined);
+  assert.deepEqual(observation.captureErrors, ["Fixture or artifacts changed while Git state was read"]);
+  assert.equal(report.results[0].status, "blocked");
 });
 
 // A comparison of one existing case ("old") and one new skill's case ("new"), one variant, one run.

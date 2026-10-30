@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import { connect, createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { cases, variants } from "../tests/evals/cases.mjs";
 import { digest, installPlugin, listSkills, manifest, privateEnvironment, project, run, save, snapshot, verifyDiscovery } from "./lib/skill-evidence.mjs";
@@ -292,15 +292,17 @@ async function main() {
         try { events = parseTrace(output); }
         catch (error) { result = { status: "blocked", findings: [error.message, processResult.error].filter(Boolean) }; }
         const durationMs = Date.now() - start, gitState = {}, gitErrors = [];
-        // Git runs model-written configuration (such as core.fsmonitor) that can still change
-        // files, so the file state is collected after it. The log keeps commits a reset dropped
-        // (--reflog) and the paths a merge resolution changed (--diff-merges=first-parent).
+        const captured = collectState(cwd), temporary = collectState(temp);
+        // Git runs model-written configuration (such as core.fsmonitor) that can change files, so
+        // the run is graded on the state captured before these reads, and any change they make
+        // blocks it. The log keeps commits a reset dropped (--reflog) and the paths a merge
+        // resolution changed (--diff-merges=first-parent).
         const repository = { cwd, shell: shellEnvironment({ temp, toolchain }), codexHome: env.CODEX_HOME };
         try {
           gitState.gitStatus = await sandboxedGit(codex, repository, ["status", "--porcelain"]);
           gitState.gitCommits = await sandboxedGit(codex, repository, ["log", "--all", "--reflog", "--diff-merges=first-parent", "--format=%H %s", "--name-status", "--not", fixtureCommit]);
         } catch (error) { gitErrors.push(`Git state unavailable: ${error.message}`); }
-        const captured = collectState(cwd), temporary = collectState(temp);
+        if (!isDeepStrictEqual([captured, temporary], [collectState(cwd), collectState(temp)])) gitErrors.push("Fixture or artifacts changed while Git state was read");
         const captureErrors = [...captured.errors, ...temporary.errors, ...gitErrors];
         const observation = { events, skill, fixtureRoot: cwd, before, after: captured.state, artifacts: temporary.state, captureErrors,
           traceDigest: digest(redactedTrace), process: processResult, prompt, durationMs,
