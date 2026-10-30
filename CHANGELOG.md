@@ -10,12 +10,14 @@ All notable changes to this project are documented here. The format follows [Kee
 - `implement`: consults the shared state-contract guidance before changing data contracts, state transitions, shared mutable state, or retryable effects.
 - `implement-spec`: gives each worker the same conditional state-contract check as `implement`.
 - `code-review`: checks duplicate execution and interruption between durable effects against the intended recovery contract. Requires verified test stores and endpoints before replay, otherwise reports a verification gap.
+  Shares a clone-first scratch copy helper with `qa`, preserving rsync exclusions and falling back after a failed clone. A measured 1.7 GB worktree took 2 to 5 minutes per rsync copy, with 190 overnight copies consuming 2h14 and leaving 40 GB in temporary storage.
 - `ask-supermatt`: maps implementation flows to the shared state-contract guidance and recovery review, and describes verified examples before mechanical sweeps.
 - `refactor`: verifies complete, runnable manual examples against automation in scratch before applying a mechanical sweep, including coupled declarations and callers.
 
 ### Fixed
 
 - `qa`: accepts Node built-ins in the shared scratch dependency preflight, including built-in-only checks, while preserving package resolution and missing-package failures.
+  Uses the shared clone-first scratch copy helper for its no-subagent fallback, with unchanged containment, dependency, and source-integrity checks.
 - `retro`: recognizes OMP `skill-prompt` custom messages as user evidence with their original source lines while skipping other custom types and rejecting userless sessions.
 
 ## [0.23.0] - 2026-10-18
