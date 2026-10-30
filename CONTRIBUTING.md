@@ -64,6 +64,8 @@ bun test tests/
 
 `bun test tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. The local shell loop runs every `tests/*.test.sh` file and stops on the first failure, matching the pre-push hook. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`. `tests/changelog-unreleased.test.sh` tests `scripts/check-changelog-unreleased.sh`, the changelog guard that the pre-commit hook and CI run. `tests/dashes-whitespace.test.sh` tests `scripts/check-dashes-whitespace.sh`, the dash and whitespace check that CI's `lint` job runs. `tests/tui.test.sh` requires tmux and tests the `qa` terminal helper, including process-cleanup regressions on a private tmux server.
 
+`tests/scratch-copy.test.mjs` compares clone and forced-fallback copies with rsync and checks metadata exclusion, symlinks, modes, source isolation, and special files.
+
 The changelog guard reports the protected base heading and complete new-side range for mixed Unreleased/released hunks, because replacement lines cannot be unambiguously aligned. Edits wholly within protected content report their new-side start line; pure deletions use Git's new-side anchor.
 
 To run the `lint` job's dash and whitespace checks locally, compare your branch with `main`:

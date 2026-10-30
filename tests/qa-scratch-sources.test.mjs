@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
 
 const script = fileURLToPath(new URL("../skills/qa/scripts/scratch-sources.mjs", import.meta.url));
+const copyScript = fileURLToPath(new URL("../references/copy-scratch-tree.mjs", import.meta.url));
 const runtimeArgs = process.versions.bun ? ["--no-env-file"] : [];
 
 function fixture(t, build) {
@@ -29,7 +30,8 @@ function fixture(t, build) {
   };
   git("init", "-q");
   build(repo, git);
-  cpSync(repo, scratch, { recursive: true, verbatimSymlinks: true, filter: (source) => source !== join(repo, ".git") });
+  const copy = spawnSync(process.execPath, [...runtimeArgs, copyScript, repo, scratch], { encoding: "utf8" });
+  assert.equal(copy.status, 0, copy.stderr);
   const run = (mode) => spawnSync(process.execPath, [...runtimeArgs, script, mode, repo, scratch, dir], { encoding: "utf8" });
   return { root, repo, dir, scratch, run };
 }

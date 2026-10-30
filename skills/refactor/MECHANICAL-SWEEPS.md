@@ -35,6 +35,17 @@ Stop at the first rung that handles the change:
    tools cannot see scope and will happily edit a string literal.
 7. **By hand.**
 
+## Verify an example
+
+Before applying the tool across all sites, establish a runnable example for each distinct syntactic shape.
+
+1. In scratch, select the smallest sample that includes the declarations and callers needed to check the transformation.
+2. Apply the complete transformation manually. Run the sample's affected checks and preserve its before/after text as the expected result.
+3. Run the chosen automation against the original sample in scratch. Compare its complete result with the verified manual transformation.
+4. Proceed to the full sweep only when every sample matches and its affected checks pass.
+
+Example agreement checks the transformation, not every site. Review the full diff and run the required checks after the sweep.
+
 ## What A Sweep Will Miss
 
 A syntactic tool sees syntax. Check these by hand afterwards, every time:

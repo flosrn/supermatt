@@ -156,7 +156,11 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 - `qa`, new in SuperMatt, runs the changed program the way its user would (a terminal program in tmux, a web app in a browser) and checks every requested behavior before `code-review` reads the code.
 - `ideate`, new in SuperMatt, has a fresh subagent or session try to refute each idea before it ranks the survivors. When neither is available, it performs the check itself and reports the lack of an independent verifier; if no idea passes, it reports no survivors.
 
+Review readers and QA's no-subagent fallback use one [scratch copy helper](./references/copy-scratch-tree.mjs): copy-on-write when supported, or rsync after discarding a failed clone. The copy excludes Git metadata and special files, preserves symlinks and modes, and still requires the [scratch containment and dependency preflight](./references/scratch-dependencies.md) before execution.
+
 ### Skills hand off to each other
+
+Both implementation flows consult `codebase-design` for changes to data contracts, state transitions, shared mutable state, or retryable effects. Adversarial review checks duplicate execution and recovery after interruption. Replay requires verified test stores and endpoints; otherwise the review reports the verification gap.
 
 - `implement` completes the full required gate before committing each finished behavior, reuses checks whose inputs are unchanged, runs `qa` in a fresh subagent or session when available and fixes every fail test-first, then passes the spec to `code-review`. When fresh context is unavailable, QA reports the independence gap. Follow-ups check the fix diff and affected behavior. Every verified finding is fixed or raised as a question; the issue stays open until merge.
 - `implement-spec`, adapted from upstream v1.3.1, builds a whole spec through native subagents in ticket worktrees and integrates it into one branch for a single PR. It prepares each worktree it creates with the repository's documented setup before any agent works there, and stops the run when that setup rewrites the shared Git hooks. Every agent, at any depth, reads and writes only through absolute paths under its own worktree, and integration stops when the starting checkout or the integration worktree changes outside the run's own merges. Its task graph, worker contracts, and evidence live in `${XDG_STATE_HOME:-$HOME/.local/state}/implement-spec/<repo-key>/<spec-key>/`, keyed by repository and full spec identity so different specs stay separate and resumes reuse their state, which survives a host reboot, and it pushes worker and integration branches as they are verified when the repository's CI does not run on those pushes. It runs QA and review on the combined spec, serializes merges, and keeps issues open until shipping. At hand-off it removes the clean worker worktrees whose work is in the integration branch, even after that branch was rebased. It forces the removal of one holding a submodule only when no commit exists only in that worktree's submodule repositories, and keeps and names any other. Use it for one feature reviewed together; use `orchestrate` to ship a queue of issues separately through Herdr.
@@ -169,6 +173,7 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 
 ### Refactors keep behavior
 
+- Before a mechanical sweep, `refactor` checks the automation against verified manual examples in scratch, one per distinct syntactic shape.
 - `implement` pins current behavior with characterization tests, written through `tdd` in their own `test:` commit.
 - `refactor:` commits never touch test files, and `code-review` runs a refactor check on them.
 - A review fix that changes behavior goes test-first.
@@ -201,6 +206,7 @@ Some of the checks above are adapted from other skill sets:
 | [Every's compound-engineering plugin](https://github.com/EveryInc/compound-engineering-plugin) | `code-review`, `diagnosing-bugs`, `to-spec`, `ideate`, `babysit-pr`. See [attribution](./THIRD-PARTY-NOTICES.md). |
 | [Superpowers](https://github.com/obra/superpowers) | `tdd`, `diagnosing-bugs` |
 | Luke Ramsden's [software-design](https://github.com/lukeramsden/software-design-agent-skill) | `codebase-design` |
+| Robert C. Martin's [ub-mode](https://github.com/unclebob/ub-mode/blob/57a8bdd28e45ed41900ace0bafa2ff76dd9ed70f/SKILL.md) | Data contracts and recovery in `codebase-design`, recovery checks in `code-review`, and verified transformation examples in `refactor`. |
 | Dex Horthy's [show-me](https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md) | `pr` |
 | GitHub's [awesome-copilot](https://github.com/github/awesome-copilot) refactor skills | `refactor` |
 | Leonardo Flores's [reducing-entropy](https://github.com/softaworks/agent-toolkit/tree/main/skills/reducing-entropy) | `refactor` |
