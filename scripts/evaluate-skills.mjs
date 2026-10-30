@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import { connect, createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { cases, variants } from "../tests/evals/cases.mjs";
 import { digest, installPlugin, listSkills, manifest, privateEnvironment, project, run, save, snapshot, verifyDiscovery } from "./lib/skill-evidence.mjs";
@@ -19,20 +19,25 @@ const { values } = parseArgs({ options: {
   "dry-run": { type: "boolean" }, adjudicate: { type: "string" }, reviews: { type: "string" }, catalogue: { type: "string" },
 } });
 
+// The only variables a model's shell receives. The preflight probe runs its
+// commands with the same set, so its Git positive control matches a run.
+const shellEnvironment = ({ temp, toolchain }) => ({ PATH: toolchain.path, HOME: temp, TMPDIR: temp, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", OPENSSL_CONF: "/dev/null" });
+
 function configuration({ cwd, plugin, runtime, temp, toolchain }) {
   const q = JSON.stringify;
   const disabled = ["apps", "hooks", "memories", "multi_agent", "remote_plugin", "shell_snapshot", "skill_mcp_dependency_install",
     "browser_use", "browser_use_external", "computer_use", "image_generation", "in_app_browser", "in_app_local_automation"];
   return `\napproval_policy = "never"\nweb_search = "disabled"\nallow_login_shell = false\nmodel_reasoning_effort = "medium"\n` +
     `default_permissions = "skill-eval"\nproject_doc_max_bytes = 0\n` +
-    `[shell_environment_policy]\ninherit = "none"\n[shell_environment_policy.set]\nPATH = ${q(toolchain.path)}\nHOME = ${q(temp)}\nTMPDIR = ${q(temp)}\nBUN_RUNTIME_TRANSPILER_CACHE_PATH = "0"\nOPENSSL_CONF = "/dev/null"\n` +
+    `[shell_environment_policy]\ninherit = "none"\n[shell_environment_policy.set]\n` +
+    Object.entries(shellEnvironment({ temp, toolchain })).map(([name, value]) => `${name} = ${q(value)}`).join("\n") + "\n" +
     `[features]\n${disabled.map(name => `${name} = false`).join("\n")}\n` +
-    `[permissions.skill-eval.filesystem]\n":minimal" = "read"\n${q(cwd)} = "write"\n${q(plugin)} = "read"\n${q(temp)} = "write"\n` +
+    `[permissions.skill-eval.filesystem]\n":minimal" = "read"\n${q(cwd)} = "write"\n${q(join(cwd, ".git"))} = "write"\n${q(plugin)} = "read"\n${q(temp)} = "write"\n` +
     [...new Set([dirname(runtime), ...toolchain.roots])].map(path => `${q(path)} = "read"`).join("\n") + "\n" +
     `[permissions.skill-eval.network]\nenabled = false\n`;
 }
 
-async function preflight(codex, options, fixture, forbidden, runtime) {
+async function preflight(codex, options, fixture, forbidden, runtime, shell) {
   const server = createServer(socket => socket.end());
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   try {
@@ -42,12 +47,18 @@ async function preflight(codex, options, fixture, forbidden, runtime) {
       const socket = connect(server.address().port, "127.0.0.1");
       socket.on("connect", () => { socket.destroy(); resolve(); }); socket.on("error", reject);
     });
-    const probe = join(fixture, ".isolation-probe.mjs");
-    writeFileSync(probe, `import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';
+    const probe = join(fixture, ".isolation-probe.mjs"), git = { cwd: fixture, env: options.env };
+    try {
+      // Give the fixture its own repository, as each run does, so the probe can
+      // prove the profile lets a sandboxed command commit in it.
+      await run("git", ["init", "-q", "-b", "preflight"], git);
+      await run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "preflight"], git);
+      writeFileSync(probe, `import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {connect} from 'node:net';
-execFileSync('git',['--version']);
-execFileSync('node',['-e','console.log(42)']);
+const shell = { env: ${JSON.stringify(shell)}, encoding: 'utf8' };
+execFileSync('git',['--version'],shell);
+execFileSync('node',['-e','console.log(42)'],shell);
 for (const path of ${JSON.stringify(forbidden)}) {
   let denied = false;
   try { readFileSync(path); } catch(e) { denied = ['EPERM','EACCES'].includes(e.code); }
@@ -56,7 +67,11 @@ for (const path of ${JSON.stringify(forbidden)}) {
   try { writeFileSync(path, 'probe'); } catch(e) { denied = ['EPERM','EACCES'].includes(e.code); }
   if (!denied) throw Error('Write boundary not enforced');
 }
-writeFileSync('allowed-probe','ok'); unlinkSync('allowed-probe');
+writeFileSync('allowed-probe','ok');
+execFileSync('git',['add','--','allowed-probe'],shell);
+execFileSync('git',['-c','user.name=Probe','-c','user.email=probe@example.invalid','-c','commit.gpgsign=false','commit','-q','-m','probe'],shell);
+if (execFileSync('git',['log','-1','--format=%s'],shell).trim() !== 'probe') throw Error('Fixture commit not recorded');
+unlinkSync('allowed-probe');
 await new Promise((resolve,reject) => {
   const socket=connect(${server.address().port},'127.0.0.1');
   socket.setTimeout(3000,()=>{socket.destroy();reject(Error('Network probe inconclusive'));});
@@ -64,14 +79,14 @@ await new Promise((resolve,reject) => {
   socket.on('error',e=>['EPERM','EACCES','ECONNREFUSED'].includes(e.code)?resolve():reject(e));
 });
 console.log('isolation verified');\n`);
-    try {
       const output = await run(codex, ["sandbox", "-P", "skill-eval", "-C", fixture, runtime, probe], options);
       assert.match(output, /isolation verified/);
-      return { status: "pass", boundary: "native command sandbox: denied read/write and live loopback connection; allowed fixture write, Git and Node runtime" };
-    } finally { rmSync(probe, { force: true }); }
+      return { status: "pass", boundary: "native command sandbox: denied read/write and live loopback connection; allowed fixture write, fixture Git commit and Node runtime" };
+    } finally { rmSync(probe, { force: true }); rmSync(join(fixture, ".git"), { recursive: true, force: true }); }
   } finally { await new Promise(resolve => server.close(resolve)); }
 }
 
+// Returns the fixture commit, so a run's own commits can be told apart from it.
 async function initializeFixture(root, testCase, env) {
   mkdirSync(root, { recursive: true });
   for (const [path, content] of Object.entries(testCase.files)) {
@@ -82,7 +97,13 @@ async function initializeFixture(root, testCase, env) {
   await run("git", ["add", "."], options);
   await run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], options);
   if (testCase.id === "handoff") writeFileSync(join(root, "draft.txt"), "changed uncommitted user work\n");
+  return (await run("git", ["rev-parse", "HEAD"], options)).trim();
 }
+
+// After a model run, its repository configuration is model-written, and Git executes parts of it
+// (core.fsmonitor, filter drivers). Read it only through the same sandbox and shell environment.
+const sandboxedGit = (codex, { cwd, shell, codexHome }, args) =>
+  run(codex, ["sandbox", "-P", "skill-eval", "-C", cwd, "git", ...args], { cwd, env: { ...shell, CODEX_HOME: codexHome } });
 
 // Freezes both arms, including an uncommitted candidate, into installable carriers under
 // `work`, and returns each arm's manifest. Only the candidate ships, so only it must pass the
@@ -239,7 +260,7 @@ async function main() {
       report.capabilities = capabilities;
       const forbidden = [join(work, "grader-canary"), join(home, "auth-canary")];
       for (const path of forbidden) writeFileSync(path, "synthetic canary\n");
-      report.isolation = await preflight(codex, { cwd, env: { ...env, PATH: toolchain.path, OPENSSL_CONF: "/dev/null" } }, cwd, forbidden, runtime);
+      report.isolation = await preflight(codex, { cwd, env: { ...env, PATH: toolchain.path, OPENSSL_CONF: "/dev/null" } }, cwd, forbidden, runtime, shellEnvironment({ temp, toolchain }));
       if (existsSync(auth)) symlinkSync(auth, join(env.CODEX_HOME, "auth.json"));
       else if (process.env.OPENAI_API_KEY) { env.OPENAI_API_KEY = process.env.OPENAI_API_KEY; secrets.push(env.OPENAI_API_KEY); }
       else throw new Error("Native Codex auth is unavailable; no model calls started");
@@ -253,7 +274,7 @@ async function main() {
           continue;
         }
         const out = join(evidence, id); mkdirSync(out);
-        rmSync(cwd, { recursive: true }); await initializeFixture(cwd, c, env);
+        rmSync(cwd, { recursive: true }); const fixtureCommit = await initializeFixture(cwd, c, env);
         rmSync(temp, { recursive: true }); mkdirSync(temp);
         const skill = { path: join(installed.root, "skills", c.skill, "SKILL.md") };
         skill.body = readFileSync(skill.path, "utf8");
@@ -270,13 +291,22 @@ async function main() {
         let events = [];
         try { events = parseTrace(output); }
         catch (error) { result = { status: "blocked", findings: [error.message, processResult.error].filter(Boolean) }; }
+        const durationMs = Date.now() - start, gitState = {}, gitErrors = [];
         const captured = collectState(cwd), temporary = collectState(temp);
-        const captureErrors = [...captured.errors, ...temporary.errors];
+        // Git runs model-written configuration (such as core.fsmonitor) that can change files, so
+        // the run is graded on the state captured before these reads, and any change they make
+        // blocks it. The log keeps commits a reset dropped (--reflog) and the paths a merge
+        // resolution changed (--diff-merges=first-parent).
+        const repository = { cwd, shell: shellEnvironment({ temp, toolchain }), codexHome: env.CODEX_HOME };
+        try {
+          gitState.gitStatus = await sandboxedGit(codex, repository, ["status", "--porcelain"]);
+          gitState.gitCommits = await sandboxedGit(codex, repository, ["log", "--all", "--reflog", "--diff-merges=first-parent", "--format=%H %s", "--name-status", "--not", fixtureCommit]);
+        } catch (error) { gitErrors.push(`Git state unavailable: ${error.message}`); }
+        if (!isDeepStrictEqual([captured, temporary], [collectState(cwd), collectState(temp)])) gitErrors.push("Fixture or artifacts changed while Git state was read");
+        const captureErrors = [...captured.errors, ...temporary.errors, ...gitErrors];
         const observation = { events, skill, fixtureRoot: cwd, before, after: captured.state, artifacts: temporary.state, captureErrors,
-          traceDigest: digest(redactedTrace), process: processResult, prompt, durationMs: Date.now() - start,
-          settingsDigest: digest(settings) };
-        try { observation.gitStatus = await run("git", ["status", "--porcelain"], { cwd, env }); }
-        catch (error) { captureErrors.push(`Git state unavailable: ${error.message}`); }
+          traceDigest: digest(redactedTrace), process: processResult, prompt, durationMs,
+          settingsDigest: digest(settings), ...gitState };
         if (captureErrors.length) result = { status: "blocked", findings: captureErrors };
         result ??= grade(c, observation);
         safeSave(join(out, "observation.json"), observation);

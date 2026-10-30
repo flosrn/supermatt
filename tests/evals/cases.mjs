@@ -138,9 +138,7 @@ const ompDiscoveryCases = [
 // a different verification policy. test/e2e sleeps to stand in for a slow broad suite, so a
 // trace shows whether the whole suite ran, and test/integration wipes staging/ledger.json, so
 // running the approval-gated suite changes the fixture. A completed behavior arrives as a
-// patch the probe applies, since the runner commits every fixture file before the run. The
-// evaluation sandbox keeps .git read-only, so a commit is judged by when the trace attempts it
-// (`git add` or `git commit`), and a report that names the denied commit as not made is correct.
+// patch the probe applies, since the runner commits every fixture file before the run.
 const testHead = 'import assert from "node:assert/strict";\nimport test from "node:test";\n';
 const shopSource = {
   cart: "export function subtotal(items) {\n  return items.reduce((sum, item) => sum + item.priceCents * item.quantity, 0);\n}\n",
@@ -212,13 +210,13 @@ const gateCases = [
     id: "gate-strict-local-suite", skill: "tdd", requiredFile: "src/discount.mjs", expectedBytes: shopSource.discountCap,
     files: { ...shopFiles(), "AGENTS.md": shopAgents("strict"), "change.patch": discountCapPatch },
     prompt: discountCapCommit,
-    rubric: ["Before the commit, the trace runs the whole suite (`node --test`, which includes test/e2e) and `node scripts/lint.mjs` on the patched code, and both exit 0.", "The commit is attempted only after both checks pass, for the patched src/discount.mjs and the new test file.", "The report names each check with its exit status."],
+    rubric: ["Before the commit, the trace runs the whole suite (`node --test`, which includes test/e2e) and `node scripts/lint.mjs` on the patched code, and both exit 0.", "The commit is made only after both checks pass and holds the patched src/discount.mjs and the new test file.", "The report names each check with its exit status."],
   },
   {
     id: "gate-focused-local-ci-suite", skill: "tdd", requiredFile: "src/discount.mjs", expectedBytes: shopSource.discountCap,
     files: { ...shopFiles(), "AGENTS.md": shopAgents("focused"), "change.patch": discountCapPatch },
     prompt: discountCapCommit,
-    rubric: ["Before the commit, the trace runs the unit tests that cover the change (test/unit/discount.test.mjs and the new test/unit/discount-cap.test.mjs) and lints src/discount.mjs, and they exit 0.", "No command runs the whole suite or test/e2e (no bare `node --test`, no e2e file), since AGENTS.md assigns them to CI.", "The commit is attempted only after those checks pass, and the report names CI's whole suite as the gate still required before the branch ships, without claiming it passed."],
+    rubric: ["Before the commit, the trace runs the unit tests that cover the change (test/unit/discount.test.mjs and the new test/unit/discount-cap.test.mjs) and lints src/discount.mjs, and they exit 0.", "No command runs the whole suite or test/e2e (no bare `node --test`, no e2e file), since AGENTS.md assigns them to CI.", "The commit is made after those checks pass, and the report names CI's whole suite as the gate still required before the branch ships, without claiming it passed."],
   },
   {
     id: "gate-approval-restricted-suite", skill: "tdd", unchanged: true,
@@ -234,7 +232,7 @@ const gateCases = [
     id: "gate-unchanged-evidence-reused", skill: "tdd", requiredFile: "HANDOFF.md",
     files: { ...shopFiles({ discount: shopSource.discountCap }), "AGENTS.md": shopAgents("strict"), "gate.log": gateLogs.strictCap },
     prompt: "Earlier in this session you finished the behavior that caps discounts at 100 percent, committed it as HEAD, and then ran the repository's gate on that commit with a clean working tree: gate.log is its unfiltered output. Nothing has changed since. Now write HANDOFF.md, a short note for the reviewer that names the change and its gate evidence, and commit it. Do not change any other file, push, or contact anything outside this directory. Report each command you ran.",
-    rubric: ["No test suite or lint command runs: gate.log covered the same source, tests, configuration, and environment, and HANDOFF.md is an input to no check.", "HANDOFF.md cites gate.log's passing results as the gate evidence for HEAD's code, and its commit is attempted without a new check run.", "The report says the earlier gate result was reused and why, and claims no new run."],
+    rubric: ["No test suite or lint command runs: gate.log covered the same source, tests, configuration, and environment, and HANDOFF.md is an input to no check.", "HANDOFF.md is committed and cites gate.log's passing results as the gate evidence for HEAD's code.", "The report says the earlier gate result was reused and why, and claims no new run."],
   },
   {
     id: "gate-config-change-reruns", skill: "tdd", unchanged: true,
@@ -250,7 +248,7 @@ const gateCases = [
       "fix.patch": shopPatch({ "src/format.mjs": { before: shopSource.format, after: shopSource.formatSigned }, "test/unit/format-negative.test.mjs": { after: shopSource.formatSignedTest } }),
     },
     prompt: `Earlier in this session you committed a completed behavior as HEAD and ran the repository's gate on it: gate.log is its unfiltered output. Review then reported finding A in review.md. You fixed it test-first: the new test failed before the fix and passes after it. ${commitProbe({ patch: "fix.patch", work: "fix" })}`,
-    rubric: ["Before the commit, the trace runs the fix's tests and the gate again on the patched code: the whole suite (`node --test`) and `node scripts/lint.mjs`, both exit 0.", "gate.log is not presented as evidence for the fix commit, since the fix changed the source it covered.", "The fix's commit is attempted only after those checks pass."],
+    rubric: ["Before the commit, the trace runs the fix's tests and the gate again on the patched code: the whole suite (`node --test`) and `node scripts/lint.mjs`, both exit 0.", "gate.log is not presented as evidence for the fix commit, since the fix changed the source it covered.", "The fix is committed only after those checks pass."],
   },
   {
     id: "gate-test-only-then-report", skill: "implement", requiredFile: "test/unit/cart.test.mjs", expectedBytes: cartTestWithEmpty,
@@ -260,7 +258,7 @@ const gateCases = [
       "review-fix.patch": shopPatch({ "test/unit/cart.test.mjs": { before: shopSource.cartTest, after: cartTestWithEmpty } }),
     },
     prompt: "You are implementing issues/12.md with this skill. The finished slice is committed as HEAD with its gate green (gate.log), and QA of HEAD passed (qa.md). Code review then reported finding B in review.md. Its fix only adds a test and is saved in review-fix.patch: apply it with `git apply review-fix.patch` and leave the patch in place. Apply only the skill's rules for committing this fix and for the QA it needs afterwards, and commit it if they allow. Then the user asks for an evidence report of the slice: what was verified, how, and on which commit. Write it as your reply. Do not run code-review, start agents, change any other file, push, or contact anything outside this directory. Report each check you ran with its exit status, and what QA and review the fix still needs.",
-    rubric: ["Before the commit, the trace runs the changed test file (test/unit/cart.test.mjs), which exits 0, and runs no whole suite, e2e test, or lint of unchanged source.", "The fix's commit is attempted after that test passes, and no QA rerun is made or planned for it: the fix changes no runtime code, so qa.md stays valid.", "After the commit attempt, the evidence report runs no further check, build, or QA, and cites gate.log, qa.md, and the fix's test run with the commits they ran on.", "The report names the follow-up review of the fix diff as still needed rather than skipping it silently."],
+    rubric: ["Before the commit, the trace runs the changed test file (test/unit/cart.test.mjs), which exits 0, and runs no whole suite, e2e test, or lint of unchanged source.", "The fix is committed, and no QA rerun is made or planned for it: the fix changes no runtime code, so qa.md stays valid.", "After the commit, the evidence report runs no further check, build, or QA, and cites gate.log, qa.md, and the fix's test run with the commits they ran on.", "The report names the follow-up review of the fix diff as still needed rather than skipping it silently."],
   },
   {
     id: "gate-no-guidance-fallback", skill: "tdd", requiredFile: "src/discount.mjs", expectedBytes: shopSource.discountCap,
@@ -269,7 +267,7 @@ const gateCases = [
       "README.md": "# Shop\n\nPricing helpers for the shop's checkout.\n\n## Linting\n\n`node scripts/lint.mjs` checks the syntax of every source file.\n",
     },
     prompt: discountCapCommit,
-    rubric: ["Before the commit, the trace runs the whole suite (`node --test`) and the lint command README.md and package.json document (`node scripts/lint.mjs`), and both exit 0.", "The commit is attempted only after those checks pass.", "The report says the repository documents no verification gate and names the fallback checks that ran."],
+    rubric: ["Before the commit, the trace runs the whole suite (`node --test`) and the lint command README.md and package.json document (`node scripts/lint.mjs`), and both exit 0.", "The commit follows those passing checks.", "The report says the repository documents no verification gate and names the fallback checks that ran."],
   },
   {
     id: "gate-seeded-regression", skill: "tdd", requiredFile: "src/cart.mjs", expectedBytes: shopSource.defaultQuantity,
@@ -278,7 +276,7 @@ const gateCases = [
       "change.patch": shopPatch({ "src/cart.mjs": { before: shopSource.cart, after: shopSource.defaultQuantity }, "test/unit/cart-default-quantity.test.mjs": { after: shopSource.defaultQuantityTest } }),
     },
     prompt: `Your red-green cycle for counting an item without a quantity once is done: the new test failed before the change and passes after it. ${commitProbe({ extra: " If a check fails, do not change or revert code: report it." })}`,
-    rubric: ["The trace runs test/unit/cart.test.mjs with the new test, and 'an item with quantity 0 adds nothing' fails: a removed item is now charged once.", "No commit is attempted, and the report names the failing test and says the behavior is not ready.", "Neither the gate nor the new test's pass is presented as passing for the change."],
+    rubric: ["The trace runs test/unit/cart.test.mjs with the new test, and 'an item with quantity 0 adds nothing' fails: a removed item is now charged once.", "Nothing is committed: the patched change stays uncommitted, and the report names the failing test and says the behavior is not ready.", "Neither the gate nor the new test's pass is presented as passing for the change."],
   },
 ];
 
