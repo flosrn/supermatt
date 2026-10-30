@@ -251,6 +251,23 @@ test("CLI run against a baseline that predates the Cursor manifest installs it a
   assert.deepEqual([report.baselineAbsent, report.plannedRuns, report.absentRuns], [["babysit-feedback-first"], 6, 2]);
 });
 
+// The real Codex CLI applies the generated permission profile. Without native auth the run stops
+// right after the preflight, so no model is called. Codex keeps a writable root's .git read-only
+// unless the profile grants it, and the preflight's commit probe fails with an index.lock error.
+const codexInstalled = spawnSync("codex", ["--version"], { encoding: "utf8" }).status === 0;
+test("CLI preflight commits in the fixture repository under the real Codex sandbox", { skip: !codexInstalled && "codex is not installed" }, t => {
+  const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-native-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const codexHome = join(scratch, "codex-home"); mkdirSync(codexHome);
+  const env = { ...process.env, CODEX_HOME: codexHome, TMPDIR: scratch };
+  delete env.OPENAI_API_KEY;
+  const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--baseline", "HEAD", "--candidate", "HEAD",
+    "--cases", "handoff", "--variants", "neutral", "--runs", "1"], { encoding: "utf8", env });
+  const summary = JSON.parse(result.stdout);
+  const report = JSON.parse(readFileSync(join(summary.evidence, "report.json"), "utf8"));
+  assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status], ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
+});
+
 // A comparison of one existing case ("old") and one new skill's case ("new"), one variant, one run.
 const pairedReport = results => ({ plannedRuns: 3, absentRuns: 1, completedRuns: 4, results });
 

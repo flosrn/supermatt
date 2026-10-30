@@ -291,16 +291,20 @@ async function main() {
         let events = [];
         try { events = parseTrace(output); }
         catch (error) { result = { status: "blocked", findings: [error.message, processResult.error].filter(Boolean) }; }
-        const captured = collectState(cwd), temporary = collectState(temp);
-        const captureErrors = [...captured.errors, ...temporary.errors];
-        const observation = { events, skill, fixtureRoot: cwd, before, after: captured.state, artifacts: temporary.state, captureErrors,
-          traceDigest: digest(redactedTrace), process: processResult, prompt, durationMs: Date.now() - start,
-          settingsDigest: digest(settings) };
+        const durationMs = Date.now() - start, gitState = {}, gitErrors = [];
+        // Git runs model-written configuration (such as core.fsmonitor) that can still change
+        // files, so the file state is collected after it. The log keeps commits a reset dropped
+        // (--reflog) and the paths a merge resolution changed (--diff-merges=first-parent).
         const repository = { cwd, shell: shellEnvironment({ temp, toolchain }), codexHome: env.CODEX_HOME };
         try {
-          observation.gitStatus = await sandboxedGit(codex, repository, ["status", "--porcelain"]);
-          observation.gitCommits = await sandboxedGit(codex, repository, ["log", "--all", "--format=%H %s", "--name-status", "--not", fixtureCommit]);
-        } catch (error) { captureErrors.push(`Git state unavailable: ${error.message}`); }
+          gitState.gitStatus = await sandboxedGit(codex, repository, ["status", "--porcelain"]);
+          gitState.gitCommits = await sandboxedGit(codex, repository, ["log", "--all", "--reflog", "--diff-merges=first-parent", "--format=%H %s", "--name-status", "--not", fixtureCommit]);
+        } catch (error) { gitErrors.push(`Git state unavailable: ${error.message}`); }
+        const captured = collectState(cwd), temporary = collectState(temp);
+        const captureErrors = [...captured.errors, ...temporary.errors, ...gitErrors];
+        const observation = { events, skill, fixtureRoot: cwd, before, after: captured.state, artifacts: temporary.state, captureErrors,
+          traceDigest: digest(redactedTrace), process: processResult, prompt, durationMs,
+          settingsDigest: digest(settings), ...gitState };
         if (captureErrors.length) result = { status: "blocked", findings: captureErrors };
         result ??= grade(c, observation);
         safeSave(join(out, "observation.json"), observation);
