@@ -24,6 +24,11 @@ A canonical label, either a category or a state in the triage state machine, app
 **Tier**:
 An **Issue**'s difficulty: `light` for a small, local, low-risk change; `standard` for a normal change (the default); or `heavy` for a large, cross-cutting, or risky change. A tier is separate from an issue's category and triage state.
 
+**Full required gate**:
+The checks a repository requires at a boundary: a commit, a handoff, or an integration. The repository's documentation or CI decides what they are. A repository that requires a local full suite gets one there. A repository that runs focused tests locally and broad tests in CI keeps that split, and its CI gate still has to pass before shipping. A command the repository puts behind explicit approval runs only with that approval, and invoking a skill is not that approval: without it, the command is reported as unrun coverage, never as passed. A repository that documents no gate gets the full suite plus its documented lint and type checks, and the report names what ran.
+A passing result stays valid while its relevant source, dependencies, configuration, environment, and acceptance requirements are unchanged: a phase change, a report, or a commit does not invalidate it by itself. A source, dependency, configuration, or environment change invalidates the evidence it affects. Conflict resolution and runtime changes get the follow-up checks and QA they affect, and a clean rebase is not proof that every earlier result is still valid. A red, failed, timed-out, or unfinished check blocks the boundary, and its exit status is read as the command returned it, never through an output filter.
+_Avoid_: full suite, for a gate the repository defines more narrowly
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**

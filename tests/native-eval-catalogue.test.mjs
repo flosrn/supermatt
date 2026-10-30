@@ -52,7 +52,8 @@ test("export preserves candidate-only cases, variants and same-snapshot imports 
 });
 
 test("candidate export receives no inherited operator environment", { skip: !supportedNode }, t => {
-  const input = fixture(t, `if (Object.keys(process.env).length) throw Error('operator environment leaked');\n${exportsSource}`);
+  // macOS adds __CF_USER_TEXT_ENCODING to every process it starts, even with an empty environment; it is not operator data.
+  const input = fixture(t, `if (Object.keys(process.env).some(key => key !== '__CF_USER_TEXT_ENCODING')) throw Error('operator environment leaked');\n${exportsSource}`);
   const result = exportCatalogue(input, { env: { ...process.env, NATIVE_EVAL_OPERATOR_SECRET: "must-not-reach-candidate" } });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(readFileSync(input.output, "utf8")).cases, [candidateCase]);

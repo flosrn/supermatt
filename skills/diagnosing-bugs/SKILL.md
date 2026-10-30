@@ -187,7 +187,7 @@ Required before declaring done:
 - [ ] Regression test passes (or the missing seam is reported to the user as an architecture finding)
 - [ ] All `[DEBUG-...]` instrumentation removed (`grep` the prefix)
 - [ ] Throwaway debug harnesses deleted (or moved to a clearly-marked debug location)
-- [ ] The full test suite passes
+- [ ] The repository's [full required gate](../../GLOSSARY.md) passes on the fix, with any check it leaves unrun named in your report
 - [ ] The fix is committed, together with the regression test when a correct seam exists; otherwise the missing seam is reported as above. The commit message states the hypothesis that turned out correct, so the next debugger learns.
 - [ ] The fix passes QA, unless an outer flow (such as `implement`) runs QA on this diff itself: write the bug report or captured symptom to a file in the OS temporary directory, then load and follow the `qa` skill through the host's skill mechanism, with the commit you recorded in Phase 5 as the fixed point and that file as the request. A fail is a symptom the fix left behind: take it back to Phase 3.
 - [ ] The fix is reviewed, unless an outer flow (such as `implement`) reviews this diff itself: load and follow the `code-review` skill through the host's skill mechanism, with the commit you recorded in Phase 5 as the fixed point and, as the spec, the bug report file (write it now if the QA step was skipped). Fix every verified finding, at every severity, in the same turn, and commit the fixes. When the aggregate carries one, send the aggregate together with the first fix's tool call: a message with no tool call ends the turn and leaves the fixes to the user.
