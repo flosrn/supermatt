@@ -20,6 +20,8 @@ When the issue is a pull request, check out its head branch first, and push your
 
 Before you start, record the current commit with `git rev-parse HEAD`, and on the default branch create a branch named by the repo's convention.
 
+On a GitHub tracker whose repository has an `in-progress` label (`gh label list --search in-progress`), add it to each ticket you implement before your first code change (`gh issue edit <n> --add-label in-progress`), so dashboards and other sessions see the ticket is held. Leave it on when the work is ready to ship: the merge closes the ticket. Remove it (`gh issue edit <n> --remove-label in-progress`) only when you stop without delivering the ticket. A repository without the label gets no label.
+
 Before changing data contracts, state transitions, shared mutable state, or retryable effects, load `codebase-design` through the host's skill mechanism. Follow its state-contract guidance for the affected behavior.
 
 Where possible, at pre-agreed seams, load and follow the `tdd` skill through the host's skill mechanism. Seams that the spec or issue names or the user explicitly confirmed are pre-agreed. Obtain confirmation for any newly reached seam, including refactor and review-fix seams, before writing tests.
