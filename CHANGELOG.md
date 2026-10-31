@@ -15,6 +15,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- `orchestrate`: releases the ship slot once a PR and its merge request are open, so merge queues and trains can carry multiple lanes. Checks every open PR's required CI alongside queue state, starts bounded recovery on failure, re-takes the slot for safe re-syncs, and inspects all open PRs after 60 minutes without a merge while preserving the separate post-merge merge hold.
+- `ship-pr`: follows the caller's narrowed ship-slot scope instead of holding the orchestrator's slot through post-merge verification.
 - `qa`: accepts Node built-ins in the shared scratch dependency preflight, including built-in-only checks, while preserving package resolution and missing-package failures.
 - `retro`: recognizes OMP `skill-prompt` custom messages as user evidence with their original source lines while skipping other custom types and rejecting userless sessions.
 
