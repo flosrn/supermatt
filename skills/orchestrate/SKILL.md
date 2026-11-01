@@ -3,7 +3,7 @@ name: orchestrate
 description: "Work through GitHub issues or local Markdown tickets unattended in parallel lanes, with workers in Herdr panes and git worktrees."
 argument-hint: "[parallel runs] [issue refs]"
 disable-model-invocation: true
-compatibility: Designed for Claude Code, Codex, Cursor, and OMP. Requires the matching host CLI and Herdr integration, gh for GitHub PR shipping, and Bun or Node.js 18.17 or later (built-in modules only). Supports GitHub issues and local Markdown trackers. The notification uses osascript, so it shows on macOS only.
+compatibility: Designed for Claude Code, Codex, Cursor, and OMP. Requires the matching host CLI and Herdr integration, gh for GitHub PR shipping, and Bun or Node.js 18.17 or later (built-in modules only). Supports GitHub issues and local Markdown trackers. The notification is a Tern notification, so it shows when the orchestrator runs in a Tern pane.
 license: MIT
 ---
 
@@ -182,11 +182,11 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
 
 - **Pause**: the operator can type into your pane while you work. A request to pause or stop means every busy lane finishes its current issue through Report and no lane picks a new one; then stop. A request to stop now means stop at once.
 - **Friction log**: keep a running list across issues, each entry with its lane and issue: each dialog and question you answered (phase, what you chose), each `--wait` that returned `timeout` or `agent_prompt_stalled`, each restart of the worker outside Refactor and Retro, each rebase conflict, each history edit you made in a lane and its check result, each parked lane and its reason, each reported retro candidate, each triage outcome other than READY, and each issue filed during the run. OMP issues also record every tier fallback with its reason and observed tracker metadata, and every wrong-tier assessment with the evidence required above, including parked lanes that bypass Report. Print it when you stop; it is the operator's input for tuning this skill.
-- **On stop**: send one macOS notification, then print the reason and the friction log, including reported retrospective candidates. The operator is notified only here and when a lane parks: when the run is finished, or when it needs them.
+- **On stop**: send one Tern notification, then print the reason and the friction log, including reported retrospective candidates. The operator is notified only here and when a lane parks: when the run is finished, or when it needs them.
   - No lane is parked: title `PROJECT done`, body `<count> issues merged, <count> filed`.
   - A lane is parked, or Setup failed: title `PROJECT needs you`, body the reason, or each parked lane with its issue and reason.
 
-  Pass the text as arguments, so quotes in a reason cannot break the script: `osascript -e 'on run argv' -e 'display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"' -e 'end run' "TITLE" "BODY"`.
+  Send it with `RUN <this skill's directory>/scripts/tern-notify.mjs "TITLE" "BODY"`: it shows as a toast and an inbox entry of your own pane. Pass the text as arguments, so quotes in a reason cannot break it.
 
   After the notification, friction log, and parked-lane report, offer cleanup only when `command -v tern-wt` succeeds. Run `tern-wt clean --repo <main checkout>` as a dry run. Summarize its JSON `remove` lists (worktrees, branches, processes, containers, and paths), `keep` entries with their reasons, and `warnings`. Parked lanes' worktrees have work to lose: `clean` must keep them for inspection and never remove them. If a parked worktree appears in `remove`, report the mismatch and do not apply. Ask: "The run has stopped. Apply this cleanup plan?" This approval happens after the run stops, outside the unattended loop's never-ask rule. Only after the operator says yes, run `tern-wt clean --repo <main checkout> --apply`; it recomputes the plan. Report what was removed, what was kept and why, and any warnings or per-item failures. Without approval, leave everything unchanged. This opt-in cleanup is the exception to the run-created-worktree-only removal rule; its safety boundary is `clean`'s plan, not manual deletion.
 
