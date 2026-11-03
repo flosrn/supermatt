@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // A host-side poller, not a model loop. Registrations and delivery receipts have separate writers.
 import { spawnSync } from "node:child_process";
-import { linkSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -378,6 +378,7 @@ export async function runCli(argv, overrides = {}) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// ~/.agents/skills links to the clone, so compare real paths, not the invoked one.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   runCli(process.argv.slice(2)).catch((error) => { console.error(JSON.stringify({ event: "error", error: error.message })); process.exitCode = 1; });
 }

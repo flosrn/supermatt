@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCli } from "../skills/ship-pr/scripts/merge-train-watch.mjs";
 
@@ -450,6 +450,15 @@ test("actual CLI registers, posts accepted owner inbox and deduplicates after pr
   assert.equal(f.read().messages[0].block, "10");
   assert.equal(f.run("watch", ["--once"]).status, 0);
   assert.equal(f.read().messages.length, 1);
+});
+
+test("actual CLI runs when invoked through a symlinked skills directory", (t) => {
+  const f = binaries(t);
+  const linked = join(f.dir, "linked-skill");
+  symlinkSync(dirname(cli), linked);
+  const registered = spawnSync(process.execPath, [join(linked, basename(cli)), ...f.args("register", ["--pr", "7", "--owner", "10"])], { env: f.env, encoding: "utf8", timeout: 10_000 });
+  assert.equal(registered.status, 0, registered.stderr);
+  assert.notEqual(registered.stdout.trim(), "", "a symlinked entry point must still run the CLI");
 });
 
 async function startWatch(t, f, extra = []) {
