@@ -14,6 +14,18 @@ These replace the Herdr checks of Setup steps 1, 3 and 4; every other Setup step
 2. Step 3's OMP checks: `HERDR agent start --help` must list `omp`, `HERDR integration status` must print an `omp: current` line, and `HERDR agent get "$TERN_PANE"` must return `.result.agent.agent` `omp`. If any of these fail, report it and stop.
 3. Step 4: do not run `herdr --skill`. Follow the rules below instead.
 
+## Conflict event delivery
+
+For repositories supporting merge-train conflict markers, follow [ship-pr's durable conflict handoff](../ship-pr/SKILL.md#durable-conflict-handoff) during Setup. Prefer the coordinator's no-deadline background `watch --until-event` job: its JSON result starts a host turn even if that session has `inbox: off`. Process a successful batch, then re-arm it. Exit 1 is a read/delivery blocker: fix it before re-arming, rather than creating a rapid model retry loop. Keep one repository-wide process and durable state across lanes; restore the job explicitly after session/host restart. It scans orphans and remains responsible across worker returns. State survives restart; process supervision across reboot is not provided.
+
+For cross-session inbox delivery, check `command -v tern-sessions` and `tern-sessions list --json`. Register local live blocks with their actual pid and session file, never infer ownership from a branch. A CLI on PATH does not mean an existing OMP loaded its extension: `canReceive: false` or `inbox: off` requires the user to `/restart` that session before mailbox delivery, then re-register its new identity. This restart is unnecessary for the coordinator's own host-result channel. Unreachable cloud owners go to the coordinator's existing handoff procedure, not an external model launched by the watcher.
+
+Outside-program delivery uses `--from supermatt-merge-train`. The receiving user's existing `~/.config/tern-sessions/config.json` (or `TERN_SESSIONS_CONFIG`) must explicitly include that name in `trustedSenders` for unattended inbox delivery. Read that configuration; never add or overwrite trust settings. Without that opt-in, `tern-sessions send` asks the receiving user to confirm delivery. Its successful `left: true` result means a message was left, not that the user accepted it or a turn ran. A session waiting for its user's answer receives an inbox message only after that answer.
+
+A registered live shim worker can fall back through `HERDR agent prompt NAME TEXT` without `--wait`, checking its exit status. The shim cannot prompt a coordinator it did not launch: naming or registering its pane creates no surface record. Adopt an existing coordinator through its own `--until-event` host job, or have the user `/restart` an inbox-off session and explicitly opt into the sender above. Until either channel is available, describe operator notification honestly; never type raw pane input as a substitute. A continuous watch without `--until-event` supplies no host-result wake by itself.
+
+When neither owner nor coordinator can receive a turn, `tern-notify.mjs --pane BLOCK "TITLE" "BODY"` targets the coordinator's operator, or the originating `TERN_PANE` when no coordinator is supplied. It is a toast/inbox notification, not an OMP message. Report the selected fallback and any unavailable route honestly; a dry-run route plan does not prove delivery.
+
 ## Rules
 
 - Parse every ID from JSON output. Pane IDs are Tern block IDs. Never close a block you did not create.
