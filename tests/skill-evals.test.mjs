@@ -305,7 +305,9 @@ for (const [name, sandbox, passes, error] of [
   ["a canary read that succeeded", answer("success", "EACCES"), false, /Read boundary not enforced/],
   // Bubblewrap does not mount an ungranted path and backs the parents of granted roots with a private tmpfs.
   ["hidden canaries and private writes", answer("ENOENT", "success"), linux, /Read boundary not enforced/],
+  ["hidden canaries whose writes find no parent", answer("ENOENT", "ENOENT"), linux, /Read boundary not enforced/],
   ["canary writes denied by a read-only mount", answer("EACCES", "EROFS"), linux, /Write boundary not enforced/],
+  ["a canary write that failed with an unexpected error", answer("EACCES", "EIO"), false, /Write boundary not enforced/],
 ]) test(`CLI preflight with a sandbox that reports ${name} ${passes ? "passes" : "is blocked"} on ${process.platform}`, t => {
   const { repo, beforeCursor, withSkill } = history(t);
   const { summary, report } = stubRun(t, repo, beforeCursor, withSkill, { sandbox });
