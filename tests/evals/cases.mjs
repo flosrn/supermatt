@@ -389,6 +389,51 @@ export const cases = [
     rubric: ["In situation 1, B does not run its tests while A's live process still holds app_test, port 4100 and /shared/build; A holding the merge slot does not make that overlap safe, because the slot serializes integration, not the use of mutable resources before integration.", "In situation 1, B waits for verified release of those resources (A's process exited and the database, port and build directory are free) or for verified distinct targets, rather than for a status claim or for the merge slot itself.", "In situation 2, B may run its tests now against its verified distinct database, port and build directory although A still holds the merge slot; only B's integration waits for the slot. Refusing or serializing B's tests in this situation fails this item.", "C stays eligible for independent work in both situations; neither A's merge slot nor the A/B conflict blocks it. Naming the merge-slot distinction without these per-situation decisions does not pass."],
   },
   {
+    id: "spec-per-ticket-plan", skill: "implement-spec", unchanged: true,
+    files: {
+      "spec.md": "# Spec #50: Image pruning\n\nShipping requirement: each ticket ships as its own pull request against main, reviewed and merged separately. Do not combine tickets into one pull request.\n\nTickets: #51, #52, #53.\n",
+      "tickets.md": "#51 (A): add the prune job's storage query. Blocked by: none. Edits src/storage/query.ts.\n#52 (B): schedule pruning in the worker. Blocked by: #51. Edits src/worker/schedule.ts.\n#53 (C): document the retention setting. Blocked by: none. Edits docs/retention.md.\n",
+      "repo.md": "Repository acme/app on GitHub; issues close through pull requests. Default branch main; freshly fetched origin/main is at 4e5f6a7. No run directory exists yet for this spec. Branch convention: feat/<issue>-<slug>.\n",
+    },
+    prompt: "Apply only the task-graph, branch-preparation, integration and pull-request parts of the skill to spec.md, tickets.md and repo.md. Report what the coordinator records in the task graph, the branch and starting point of each ticket and of the integration branch, how each verified ticket enters the integration branch, and which pull requests are opened, for which branches and when. Do not create branches or worktrees, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The task graph records one PR per ticket mode, because spec.md requires a separate pull request per ticket, and keeps it for a later resume; it also records each ticket's prerequisite branches and the ship order, #51 before #52, with #53 independent.",
+      "#51 and #53 start from the freshly fetched default-branch tip 4e5f6a7. #52 is dispatched only after #51 is verified, and starts from that default-branch tip merged with #51's verified commit and nothing else: not the integration branch tip, and not #53.",
+      "The integration branch is for verification only: each verified ticket branch enters it with a merge commit, not `git merge --ff-only`; it hosts the whole-spec gate, QA and code review; and no pull request is opened for it.",
+      "Each ticket gets its own pull request against main, not one based on another ticket's branch. #52's pull request is not opened until #51 has merged into main and #52 has synced with main.",
+    ],
+  },
+  {
+    id: "spec-per-ticket-sync", skill: "implement-spec", unchanged: true,
+    files: {
+      "run.md": "Spec #50 runs in one PR per ticket mode, recorded in its task graph. Default branch main. Integration worktree /Users/dev/wt/spec-50, branch feat/50-integration.\nTicket #51 (A): branch feat/51-query, verified at 3c4d5e6 and merged into the integration branch with a merge commit. Its draft PR #61 targets main and is open, not merged.\nTicket #52 (B), blocked by #51: branch feat/52-schedule, created from origin/main at 4e5f6a7 merged with 3c4d5e6, then dispatched.\nTicket #53 (C): verified and merged into the integration branch with a merge commit.\n",
+      "state.md": "# Captured state (raw command results)\n\n$ git fetch origin\n$ git rev-parse --short origin/main\n9a8b7c6\n$ git log --oneline 4e5f6a7..origin/main\n9a8b7c6 feat(billing): add invoice export (#47)\n$ git log --oneline 3c4d5e6..origin/feat/51-query\n7f6e5d4 fix(storage): page the prune query\n2b3c4d5 docs(storage): describe the prune query\n$ git -C /Users/dev/wt/spec-50 log -1 --format=%s\nMerge branch 'feat/53-retention' into feat/50-integration\n",
+      "worker-message.md": "Worker #52 finished its commit 8d9e0f1 and now holds the merge slot. It writes: \"#51's branch moved on since I started: it now pages the prune query, and my scheduler calls that query. I plan to run `git merge origin/feat/51-query` so I build on the latest #51, then `git merge feat/50-integration` to pick up #53, then run the gate. OK?\"\n",
+    },
+    prompt: "Apply only the merge-slot sync and pull-request parts of the skill to run.md, state.md and worker-message.md. Answer the worker: say which of its proposed merges it runs, what it merges instead, when #52 takes #51's later commits, and when #52's pull request opens. Do not run git, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The worker does not merge origin/feat/51-query: #51 has not merged into main, so its later commits 2b3c4d5 and 7f6e5d4 are not pulled into #52 from #51's branch.",
+      "The worker does not merge feat/50-integration either: the integration branch is never merged into a ticket branch, and #53 is not one of #52's prerequisites.",
+      "In the merge slot, #52 syncs only with the freshly fetched default branch, origin/main at 9a8b7c6, and reruns the checks that merge invalidates, the full required gate included, before its verified commit enters the integration branch.",
+      "#52 takes #51's later work only after #51 merges into main, by syncing with main again; #52's pull request waits for that merge and that sync.",
+    ],
+  },
+  {
+    id: "spec-single-pr-default", skill: "implement-spec", unchanged: true,
+    files: {
+      "spec.md": "# Spec #70: Saved searches\n\nUsers can save a search and rerun it from the sidebar.\n\nTickets: #71, #72.\n",
+      "tickets.md": "#71 (A): store saved searches. Blocked by: none. Edits src/search/store.ts.\n#72 (B): list saved searches in the sidebar. Blocked by: #71. Edits src/ui/sidebar.tsx.\n",
+      "repo.md": "Repository acme/app on GitHub; issues close through pull requests. Default branch main at 1a2b3c4. No run directory exists yet for this spec. Branch convention: feat/<issue>-<slug>.\n",
+    },
+    prompt: "Apply only the task-graph, branch-preparation, merge-slot, integration and pull-request parts of the skill to spec.md, tickets.md and repo.md. Report what the coordinator records in the task graph, where each ticket's branch starts, what each finished worker merges into its branch before integration, the git command that integrates it, and which pull requests are opened, for which branches. Do not create branches or worktrees, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The task graph records the single integration PR mode: nothing in spec.md, tickets.md or repo.md requires a pull request per ticket.",
+      "#71 starts from the integration branch tip, created from main at 1a2b3c4, and #72 from the integration tip once #71 is integrated; in the merge slot each finished worker brings the latest integration tip into its branch.",
+      "Each verified worker commit enters the integration branch with `git merge --ff-only`.",
+      "Exactly one pull request is opened: a draft for the integration branch against main that references #70, #71 and #72. No ticket gets a pull request of its own.",
+    ],
+  },
+  {
     id: "worktree-setup-source", skill: "implement-spec", unchanged: true,
     files: {
       "docs/agents/worktree-setup.md": "# Worktree setup\n\nRun these from the worktree root, in order:\n\n1. `bun install --frozen-lockfile`\n2. `git submodule update --init --recursive`\n",
