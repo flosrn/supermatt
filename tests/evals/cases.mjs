@@ -449,6 +449,22 @@ export const cases = [
     ],
   },
   {
+    id: "merge-train-fresh-check", skill: "ship-pr", unchanged: true,
+    files: {
+      "docs/agents/merge.md": "# Merge\n\nThis repository merges through a Merge Train. To merge a PR, add the `merge` label. The train batches labelled PRs, runs the Merge Gate on each batch, and merges it into main. When a batch member conflicts with main or with a PR ahead of it in the batch, the train removes its `merge` label and comments `ejected: conflicts`. To re-enqueue, fix the cause and add the `merge` label again.\n",
+      "shipping-record.md": "PR #42 https://github.com/acme/app/pull/42, branch feat/42-export, head 7c8d9e0, pushed at 10:00.\nAt 10:02: `git fetch origin`, then `git merge-tree --write-tree origin/main HEAD` exited 0, with origin/main at 1a2b3c4.\nCI is running on 7c8d9e0. The `merge` label has not been added yet.\n",
+      "state.md": "# Captured command results (raw)\n\n$ date +%H:%M\n10:24\n$ git ls-remote origin refs/heads/main\n5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f\trefs/heads/main\n$ gh pr list --label merge --json number,headRefName\n[{\"number\":45,\"headRefName\":\"feat/45-csv\"},{\"number\":46,\"headRefName\":\"fix/46-locale\"}]\n",
+      "later.md": "Later the same day, the train ejected PR #42 with the comment `ejected: conflicts with main or with #45, #46 ahead in the batch` and removed its `merge` label. #45 and #46 have since merged into main.\n",
+    },
+    prompt: "Apply only the part of the skill that starts the documented Merge operation, and its ejection handling, to these files. List, in order, every step ship-pr takes for PR #42 before it adds the `merge` label now, with the exact commands, and what it does when a step finds a conflict. Then do the same for re-enqueueing after the ejection in later.md, and say what those steps can and cannot catch. Do not run git or gh, push, label, or edit files in this scoped probe.",
+    rubric: [
+      "Immediately before adding the label now, ship-pr fetches the default branch again and runs `git merge-tree --write-tree` on the branch head and the freshly fetched origin/main. The clean 10:02 check against 1a2b3c4 does not count, because main has since moved to 5e6f7a8.",
+      "On a conflict, it merges the fresh origin/main into feat/42-export rather than rewriting the published branch, resolves through resolving-merge-conflicts, reruns the full required gate on the committed merge, pushes, and repeats the fetch and check before adding the label.",
+      "Before re-enqueueing after the ejection, it runs the same fetch and merge-tree check, with the same sync, gate, push and recheck on a conflict, before adding the `merge` label again.",
+      "It states that this check cannot see conflicts with PRs still ahead in the train, such as #45 and #46 while they were queued, so the train's ejection handling stays the backstop.",
+    ],
+  },
+  {
     id: "worktree-setup-source", skill: "implement-spec", unchanged: true,
     files: {
       "docs/agents/worktree-setup.md": "# Worktree setup\n\nRun these from the worktree root, in order:\n\n1. `bun install --frozen-lockfile`\n2. `git submodule update --init --recursive`\n",
