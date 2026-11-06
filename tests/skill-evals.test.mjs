@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collectState, comparisonStatus, planComparison, absentResult } from "../scripts/lib/skill-evals.mjs";
-import { mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, readdirSync, mkdirSync, realpathSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -256,8 +256,8 @@ test("CLI run against a baseline that predates the Cursor manifest installs it a
 // fixture stands in for the model; a launcher hands that fixture the real CLI's path on each call.
 const realCodex = spawnSync("sh", ["-c", "command -v codex"], { encoding: "utf8" }).stdout.trim();
 const skipNative = { skip: !realCodex && "codex is not installed" };
-function nativeRun(t, { stubExec = false } = {}) {
-  const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-native-"));
+function nativeRun(t, { stubExec = false, root = tmpdir() } = {}) {
+  const scratch = mkdtempSync(join(root, "supermatt-evals-native-"));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
   const codexHome = join(scratch, "codex-home"); mkdirSync(codexHome);
   const env = { ...process.env, CODEX_HOME: codexHome, TMPDIR: scratch };
@@ -280,6 +280,19 @@ function nativeRun(t, { stubExec = false } = {}) {
 test("CLI preflight commits in the fixture repository under the real Codex sandbox", skipNative, t => {
   const { summary, report } = nativeRun(t);
   assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status], ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
+});
+
+// macOS's os.tmpdir() is under /var/folders, so the test above never puts the evidence root, and
+// with it the fixture and the grader and auth canaries, under /tmp, the scratch directory Codex's
+// Seatbelt profile opens to sandboxed commands unless the permission profile denies it.
+const systemTemp = ["/tmp", "/var/tmp"].filter(existsSync).map(path => realpathSync(path));
+const tempCanaries = () => systemTemp.flatMap(dir => readdirSync(dir).filter(name => name.startsWith("supermatt-evals-canary-")).map(name => join(dir, name)));
+test("CLI preflight denies the system temp directories and still passes with the evidence root under /tmp", skipNative, t => {
+  const before = new Set(tempCanaries());
+  const { summary, report } = nativeRun(t, { root: "/tmp" });
+  assert.deepEqual(tempCanaries().filter(path => !before.has(path)), [], "a temp-directory canary was left behind");
+  assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status], ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
+  for (const dir of systemTemp) assert.ok(report.isolation.boundary.includes(dir), `${dir} is not among the denied paths`);
 });
 
 test("a run's observation keeps commits a reset dropped and merge-resolution paths, and a file Git's configuration writes during capture blocks the run", skipNative, t => {

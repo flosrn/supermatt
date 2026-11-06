@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -23,7 +24,10 @@ const { values } = parseArgs({ options: {
 // commands with the same set, so its Git positive control matches a run.
 const shellEnvironment = ({ temp, toolchain }) => ({ PATH: toolchain.path, HOME: temp, TMPDIR: temp, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", OPENSSL_CONF: "/dev/null" });
 
-function configuration({ cwd, plugin, runtime, temp, toolchain }) {
+// On macOS, Codex's Seatbelt profile opens the system temp directories (`systemTemp`, resolved,
+// so /private/tmp and /private/var/tmp) to sandboxed commands unless the profile denies them. The
+// narrower fixture, `.git`, and temp grants below reopen their own subtrees inside that deny.
+function configuration({ cwd, plugin, runtime, temp, toolchain, systemTemp }) {
   const q = JSON.stringify;
   const disabled = ["apps", "hooks", "memories", "multi_agent", "remote_plugin", "shell_snapshot", "skill_mcp_dependency_install",
     "browser_use", "browser_use_external", "computer_use", "image_generation", "in_app_browser", "in_app_local_automation"];
@@ -32,12 +36,13 @@ function configuration({ cwd, plugin, runtime, temp, toolchain }) {
     `[shell_environment_policy]\ninherit = "none"\n[shell_environment_policy.set]\n` +
     Object.entries(shellEnvironment({ temp, toolchain })).map(([name, value]) => `${name} = ${q(value)}`).join("\n") + "\n" +
     `[features]\n${disabled.map(name => `${name} = false`).join("\n")}\n` +
-    `[permissions.skill-eval.filesystem]\n":minimal" = "read"\n${q(cwd)} = "write"\n${q(join(cwd, ".git"))} = "write"\n${q(plugin)} = "read"\n${q(temp)} = "write"\n` +
+    `[permissions.skill-eval.filesystem]\n":minimal" = "read"\n${systemTemp.map(path => `${q(path)} = "deny"\n`).join("")}` +
+    `${q(cwd)} = "write"\n${q(join(cwd, ".git"))} = "write"\n${q(plugin)} = "read"\n${q(temp)} = "write"\n` +
     [...new Set([dirname(runtime), ...toolchain.roots])].map(path => `${q(path)} = "read"`).join("\n") + "\n" +
     `[permissions.skill-eval.network]\nenabled = false\n`;
 }
 
-async function preflight(codex, options, fixture, forbidden, runtime, shell) {
+async function preflight(codex, options, fixture, forbidden, runtime, shell, systemTemp) {
   const server = createServer(socket => socket.end());
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   try {
@@ -81,7 +86,7 @@ await new Promise((resolve,reject) => {
 console.log('isolation verified');\n`);
       const output = await run(codex, ["sandbox", "-P", "skill-eval", "-C", fixture, runtime, probe], options);
       assert.match(output, /isolation verified/);
-      return { status: "pass", boundary: "native command sandbox: denied read/write and live loopback connection; allowed fixture write, fixture Git commit and Node runtime" };
+      return { status: "pass", boundary: `native command sandbox: denied read/write (evaluator canaries; system temp directories ${systemTemp.join(", ") || "none present"}) and live loopback connection; allowed fixture write, fixture Git commit and Node runtime` };
     } finally { rmSync(probe, { force: true }); rmSync(join(fixture, ".git"), { recursive: true, force: true }); }
   } finally { await new Promise(resolve => server.close(resolve)); }
 }
@@ -209,6 +214,7 @@ async function main() {
     writeFileSync(join(harness, "catalogue.json"), loaded.bytes, { mode: 0o600 });
     report.harnessFiles["catalogue.json"] = report.catalogueDigest;
     const repo = realpathSync(values.repo), runtime = realpathSync(process.execPath);
+    const systemTemp = [...new Set(["/tmp", "/var/tmp"].filter(existsSync).map(path => realpathSync(path)))];
     const codex = values.codex.includes("/") ? resolve(values.codex) : (await run("which", [values.codex])).trim();
     const bin = join(work, "bin"); mkdirSync(bin);
     const git = (await run(process.platform === "darwin" ? "xcrun" : "which", process.platform === "darwin" ? ["--find", "git"] : ["git"])).trim();
@@ -245,7 +251,7 @@ async function main() {
       const observed = await listSkills(codex, { cwd, env });
       const installed = verifyDiscovery(observed, expected, env.CODEX_HOME);
       rmSync(carrier, { recursive: true });
-      const temp = join(home, "tmp"), settings = configuration({ cwd, plugin: installed.root, runtime, temp, toolchain });
+      const temp = join(home, "tmp"), settings = configuration({ cwd, plugin: installed.root, runtime, temp, toolchain, systemTemp });
       // plugin add writes its own TOML tables. Place root settings before them.
       const configPath = join(env.CODEX_HOME, "config.toml");
       writeFileSync(configPath, settings + "\n" + readFileSync(configPath, "utf8"));
@@ -260,7 +266,14 @@ async function main() {
       report.capabilities = capabilities;
       const forbidden = [join(work, "grader-canary"), join(home, "auth-canary")];
       for (const path of forbidden) writeFileSync(path, "synthetic canary\n");
-      report.isolation = await preflight(codex, { cwd, env: { ...env, PATH: toolchain.path, OPENSSL_CONF: "/dev/null" } }, cwd, forbidden, runtime, shellEnvironment({ temp, toolchain }));
+      // A canary in each system temp directory, outside the evidence root, proves the profile's
+      // deny even when TMPDIR points elsewhere. It never outlives the preflight.
+      const tempCanaries = systemTemp.map(dir => join(dir, `supermatt-evals-canary-${randomUUID()}`));
+      try {
+        for (const path of tempCanaries) writeFileSync(path, "synthetic canary\n", { flag: "wx" });
+        report.isolation = await preflight(codex, { cwd, env: { ...env, PATH: toolchain.path, OPENSSL_CONF: "/dev/null" } }, cwd,
+          [...forbidden, ...tempCanaries], runtime, shellEnvironment({ temp, toolchain }), systemTemp);
+      } finally { for (const path of tempCanaries) rmSync(path, { force: true }); }
       if (existsSync(auth)) symlinkSync(auth, join(env.CODEX_HOME, "auth.json"));
       else if (process.env.OPENAI_API_KEY) { env.OPENAI_API_KEY = process.env.OPENAI_API_KEY; secrets.push(env.OPENAI_API_KEY); }
       else throw new Error("Native Codex auth is unavailable; no model calls started");
