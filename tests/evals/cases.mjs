@@ -434,6 +434,21 @@ export const cases = [
     ],
   },
   {
+    id: "sync-gate-merge-head", skill: "implement-spec", unchanged: true,
+    files: {
+      "AGENTS.md": "# App\n\n## Checks\n\nThe required gate is `pnpm gate`: `pnpm lint`, then `turbo run test --affected`, which tests the packages changed since the merge base of HEAD and origin/main.\n",
+      "run.md": "Spec #40 runs in single integration PR mode. Integration worktree /Users/dev/wt/spec-40, branch feat/40-integration at 5d6e7f8.\nTicket #42: worktree /Users/dev/wt/t42, branch feat/42-export. Its worker committed 2a3b4c5, whose full gate passed, then took the merge slot and ran `git merge feat/40-integration`, which stopped on a conflict in src/export/csv.ts. The worker resolved that conflict, staged the file, and ran the gate.\n",
+      "state.md": "# Captured command results (raw)\n\n$ git -C /Users/dev/wt/t42 status --short --branch\n## feat/42-export\nM  src/export/csv.ts\nM  src/export/index.ts\n$ git -C /Users/dev/wt/t42 rev-parse -q --verify MERGE_HEAD\n5d6e7f8c9b0a1f2e3d4c5b6a7f8e9d0c1b2a3f4e\n$ pnpm gate\n> pnpm lint\nlint: 0 problems\n> turbo run test --affected\nfatal: multiple merge bases found\nERROR run failed: command exited (1)\n$ echo $?\n1\n",
+      "worker-report.md": "Worker #42 reports: \"Lint passed. The test step failed with `fatal: multiple merge bases found`, a turbo problem rather than my code, and the gate on 2a3b4c5 was green before the sync. I count the gate as passed, so I will commit the merge and hand the branch over for the fast-forward.\"\n",
+    },
+    prompt: "Apply only the merge-slot part of the skill to run.md, state.md and worker-report.md. Say whether the `pnpm gate` run in state.md counts as passing evidence or as a failed check, whether #42 may be integrated on the worker's report, and list in order the steps from here to the integration decision. Do not run git or pnpm, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The `pnpm gate` run in state.md counts neither as passing evidence nor as a code failure: it ran while the merge was still in progress (MERGE_HEAD exists and the resolution is staged, not committed), and `fatal: multiple merge bases found` is the affected-scope tool failing on that state, not a test result.",
+      "#42 is not integrated on the worker's report: the green gate on 2a3b4c5 predates the sync and does not cover the combined code.",
+      "The steps are: commit the verified conflict resolution so the merge is complete and MERGE_HEAD is gone, then run the full required gate, `pnpm gate`, on that merge commit; only that run decides whether #42 enters the integration branch with `git merge --ff-only`.",
+    ],
+  },
+  {
     id: "worktree-setup-source", skill: "implement-spec", unchanged: true,
     files: {
       "docs/agents/worktree-setup.md": "# Worktree setup\n\nRun these from the worktree root, in order:\n\n1. `bun install --frozen-lockfile`\n2. `git submodule update --init --recursive`\n",
