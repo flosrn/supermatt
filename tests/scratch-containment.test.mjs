@@ -127,3 +127,29 @@ test("scratch containment refuses unresolved links and a linked root", (t) => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /scratch root is a symlink/);
 });
+
+test("scratch containment blocks a copied linked worktree's .git pointer file", (t) => {
+  const { root, scratch } = fixture(t);
+  writeFileSync(join(scratch, ".git"), `gitdir: ${join(root, "main/.git/worktrees/topic")}\n`);
+  const result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /\.git is not a directory: .*copy\/\.git$/m);
+});
+
+test("scratch containment blocks a nested .git file or link and permits .git directories", (t) => {
+  const { root, scratch } = fixture(t);
+  mkdirSync(join(scratch, ".git/objects"), { recursive: true });
+  mkdirSync(join(scratch, "data/vendor/.git"), { recursive: true });
+  assert.equal(run(scratch).status, 0);
+  rmSync(join(scratch, "data/vendor/.git"), { recursive: true });
+  writeFileSync(join(scratch, "data/vendor/.git"), `gitdir: ${join(root, "main/.git/modules/vendor")}\n`);
+  let result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /\.git is not a directory: .*copy\/data\/vendor\/\.git$/m);
+  rmSync(join(scratch, "data/vendor/.git"));
+  writeFileSync(join(scratch, "data/pointer"), `gitdir: ${join(root, "main/.git")}\n`);
+  symlinkSync("../pointer", join(scratch, "data/vendor/.git"));
+  result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /\.git is not a directory: .*copy\/data\/vendor\/\.git$/m);
+});

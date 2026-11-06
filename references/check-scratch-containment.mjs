@@ -42,7 +42,11 @@ if (!directory || extra.length) {
       const current = pending.pop();
       for (const entry of readdirSync(current, { withFileTypes: true })) {
         const path = join(current, entry.name);
-        if (entry.isSymbolicLink()) {
+        // A .git file or link (a linked worktree's gitdir pointer) sends Git commands in scratch to another
+        // repository, so a commit there lands on its branch; only a directory, such as git init makes, stays inside.
+        if (entry.name === ".git" && !entry.isDirectory()) {
+          throw new Error(`.git is not a directory: ${path}`);
+        } else if (entry.isSymbolicLink()) {
           const target = realpathSync(path);
           if (outside(root, target) && !lockedSystemFile(target, home)) {
             throw new Error(`symlink escapes scratch: ${path} -> ${target}`);
