@@ -44,7 +44,15 @@ function configuration({ cwd, plugin, runtime, temp, toolchain, systemTemp }) {
     `[permissions.skill-eval.network]\nenabled = false\n`;
 }
 
-async function preflight(codex, options, fixture, forbidden, runtime, shell, systemTemp) {
+// Every canary holds these bytes. The host compares each canary with them after the sandboxed probe exits.
+const canaryBytes = "synthetic canary\n";
+const hostCanary = path => {
+  try { return readFileSync(path).equals(Buffer.from(canaryBytes)) ? "unchanged" : "changed"; }
+  catch (error) { return error.code === "ENOENT" ? "missing" : `unreadable (${error.code})`; }
+};
+
+// Fills in `isolation`: each canary's check, whether or not the preflight passes, then its status and boundary.
+async function preflight(codex, options, fixture, forbidden, runtime, shell, systemTemp, isolation) {
   const server = createServer(socket => socket.end());
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   try {
@@ -86,9 +94,15 @@ await new Promise((resolve,reject) => {
   socket.on('error',e=>['EPERM','EACCES','ECONNREFUSED'].includes(e.code)?resolve():reject(e));
 });
 console.log('isolation verified');\n`);
-      const output = await run(codex, ["sandbox", "-P", "skill-eval", "-C", fixture, runtime, probe], options);
+      let output, failure;
+      try { output = await run(codex, ["sandbox", "-P", "skill-eval", "-C", fixture, runtime, probe], options); }
+      catch (error) { failure = error; output = error.stdout ?? ""; }
+      isolation.checks = forbidden.map(path => ({ path, host: hostCanary(path) }));
+      const altered = isolation.checks.filter(check => check.host !== "unchanged");
+      if (altered.length) throw new Error(`Host canary changed during the sandboxed preflight: ${altered.map(check => `${check.path} (${check.host})`).join(", ")}`);
+      if (failure) throw failure;
       assert.match(output, /isolation verified/);
-      return { status: "pass", boundary: `native command sandbox: denied read/write (evaluator canaries; system temp directories ${systemTemp.join(", ") || "none present"}) and live loopback connection; allowed fixture write, fixture Git commit and Node runtime` };
+      Object.assign(isolation, { status: "pass", boundary: `native command sandbox: denied read/write (evaluator canaries; system temp directories ${systemTemp.join(", ") || "none present"}) and live loopback connection; allowed fixture write, fixture Git commit and Node runtime` });
     } finally { rmSync(probe, { force: true }); rmSync(join(fixture, ".git"), { recursive: true, force: true }); }
   } finally { await new Promise(resolve => server.close(resolve)); }
 }
@@ -290,15 +304,15 @@ async function main() {
       }
       report.capabilities = capabilities;
       const forbidden = [join(work, "grader-canary"), join(home, "auth-canary")];
-      for (const path of forbidden) writeFileSync(path, "synthetic canary\n");
+      for (const path of forbidden) writeFileSync(path, canaryBytes);
       // A canary in each system temp directory, outside the evidence root, proves the profile's
       // deny even when TMPDIR points elsewhere. It never outlives the preflight.
       const tempCanaries = systemTemp.map(dir => join(dir, `supermatt-evals-canary-${randomUUID()}`));
       report.isolation = { status: "blocked", canaries: tempCanaries };
       try {
-        for (const path of tempCanaries) writeFileSync(path, "synthetic canary\n", { flag: "wx" });
-        Object.assign(report.isolation, await preflight(codex, { cwd, env: { ...env, PATH: toolchain.path, OPENSSL_CONF: "/dev/null" } }, cwd,
-          [...forbidden, ...tempCanaries], runtime, shellEnvironment({ temp, toolchain }), systemTemp));
+        for (const path of tempCanaries) writeFileSync(path, canaryBytes, { flag: "wx" });
+        await preflight(codex, { cwd, env: { ...env, PATH: toolchain.path, OPENSSL_CONF: "/dev/null" } }, cwd,
+          [...forbidden, ...tempCanaries], runtime, shellEnvironment({ temp, toolchain }), systemTemp, report.isolation);
       } finally { for (const path of tempCanaries) rmSync(path, { force: true }); }
       if (existsSync(auth)) symlinkSync(auth, join(env.CODEX_HOME, "auth.json"));
       else if (process.env.OPENAI_API_KEY) { env.OPENAI_API_KEY = process.env.OPENAI_API_KEY; secrets.push(env.OPENAI_API_KEY); }

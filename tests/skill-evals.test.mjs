@@ -5,7 +5,7 @@ import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collect
 import { chmodSync, constants, copyFileSync, existsSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { run, digest, save } from "../scripts/lib/skill-evidence.mjs";
 import { cases } from "./evals/cases.mjs";
 
@@ -233,17 +233,18 @@ test("CLI dry run stops on a candidate that lacks the Cursor manifest, before it
 
 // A full run with the stub Codex: it freezes both arms, installs and lists the baseline, then
 // stops at the auth check, since CODEX_HOME is empty and no API key is set. No model is called.
-function stubRun(t, repo, baseline, candidate, { failPreflight = false, unrelatedCanary } = {}) {
+function stubRun(t, repo, baseline, candidate, { failPreflight = false, unrelatedCanary, sandbox = "" } = {}) {
   const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-run-"));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
   const codexHome = join(scratch, "codex-home"); mkdirSync(codexHome);
   const env = { ...process.env, CODEX_HOME: codexHome, TMPDIR: scratch };
   delete env.OPENAI_API_KEY;
   let codex = resolve("tests/fixtures/codex-stub.cjs");
-  if (failPreflight || unrelatedCanary) {
+  if (failPreflight || unrelatedCanary || sandbox) {
     const stub = codex;
     codex = join(scratch, "codex.cjs");
-    writeFileSync(codex, `#!/usr/bin/env node\nif (process.argv[2] === "sandbox") {\n${unrelatedCanary ? `require("node:fs").writeFileSync(${JSON.stringify(unrelatedCanary)}, "another evaluation owns this file\\n", { flag: "wx" });` : ""}\n${failPreflight ? 'console.error("preflight rejected"); process.exit(1);' : ""}\n}\nrequire(${JSON.stringify(stub)});\n`, { mode: 0o755 });
+    // `sandbox` is source run before the stub's sandbox answer, with `fs`, `path` and `args` in scope.
+    writeFileSync(codex, `#!/usr/bin/env node\nconst fs = require("node:fs"), path = require("node:path"), args = process.argv.slice(2);\nif (args[0] === "sandbox") {\n${unrelatedCanary ? `fs.writeFileSync(${JSON.stringify(unrelatedCanary)}, "another evaluation owns this file\\n", { flag: "wx" });` : ""}\n${sandbox}\n${failPreflight ? 'console.error("preflight rejected"); process.exit(1);' : ""}\n}\nrequire(${JSON.stringify(stub)});\n`, { mode: 0o755 });
   }
   const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--repo", repo, "--codex", codex,
     "--baseline", baseline, "--candidate", candidate, "--cases", "blocked-qa,babysit-feedback-first", "--variants", "neutral", "--runs", "2"], { encoding: "utf8", env });
@@ -278,6 +279,20 @@ test("CLI removes its recorded canaries after a rejected preflight without start
   assert.equal(report.isolation.status, "blocked");
   assert.deepEqual(report.isolation.canaries.map(dirname).sort(), [...new Set(["/tmp", "/var/tmp"].filter(existsSync).map(path => realpathSync(path)))].sort());
   for (const path of report.isolation.canaries) assert.equal(existsSync(path), false, `canary remains: ${path}`);
+});
+
+// The host checks every canary's bytes after the sandbox exits, so a sandbox that changes one blocks the
+// preflight even when the probe's output claims isolation. The baseline arm's preflight runs first, in
+// `work/baseline-fixture` (the sandbox's -C directory), beside the grader canary and the arm's home.
+for (const [change, canary, tamper, host] of [
+  ["overwrites", "grader-canary", 'fs.writeFileSync(path.join(path.dirname(args[4]), "grader-canary"), "probe")', "changed"],
+  ["deletes", "auth-canary", 'fs.rmSync(path.join(path.dirname(args[4]), "baseline-home", "auth-canary"))', "missing"],
+]) test(`CLI blocks the preflight, naming the canary, when the sandbox ${change} a host canary and reports isolation verified`, t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill, { sandbox: tamper });
+  assert.deepEqual([report.isolation.status, summary.startedRuns], ["blocked", 0]);
+  assert.ok(summary.error.includes(`${sep}${canary}`), summary.error);
+  assert.equal(report.isolation.checks?.find(check => check.path.endsWith(`${sep}${canary}`))?.host, host);
 });
 
 // Runs the evaluator on the real Codex CLI for one handoff run. Without an API key it stops right
