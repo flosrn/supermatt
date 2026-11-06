@@ -158,7 +158,7 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 - `qa`, new in SuperMatt, runs the changed program the way its user would (a terminal program in tmux, a web app in a browser) and checks every requested behavior before `code-review` reads the code.
 - `ideate`, new in SuperMatt, has a fresh subagent or session try to refute each idea before it ranks the survivors. When neither is available, it performs the check itself and reports the lack of an independent verifier; if no idea passes, it reports no survivors.
 
-Review readers and QA's no-subagent fallback use one [scratch copy helper](./references/copy-scratch-tree.mjs): copy-on-write when supported, or rsync after discarding a failed clone. The copy excludes Git metadata and special files, preserves symlinks and modes, and still requires the [scratch containment and dependency preflight](./references/scratch-dependencies.md) before execution.
+Review readers, QA's no-subagent fallback, and `tdd` mutation runs that must commit each mutant use one [scratch copy helper](./references/copy-scratch-tree.mjs): copy-on-write when supported, or rsync after discarding a failed clone. The copy excludes Git metadata and special files, preserves symlinks and modes, and still requires the [scratch containment and dependency preflight](./references/scratch-dependencies.md) before execution, which rejects a `.git` that is not a directory so no copy commits on the real branch.
 
 ### Skills hand off to each other
 
