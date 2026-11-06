@@ -2,7 +2,8 @@
 // A stand-in for the Codex CLI that never calls a model. It answers what
 // scripts/evaluate-skills.mjs asks before its first model call: the version, the plugin
 // install (a copy of the marketplace source into CODEX_HOME), the skill listing and
-// configuration over app-server, and the sandbox preflight. Anything else fails.
+// configuration over app-server, and the sandbox preflight, where it reports every canary (the arguments
+// after the probe) as denied. Anything else fails.
 const { cpSync, existsSync, readFileSync, readdirSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
 const { createInterface } = require("node:readline");
@@ -33,8 +34,10 @@ else if (command === "plugin" && verb === "marketplace") {
   cpSync(readFileSync(join(home, "marketplace-source"), "utf8"), installed, { recursive: true });
   writeFileSync(join(home, "config.toml"), '[plugins."supermatt@supermatt"]\nenabled = true\n');
   console.log("{}");
-} else if (command === "sandbox") console.log("isolation verified");
-else if (command === "app-server") {
+} else if (command === "sandbox") {
+  for (const path of args.slice(7)) console.log(`canary ${JSON.stringify({ path, read: "EACCES", write: "EACCES" })}`);
+  console.log("isolation verified");
+} else if (command === "app-server") {
   createInterface({ input: process.stdin }).on("line", (line) => {
     const message = JSON.parse(line);
     if (message.id === undefined) return;

@@ -295,6 +295,25 @@ for (const [change, canary, tamper, host] of [
   assert.equal(report.isolation.checks?.find(check => check.path.endsWith(`${sep}${canary}`))?.host, host);
 });
 
+// The probe prints a `canary {"path","read","write"}` line per canary (each outcome an error code or
+// "success"), and the host judges them. This stub answer reports the same outcome for every canary,
+// which the evaluator passes after the probe path.
+const answer = (read, write) => `for (const path of args.slice(7)) console.log("canary " + JSON.stringify({ path, read: ${JSON.stringify(read)}, write: ${JSON.stringify(write)} }));\nconsole.log("isolation verified"); process.exit(0);`;
+const linux = process.platform === "linux";
+for (const [name, sandbox, passes, error] of [
+  ["no outcome for its canaries", 'console.log("isolation verified"); process.exit(0);', false, /reported no outcome for canary/],
+  ["a canary read that succeeded", answer("success", "EACCES"), false, /Read boundary not enforced/],
+  // Bubblewrap does not mount an ungranted path and backs the parents of granted roots with a private tmpfs.
+  ["hidden canaries and private writes", answer("ENOENT", "success"), linux, /Read boundary not enforced/],
+  ["canary writes denied by a read-only mount", answer("EACCES", "EROFS"), linux, /Write boundary not enforced/],
+]) test(`CLI preflight with a sandbox that reports ${name} ${passes ? "passes" : "is blocked"} on ${process.platform}`, t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill, { sandbox });
+  assert.equal(summary.startedRuns, 0);
+  if (passes) assert.deepEqual([report.isolation.status, summary.error], ["pass", "Native Codex auth is unavailable; no model calls started"]);
+  else { assert.equal(report.isolation.status, "blocked"); assert.match(summary.error, error); }
+});
+
 // Runs the evaluator on the real Codex CLI for one handoff run. Without an API key it stops right
 // after the preflight. With `stubExec`, a dummy key lets it reach the run, where the sandboxed-exec
 // fixture stands in for the model; a launcher hands that fixture the real CLI's path on each call.
@@ -323,6 +342,13 @@ function nativeRun(t, { stubExec = false, root = tmpdir(), runtime = process.exe
 test("CLI preflight commits in the fixture repository under the real Codex sandbox", skipNative, t => {
   const { summary, report } = nativeRun(t);
   assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status], ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
+  // The grader and auth canaries, then one per system temp directory, each with its sandboxed outcomes.
+  assert.equal(report.isolation.checks.length, 2 + report.isolation.canaries.length);
+  for (const check of report.isolation.checks) {
+    assert.equal(check.host, "unchanged", check.path);
+    assert.ok(typeof check.read === "string" && check.read !== "success", `${check.path} read: ${check.read}`);
+    assert.equal(typeof check.write, "string", check.path);
+  }
 });
 
 // macOS's os.tmpdir() is under /var/folders, so the test above never puts the evidence root, and
@@ -366,7 +392,9 @@ console.log(JSON.stringify({role: ${JSON.stringify(role)}, executable: fs.realpa
       return `${quote(realCodex)} sandbox -P "$3" -C "$5" ${command} -e ${quote(probe)} >> ${quote(startup)} || exit $?`;
     });
     const codex = join(scratch, "codex");
-    writeFileSync(codex, `#!/bin/sh\n[ "$1" = sandbox ] || exec ${quote(realCodex)} "$@"\n${commands.join("\n")}\nprintf 'isolation verified\\n'\n`, { mode: 0o755 });
+    // Stands in for the probe's canary report too: the canaries follow the probe ("$7").
+    const canaryReport = `shift 7\nfor canary; do printf 'canary {"path":"%s","read":"EACCES","write":"EACCES"}\\n' "$canary"; done`;
+    writeFileSync(codex, `#!/bin/sh\n[ "$1" = sandbox ] || exec ${quote(realCodex)} "$@"\n${commands.join("\n")}\n${canaryReport}\nprintf 'isolation verified\\n'\n`, { mode: 0o755 });
     const { summary, report } = nativeRun(t, { runtime, codex,
       toolchainPath: collision === "toolchain" ? `${bin}:${process.env.PATH}` : process.env.PATH });
     assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status],

@@ -51,8 +51,16 @@ const hostCanary = path => {
   catch (error) { return error.code === "ENOENT" ? "missing" : `unreadable (${error.code})`; }
 };
 
+// The sandboxed outcomes that keep a canary private: an error code, or "success". Seatbelt (macOS) denies
+// with EPERM or EACCES. Bubblewrap (Linux) does not mount a path the profile does not grant, so a read
+// fails with ENOENT, and backs the parents of granted roots with a private tmpfs, where a write succeeds
+// without reaching the host file. The host check proves each canary existed and kept its bytes.
+const canaryOutcomes = process.platform === "linux"
+  ? { read: ["EPERM", "EACCES", "ENOENT"], write: ["EPERM", "EACCES", "ENOENT", "EROFS", "success"] }
+  : { read: ["EPERM", "EACCES"], write: ["EPERM", "EACCES"] };
+
 // Fills in `isolation`: each canary's check, whether or not the preflight passes, then its status and boundary.
-async function preflight(codex, options, fixture, forbidden, runtime, shell, systemTemp, isolation) {
+async function preflight(codex, options, fixture, canaries, runtime, shell, systemTemp, isolation) {
   const server = createServer(socket => socket.end());
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   try {
@@ -68,19 +76,21 @@ async function preflight(codex, options, fixture, forbidden, runtime, shell, sys
       // prove the profile lets a sandboxed command commit in it.
       await run("git", ["init", "-q", "-b", "preflight"], git);
       await run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "preflight"], git);
-      writeFileSync(probe, `import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';
+      writeFileSync(probe, `import {readFileSync,writeFileSync,writeSync,unlinkSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {connect} from 'node:net';
-const shell = { env: ${JSON.stringify(shell)}, encoding: 'utf8' };
+// Children start with stdin ignored: Codex's Linux sandbox refuses the shutdown(2) that spawnSync issues
+// on an empty stdin pipe, and the call then throws EPERM although the child succeeded.
+const shell = { env: ${JSON.stringify(shell)}, encoding: 'utf8', stdio: ['ignore','pipe','pipe'] };
 execFileSync('git',['--version'],shell);
 execFileSync('node',['-e','console.log(42)'],shell);
-for (const path of ${JSON.stringify(forbidden)}) {
-  let denied = false;
-  try { readFileSync(path); } catch(e) { denied = ['EPERM','EACCES'].includes(e.code); }
-  if (!denied) throw Error('Read boundary not enforced');
-  denied = false;
-  try { writeFileSync(path, 'probe'); } catch(e) { denied = ['EPERM','EACCES'].includes(e.code); }
-  if (!denied) throw Error('Write boundary not enforced');
+// Writes straight to fd 1. Inside Codex's Linux sandbox, Node cannot identify a socket stdout (the
+// evaluator's spawn gives Codex a socketpair) and replaces process.stdout with a stream that drops output.
+const report = line => writeSync(1, line + '\\n');
+const attempt = action => { try { action(); return 'success'; } catch (e) { return e.code || e.message; } };
+for (const path of process.argv.slice(2)) {
+  const read = attempt(() => readFileSync(path)), write = attempt(() => writeFileSync(path, 'probe'));
+  report('canary ' + JSON.stringify({ path, read, write }));
 }
 writeFileSync('allowed-probe','ok');
 execFileSync('git',['add','--','allowed-probe'],shell);
@@ -93,16 +103,25 @@ await new Promise((resolve,reject) => {
   socket.on('connect',()=>{socket.destroy();reject(Error('Network boundary not enforced'));});
   socket.on('error',e=>['EPERM','EACCES','ECONNREFUSED'].includes(e.code)?resolve():reject(e));
 });
-console.log('isolation verified');\n`);
+report('isolation verified');\n`);
       let output, failure;
-      try { output = await run(codex, ["sandbox", "-P", "skill-eval", "-C", fixture, runtime, probe], options); }
+      try { output = await run(codex, ["sandbox", "-P", "skill-eval", "-C", fixture, runtime, probe, ...canaries], options); }
       catch (error) { failure = error; output = error.stdout ?? ""; }
-      isolation.checks = forbidden.map(path => ({ path, host: hostCanary(path) }));
+      const reported = new Map(output.split("\n").flatMap(line => {
+        try { const outcome = line.startsWith("canary ") && JSON.parse(line.slice(7)); return outcome ? [[outcome.path, outcome]] : []; }
+        catch { return []; }
+      }));
+      isolation.checks = canaries.map(path => ({ path, read: reported.get(path)?.read ?? null, write: reported.get(path)?.write ?? null, host: hostCanary(path) }));
       const altered = isolation.checks.filter(check => check.host !== "unchanged");
       if (altered.length) throw new Error(`Host canary changed during the sandboxed preflight: ${altered.map(check => `${check.path} (${check.host})`).join(", ")}`);
       if (failure) throw failure;
       assert.match(output, /isolation verified/);
-      Object.assign(isolation, { status: "pass", boundary: `native command sandbox: denied read/write (evaluator canaries; system temp directories ${systemTemp.join(", ") || "none present"}) and live loopback connection; allowed fixture write, fixture Git commit and Node runtime` });
+      for (const { path, read, write } of isolation.checks) {
+        if (read === null || write === null) throw new Error(`Sandboxed probe reported no outcome for canary ${path}`);
+        if (!canaryOutcomes.read.includes(read)) throw new Error(`Read boundary not enforced: ${path} (${read})`);
+        if (!canaryOutcomes.write.includes(write)) throw new Error(`Write boundary not enforced: ${path} (${write})`);
+      }
+      Object.assign(isolation, { status: "pass", boundary: `native command sandbox: sandboxed canary reads failed and writes failed or stayed inside the sandbox, every canary unchanged on the host (evaluator canaries; system temp directories ${systemTemp.join(", ") || "none present"}; outcomes per canary in checks); denied live loopback connection; allowed fixture write, fixture Git commit and Node runtime` });
     } finally { rmSync(probe, { force: true }); rmSync(join(fixture, ".git"), { recursive: true, force: true }); }
   } finally { await new Promise(resolve => server.close(resolve)); }
 }
