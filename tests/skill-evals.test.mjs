@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collectState, comparisonStatus, planComparison, absentResult } from "../scripts/lib/skill-evals.mjs";
 import { chmodSync, constants, copyFileSync, existsSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { run, digest, save } from "../scripts/lib/skill-evidence.mjs";
 import { cases } from "./evals/cases.mjs";
@@ -370,7 +370,10 @@ console.log(JSON.stringify({role: ${JSON.stringify(role)}, executable: fs.realpa
 }
 
 test("CLI disposes external runtime staging even when fixture cleanup fails", { skip: process.platform !== "linux" || process.getuid?.() === 0 }, t => {
-  const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-cleanup-"));
+  // HOME is where staging falls back to while the evidence root is under /tmp, so it must sit outside
+  // the denied roots. On CI, os.tmpdir() is /tmp itself.
+  const base = realpathSync(tmpdir());
+  const scratch = mkdtempSync(join(systemTemp.some(root => base === root || base.startsWith(`${root}/`)) ? homedir() : base, "supermatt-evals-cleanup-"));
   const temp = mkdtempSync("/tmp/supermatt-evals-cleanup-");
   const runtime = join("/tmp", `supermatt-evals-runtime-${randomUUID()}`);
   const home = join(scratch, "home"); mkdirSync(home);
