@@ -281,6 +281,19 @@ test("CLI removes its recorded canaries after a rejected preflight without start
   for (const path of report.isolation.canaries) assert.equal(existsSync(path), false, `canary remains: ${path}`);
 });
 
+test("CLI retains canary outcomes when the sandbox reports them before exiting nonzero", t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const sandbox = 'for (const path of args.slice(7)) console.log("canary " + JSON.stringify({ path, read: "EACCES", write: "EPERM" }));';
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill, { sandbox, failPreflight: true });
+  assert.match(summary.error, /preflight rejected/);
+  assert.deepEqual([report.isolation.status, summary.startedRuns], ["blocked", 0]);
+  assert.equal(report.isolation.checks.length, 2 + report.isolation.canaries.length);
+  for (const check of report.isolation.checks) {
+    assert.deepEqual([check.read, check.write, check.host], ["EACCES", "EPERM", "unchanged"], check.path);
+  }
+  for (const path of report.isolation.canaries) assert.equal(existsSync(path), false, `canary remains: ${path}`);
+});
+
 // The host checks every canary's bytes after the sandbox exits, so a sandbox that changes one blocks the
 // preflight even when the probe's output claims isolation. The baseline arm's preflight runs first, in
 // `work/baseline-fixture` (the sandbox's -C directory), beside the grader canary and the arm's home.
@@ -377,6 +390,7 @@ for (const root of new Set(systemTemp)) for (const collision of ["runtime", "too
     t.after(() => rmSync(sibling, { force: true }));
     const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-runtime-smoke-"));
     t.after(() => rmSync(scratch, { recursive: true, force: true }));
+    const evidenceRoot = join(scratch, 'quote"dir'); mkdirSync(evidenceRoot);
     const bin = join(scratch, "bin"); mkdirSync(bin);
     symlinkSync(executable, join(bin, "node"));
     const runtime = collision === "runtime" ? executable : process.execPath;
@@ -395,9 +409,9 @@ console.log(JSON.stringify({role: ${JSON.stringify(role)}, executable: fs.realpa
     });
     const codex = join(scratch, "codex");
     // Stands in for the probe's canary report too: the canaries follow the probe ("$7").
-    const canaryReport = `shift 7\nfor canary; do printf 'canary {"path":"%s","read":"EACCES","write":"EACCES"}\\n' "$canary"; done`;
+    const canaryReport = `shift 7\n${quote(node)} -e ${quote('for (const path of process.argv.slice(1)) console.log("canary " + JSON.stringify({ path, read: "EACCES", write: "EACCES" }));')} "$@"`;
     writeFileSync(codex, `#!/bin/sh\n[ "$1" = sandbox ] || exec ${quote(realCodex)} "$@"\n${commands.join("\n")}\n${canaryReport}\nprintf 'isolation verified\\n'\n`, { mode: 0o755 });
-    const { summary, report } = nativeRun(t, { runtime, codex,
+    const { summary, report } = nativeRun(t, { runtime, codex, root: evidenceRoot,
       toolchainPath: collision === "toolchain" ? `${bin}:${process.env.PATH}` : process.env.PATH });
     assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status],
       ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
