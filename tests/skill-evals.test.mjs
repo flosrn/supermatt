@@ -5,7 +5,7 @@ import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collect
 import { chmodSync, constants, copyFileSync, existsSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { run, digest, save } from "../scripts/lib/skill-evidence.mjs";
 import { cases } from "./evals/cases.mjs";
 
@@ -233,17 +233,18 @@ test("CLI dry run stops on a candidate that lacks the Cursor manifest, before it
 
 // A full run with the stub Codex: it freezes both arms, installs and lists the baseline, then
 // stops at the auth check, since CODEX_HOME is empty and no API key is set. No model is called.
-function stubRun(t, repo, baseline, candidate, { failPreflight = false, unrelatedCanary } = {}) {
+function stubRun(t, repo, baseline, candidate, { failPreflight = false, unrelatedCanary, sandbox = "" } = {}) {
   const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-run-"));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
   const codexHome = join(scratch, "codex-home"); mkdirSync(codexHome);
   const env = { ...process.env, CODEX_HOME: codexHome, TMPDIR: scratch };
   delete env.OPENAI_API_KEY;
   let codex = resolve("tests/fixtures/codex-stub.cjs");
-  if (failPreflight || unrelatedCanary) {
+  if (failPreflight || unrelatedCanary || sandbox) {
     const stub = codex;
     codex = join(scratch, "codex.cjs");
-    writeFileSync(codex, `#!/usr/bin/env node\nif (process.argv[2] === "sandbox") {\n${unrelatedCanary ? `require("node:fs").writeFileSync(${JSON.stringify(unrelatedCanary)}, "another evaluation owns this file\\n", { flag: "wx" });` : ""}\n${failPreflight ? 'console.error("preflight rejected"); process.exit(1);' : ""}\n}\nrequire(${JSON.stringify(stub)});\n`, { mode: 0o755 });
+    // `sandbox` is source run before the stub's sandbox answer, with `fs`, `path` and `args` in scope.
+    writeFileSync(codex, `#!/usr/bin/env node\nconst fs = require("node:fs"), path = require("node:path"), args = process.argv.slice(2);\nif (args[0] === "sandbox") {\n${unrelatedCanary ? `fs.writeFileSync(${JSON.stringify(unrelatedCanary)}, "another evaluation owns this file\\n", { flag: "wx" });` : ""}\n${sandbox}\n${failPreflight ? 'console.error("preflight rejected"); process.exit(1);' : ""}\n}\nrequire(${JSON.stringify(stub)});\n`, { mode: 0o755 });
   }
   const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--repo", repo, "--codex", codex,
     "--baseline", baseline, "--candidate", candidate, "--cases", "blocked-qa,babysit-feedback-first", "--variants", "neutral", "--runs", "2"], { encoding: "utf8", env });
@@ -280,6 +281,54 @@ test("CLI removes its recorded canaries after a rejected preflight without start
   for (const path of report.isolation.canaries) assert.equal(existsSync(path), false, `canary remains: ${path}`);
 });
 
+test("CLI retains canary outcomes when the sandbox reports them before exiting nonzero", t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const sandbox = 'for (const path of args.slice(7)) console.log("canary " + JSON.stringify({ path, read: "EACCES", write: "EPERM" }));';
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill, { sandbox, failPreflight: true });
+  assert.match(summary.error, /preflight rejected/);
+  assert.deepEqual([report.isolation.status, summary.startedRuns], ["blocked", 0]);
+  assert.equal(report.isolation.checks.length, 2 + report.isolation.canaries.length);
+  for (const check of report.isolation.checks) {
+    assert.deepEqual([check.read, check.write, check.host], ["EACCES", "EPERM", "unchanged"], check.path);
+  }
+  for (const path of report.isolation.canaries) assert.equal(existsSync(path), false, `canary remains: ${path}`);
+});
+
+// The host checks every canary's bytes after the sandbox exits, so a sandbox that changes one blocks the
+// preflight even when the probe's output claims isolation. The baseline arm's preflight runs first, in
+// `work/baseline-fixture` (the sandbox's -C directory), beside the grader canary and the arm's home.
+for (const [change, canary, tamper, host] of [
+  ["overwrites", "grader-canary", 'fs.writeFileSync(path.join(path.dirname(args[4]), "grader-canary"), "probe")', "changed"],
+  ["deletes", "auth-canary", 'fs.rmSync(path.join(path.dirname(args[4]), "baseline-home", "auth-canary"))', "missing"],
+]) test(`CLI blocks the preflight, naming the canary, when the sandbox ${change} a host canary and reports isolation verified`, t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill, { sandbox: tamper });
+  assert.deepEqual([report.isolation.status, summary.startedRuns], ["blocked", 0]);
+  assert.ok(summary.error.includes(`${sep}${canary}`), summary.error);
+  assert.equal(report.isolation.checks?.find(check => check.path.endsWith(`${sep}${canary}`))?.host, host);
+});
+
+// The probe prints a `canary {"path","read","write"}` line per canary (each outcome an error code or
+// "success"), and the host judges them. This stub answer reports the same outcome for every canary,
+// which the evaluator passes after the probe path.
+const answer = (read, write) => `for (const path of args.slice(7)) console.log("canary " + JSON.stringify({ path, read: ${JSON.stringify(read)}, write: ${JSON.stringify(write)} }));\nconsole.log("isolation verified"); process.exit(0);`;
+const linux = process.platform === "linux";
+for (const [name, sandbox, passes, error] of [
+  ["no outcome for its canaries", 'console.log("isolation verified"); process.exit(0);', false, /reported no outcome for canary/],
+  ["a canary read that succeeded", answer("success", "EACCES"), false, /Read boundary not enforced/],
+  // Bubblewrap does not mount an ungranted path and backs the parents of granted roots with a private tmpfs.
+  ["hidden canaries and private writes", answer("ENOENT", "success"), linux, /Read boundary not enforced/],
+  ["hidden canaries whose writes find no parent", answer("ENOENT", "ENOENT"), linux, /Read boundary not enforced/],
+  ["canary writes denied by a read-only mount", answer("EACCES", "EROFS"), linux, /Write boundary not enforced/],
+  ["a canary write that failed with an unexpected error", answer("EACCES", "EIO"), false, /Write boundary not enforced/],
+]) test(`CLI preflight with a sandbox that reports ${name} ${passes ? "passes" : "is blocked"} on ${process.platform}`, t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill, { sandbox });
+  assert.equal(summary.startedRuns, 0);
+  if (passes) assert.deepEqual([report.isolation.status, summary.error], ["pass", "Native Codex auth is unavailable; no model calls started"]);
+  else { assert.equal(report.isolation.status, "blocked"); assert.match(summary.error, error); }
+});
+
 // Runs the evaluator on the real Codex CLI for one handoff run. Without an API key it stops right
 // after the preflight. With `stubExec`, a dummy key lets it reach the run, where the sandboxed-exec
 // fixture stands in for the model; a launcher hands that fixture the real CLI's path on each call.
@@ -308,6 +357,13 @@ function nativeRun(t, { stubExec = false, root = tmpdir(), runtime = process.exe
 test("CLI preflight commits in the fixture repository under the real Codex sandbox", skipNative, t => {
   const { summary, report } = nativeRun(t);
   assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status], ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
+  // The grader and auth canaries, then one per system temp directory, each with its sandboxed outcomes.
+  assert.equal(report.isolation.checks.length, 2 + report.isolation.canaries.length);
+  for (const check of report.isolation.checks) {
+    assert.equal(check.host, "unchanged", check.path);
+    assert.ok(typeof check.read === "string" && check.read !== "success", `${check.path} read: ${check.read}`);
+    assert.equal(typeof check.write, "string", check.path);
+  }
 });
 
 // macOS's os.tmpdir() is under /var/folders, so the test above never puts the evidence root, and
@@ -334,6 +390,7 @@ for (const root of new Set(systemTemp)) for (const collision of ["runtime", "too
     t.after(() => rmSync(sibling, { force: true }));
     const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-runtime-smoke-"));
     t.after(() => rmSync(scratch, { recursive: true, force: true }));
+    const evidenceRoot = join(scratch, 'quote"dir'); mkdirSync(evidenceRoot);
     const bin = join(scratch, "bin"); mkdirSync(bin);
     symlinkSync(executable, join(bin, "node"));
     const runtime = collision === "runtime" ? executable : process.execPath;
@@ -351,8 +408,10 @@ console.log(JSON.stringify({role: ${JSON.stringify(role)}, executable: fs.realpa
       return `${quote(realCodex)} sandbox -P "$3" -C "$5" ${command} -e ${quote(probe)} >> ${quote(startup)} || exit $?`;
     });
     const codex = join(scratch, "codex");
-    writeFileSync(codex, `#!/bin/sh\n[ "$1" = sandbox ] || exec ${quote(realCodex)} "$@"\n${commands.join("\n")}\nprintf 'isolation verified\\n'\n`, { mode: 0o755 });
-    const { summary, report } = nativeRun(t, { runtime, codex,
+    // Stands in for the probe's canary report too: the canaries follow the probe ("$7").
+    const canaryReport = `shift 7\n${quote(node)} -e ${quote('for (const path of process.argv.slice(1)) console.log("canary " + JSON.stringify({ path, read: "EACCES", write: "EACCES" }));')} "$@"`;
+    writeFileSync(codex, `#!/bin/sh\n[ "$1" = sandbox ] || exec ${quote(realCodex)} "$@"\n${commands.join("\n")}\n${canaryReport}\nprintf 'isolation verified\\n'\n`, { mode: 0o755 });
+    const { summary, report } = nativeRun(t, { runtime, codex, root: evidenceRoot,
       toolchainPath: collision === "toolchain" ? `${bin}:${process.env.PATH}` : process.env.PATH });
     assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status],
       ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
