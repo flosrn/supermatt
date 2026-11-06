@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collectState, comparisonStatus, planComparison, absentResult } from "../scripts/lib/skill-evals.mjs";
-import { existsSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, readdirSync, mkdirSync, realpathSync } from "node:fs";
+import { chmodSync, constants, copyFileSync, existsSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -232,13 +233,19 @@ test("CLI dry run stops on a candidate that lacks the Cursor manifest, before it
 
 // A full run with the stub Codex: it freezes both arms, installs and lists the baseline, then
 // stops at the auth check, since CODEX_HOME is empty and no API key is set. No model is called.
-function stubRun(t, repo, baseline, candidate) {
+function stubRun(t, repo, baseline, candidate, { failPreflight = false, unrelatedCanary } = {}) {
   const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-run-"));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
   const codexHome = join(scratch, "codex-home"); mkdirSync(codexHome);
   const env = { ...process.env, CODEX_HOME: codexHome, TMPDIR: scratch };
   delete env.OPENAI_API_KEY;
-  const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--repo", repo, "--codex", resolve("tests/fixtures/codex-stub.cjs"),
+  let codex = resolve("tests/fixtures/codex-stub.cjs");
+  if (failPreflight || unrelatedCanary) {
+    const stub = codex;
+    codex = join(scratch, "codex.cjs");
+    writeFileSync(codex, `#!/usr/bin/env node\nif (process.argv[2] === "sandbox") {\n${unrelatedCanary ? `require("node:fs").writeFileSync(${JSON.stringify(unrelatedCanary)}, "another evaluation owns this file\\n", { flag: "wx" });` : ""}\n${failPreflight ? 'console.error("preflight rejected"); process.exit(1);' : ""}\n}\nrequire(${JSON.stringify(stub)});\n`, { mode: 0o755 });
+  }
+  const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--repo", repo, "--codex", codex,
     "--baseline", baseline, "--candidate", candidate, "--cases", "blocked-qa,babysit-feedback-first", "--variants", "neutral", "--runs", "2"], { encoding: "utf8", env });
   const summary = JSON.parse(result.stdout);
   return { summary, report: JSON.parse(readFileSync(join(summary.evidence, "report.json"), "utf8")) };
@@ -251,24 +258,45 @@ test("CLI run against a baseline that predates the Cursor manifest installs it a
   assert.deepEqual([report.baselineAbsent, report.plannedRuns, report.absentRuns], [["babysit-feedback-first"], 6, 2]);
 });
 
+test("CLI cleanup reports only its own canaries while another evaluation's canary remains", t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const unrelated = join(realpathSync("/tmp"), `supermatt-evals-canary-other-${process.pid}`);
+  t.after(() => rmSync(unrelated, { force: true }));
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill, { unrelatedCanary: unrelated });
+  assert.equal(summary.error, "Native Codex auth is unavailable; no model calls started");
+  assert.ok(Array.isArray(report.isolation?.canaries), "the report must identify this invocation's canaries");
+  assert.deepEqual(report.isolation.canaries.map(dirname).sort(), [...new Set(["/tmp", "/var/tmp"].filter(existsSync).map(path => realpathSync(path)))].sort());
+  for (const path of report.isolation.canaries) assert.equal(existsSync(path), false, `canary remains: ${path}`);
+  assert.equal(readFileSync(unrelated, "utf8"), "another evaluation owns this file\n");
+});
+
+test("CLI removes its recorded canaries after a rejected preflight without starting a model", t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const { summary, report } = stubRun(t, repo, beforeCursor, withSkill, { failPreflight: true });
+  assert.match(summary.error, /preflight rejected/);
+  assert.equal(summary.startedRuns, 0);
+  assert.equal(report.isolation.status, "blocked");
+  assert.deepEqual(report.isolation.canaries.map(dirname).sort(), [...new Set(["/tmp", "/var/tmp"].filter(existsSync).map(path => realpathSync(path)))].sort());
+  for (const path of report.isolation.canaries) assert.equal(existsSync(path), false, `canary remains: ${path}`);
+});
+
 // Runs the evaluator on the real Codex CLI for one handoff run. Without an API key it stops right
 // after the preflight. With `stubExec`, a dummy key lets it reach the run, where the sandboxed-exec
 // fixture stands in for the model; a launcher hands that fixture the real CLI's path on each call.
 const realCodex = spawnSync("sh", ["-c", "command -v codex"], { encoding: "utf8" }).stdout.trim();
 const skipNative = { skip: !realCodex && "codex is not installed" };
-function nativeRun(t, { stubExec = false, root = tmpdir() } = {}) {
+function nativeRun(t, { stubExec = false, root = tmpdir(), runtime = process.execPath, codex = realCodex, toolchainPath = process.env.PATH } = {}) {
   const scratch = mkdtempSync(join(root, "supermatt-evals-native-"));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
   const codexHome = join(scratch, "codex-home"); mkdirSync(codexHome);
-  const env = { ...process.env, CODEX_HOME: codexHome, TMPDIR: scratch };
+  const env = { ...process.env, PATH: toolchainPath, CODEX_HOME: codexHome, TMPDIR: scratch };
   delete env.OPENAI_API_KEY;
-  let codex = realCodex;
   if (stubExec) {
     codex = join(scratch, "codex");
     writeFileSync(codex, `#!/bin/sh\nREAL_CODEX=${JSON.stringify(realCodex)} exec ${JSON.stringify(resolve("tests/fixtures/codex-sandboxed-exec.sh"))} "$@"\n`, { mode: 0o755 });
     env.OPENAI_API_KEY = "dummy-key-for-a-stub-run";
   }
-  const result = spawnSync(process.execPath, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--codex", codex, "--baseline", "HEAD", "--candidate", "HEAD",
+  const result = spawnSync(runtime, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--codex", codex, "--baseline", "HEAD", "--candidate", "HEAD",
     "--cases", "handoff", "--variants", "neutral", "--runs", "1"], { encoding: "utf8", env });
   // Each started run prints a progress line before the closing JSON summary.
   const summary = JSON.parse(result.stdout.slice(result.stdout.search(/^\{/m)));
@@ -286,13 +314,87 @@ test("CLI preflight commits in the fixture repository under the real Codex sandb
 // with it the fixture and the grader and auth canaries, under /tmp, the scratch directory Codex's
 // Seatbelt profile opens to sandboxed commands unless the permission profile denies it.
 const systemTemp = ["/tmp", "/var/tmp"].filter(existsSync).map(path => realpathSync(path));
-const tempCanaries = () => systemTemp.flatMap(dir => readdirSync(dir).filter(name => name.startsWith("supermatt-evals-canary-")).map(name => join(dir, name)));
 test("CLI preflight denies the system temp directories and still passes with the evidence root under /tmp", skipNative, t => {
-  const before = new Set(tempCanaries());
   const { summary, report } = nativeRun(t, { root: "/tmp" });
-  assert.deepEqual(tempCanaries().filter(path => !before.has(path)), [], "a temp-directory canary was left behind");
+  assert.equal(report.isolation.canaries.length, systemTemp.length);
+  for (const path of report.isolation.canaries) assert.equal(existsSync(path), false, `canary remains: ${path}`);
   assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status], ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
   for (const dir of systemTemp) assert.ok(report.isolation.boundary.includes(dir), `${dir} is not among the denied paths`);
+});
+
+// This config/runtime smoke replaces the full preflight probe, but keeps real Codex discovery,
+// configuration loading and sandbox execution. It does not call a model or spawn Git from Node.
+for (const root of new Set(systemTemp)) for (const collision of ["runtime", "toolchain"]) {
+  test(`CLI config/runtime smoke starts a ${collision} executable directly in ${root} without opening its siblings`, skipNative, t => {
+    const executable = join(root, `supermatt-evals-runtime-${randomUUID()}`), sibling = `${executable}-private`;
+    const node = execFileSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).trim();
+    copyFileSync(realpathSync(node), executable, constants.COPYFILE_EXCL);
+    t.after(() => rmSync(executable, { force: true }));
+    writeFileSync(sibling, "private sibling\n", { flag: "wx" });
+    t.after(() => rmSync(sibling, { force: true }));
+    const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-runtime-smoke-"));
+    t.after(() => rmSync(scratch, { recursive: true, force: true }));
+    const bin = join(scratch, "bin"); mkdirSync(bin);
+    symlinkSync(executable, join(bin, "node"));
+    const runtime = collision === "runtime" ? executable : process.execPath;
+    const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+    const startup = join(scratch, "startup.jsonl");
+    const commands = [["runtime", '"$6"'], ["node", "node"]].map(([role, command]) => {
+      const probe = `const assert = require("node:assert/strict"), fs = require("node:fs"), {createHash} = require("node:crypto");
+assert.throws(() => fs.readFileSync(${JSON.stringify(sibling)}), error => ["EPERM", "EACCES", "ENOENT"].includes(error.code));
+const forbiddenWrite = require("node:path").join(require("node:path").dirname(process.execPath), ${JSON.stringify(`runtime-write-${randomUUID()}`)});
+assert.throws(() => fs.writeFileSync(forbiddenWrite, "unsafe"), error => ["EPERM", "EACCES", "EROFS"].includes(error.code));
+fs.writeFileSync("runtime-started", "ok");
+assert.equal(fs.readFileSync("runtime-started", "utf8"), "ok");
+fs.unlinkSync("runtime-started");
+console.log(JSON.stringify({role: ${JSON.stringify(role)}, executable: fs.realpathSync(process.execPath), digest: createHash("sha256").update(fs.readFileSync(process.execPath)).digest("hex")}));`;
+      return `${quote(realCodex)} sandbox -P "$3" -C "$5" ${command} -e ${quote(probe)} >> ${quote(startup)} || exit $?`;
+    });
+    const codex = join(scratch, "codex");
+    writeFileSync(codex, `#!/bin/sh\n[ "$1" = sandbox ] || exec ${quote(realCodex)} "$@"\n${commands.join("\n")}\nprintf 'isolation verified\\n'\n`, { mode: 0o755 });
+    const { summary, report } = nativeRun(t, { runtime, codex,
+      toolchainPath: collision === "toolchain" ? `${bin}:${process.env.PATH}` : process.env.PATH });
+    assert.deepEqual([summary.error, summary.startedRuns, report.isolation?.status],
+      ["Native Codex auth is unavailable; no model calls started", 0, "pass"]);
+    assert.deepEqual(readFileSync(startup, "utf8").trim().split("\n").map(line => JSON.parse(line)), [
+      { role: "runtime", executable: report.toolchain.runtime, digest: digest(readFileSync(realpathSync(runtime))) },
+      { role: "node", executable: report.toolchain.node, digest: digest(readFileSync(collision === "toolchain" ? executable : realpathSync(node))) },
+    ]);
+    if (process.platform === "linux") {
+      const effective = report.toolchain[collision === "runtime" ? "runtime" : "node"];
+      assert.notEqual(effective, executable, "a colliding executable was not staged");
+      assert.equal(systemTemp.some(root => effective.startsWith(`${root}/`)), false, "staging remains under a denied root");
+      assert.equal(existsSync(dirname(effective)), false, "toolchain staging was not removed after the auth stop");
+    }
+  });
+}
+
+test("CLI disposes external runtime staging even when fixture cleanup fails", { skip: process.platform !== "linux" || process.getuid?.() === 0 }, t => {
+  const scratch = mkdtempSync(join(tmpdir(), "supermatt-evals-cleanup-"));
+  const temp = mkdtempSync("/tmp/supermatt-evals-cleanup-");
+  const runtime = join("/tmp", `supermatt-evals-runtime-${randomUUID()}`);
+  const home = join(scratch, "home"); mkdirSync(home);
+  const state = join(scratch, "state.json"), codex = join(scratch, "codex.cjs");
+  let live;
+  t.after(() => {
+    if (live) {
+      chmodSync(live.blocked, 0o700);
+      rmSync(dirname(live.runtime), { recursive: true, force: true });
+    }
+    rmSync(scratch, { recursive: true, force: true });
+    rmSync(temp, { recursive: true, force: true });
+    rmSync(runtime, { force: true });
+  });
+  copyFileSync(realpathSync(execFileSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).trim()), runtime, constants.COPYFILE_EXCL);
+  writeFileSync(codex, `#!/usr/bin/env node\nconst fs = require("node:fs"), path = require("node:path"), args = process.argv.slice(2);\nif (args[0] === "sandbox") {\n  const blocked = path.join(args[4], "unreadable"); fs.mkdirSync(blocked);\n  fs.writeFileSync(path.join(blocked, "owned.txt"), "fixture state"); fs.chmodSync(blocked, 0);\n  fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify({ blocked, runtime: args[5] }));\n}\nrequire(${JSON.stringify(resolve("tests/fixtures/codex-stub.cjs"))});\n`, { mode: 0o755 });
+  const env = { ...process.env, HOME: home, TMPDIR: temp, CODEX_HOME: join(home, "empty-codex") };
+  delete env.OPENAI_API_KEY;
+  const result = spawnSync(runtime, [resolve("scripts/evaluate-skills.mjs"), "--model", "test", "--baseline", "HEAD", "--codex", codex,
+    "--cases", "handoff", "--variants", "neutral", "--runs", "1"], { env, encoding: "utf8" });
+  live = JSON.parse(readFileSync(state, "utf8"));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /EACCES|Permission denied/);
+  assert.equal(existsSync(dirname(live.runtime)), false, "staging survived a fixture cleanup error");
 });
 
 test("a run's observation keeps commits a reset dropped and merge-resolution paths, and a file Git's configuration writes during capture blocks the run", skipNative, t => {

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { cases, variants } from "../tests/evals/cases.mjs";
@@ -29,6 +29,8 @@ const shellEnvironment = ({ temp, toolchain }) => ({ PATH: toolchain.path, HOME:
 // narrower fixture, `.git`, and temp grants below reopen their own subtrees inside that deny.
 function configuration({ cwd, plugin, runtime, temp, toolchain, systemTemp }) {
   const q = JSON.stringify;
+  // Reopen only the executable when its parent is a denied system temp root.
+  const runtimeReads = [runtime, ...toolchain.executables].map(path => systemTemp.includes(dirname(path)) ? path : dirname(path));
   const disabled = ["apps", "hooks", "memories", "multi_agent", "remote_plugin", "shell_snapshot", "skill_mcp_dependency_install",
     "browser_use", "browser_use_external", "computer_use", "image_generation", "in_app_browser", "in_app_local_automation"];
   return `\napproval_policy = "never"\nweb_search = "disabled"\nallow_login_shell = false\nmodel_reasoning_effort = "medium"\n` +
@@ -38,7 +40,7 @@ function configuration({ cwd, plugin, runtime, temp, toolchain, systemTemp }) {
     `[features]\n${disabled.map(name => `${name} = false`).join("\n")}\n` +
     `[permissions.skill-eval.filesystem]\n":minimal" = "read"\n${systemTemp.map(path => `${q(path)} = "deny"\n`).join("")}` +
     `${q(cwd)} = "write"\n${q(join(cwd, ".git"))} = "write"\n${q(plugin)} = "read"\n${q(temp)} = "write"\n` +
-    [...new Set([dirname(runtime), ...toolchain.roots])].map(path => `${q(path)} = "read"`).join("\n") + "\n" +
+    [...new Set([...toolchain.roots, ...runtimeReads])].map(path => `${q(path)} = "read"`).join("\n") + "\n" +
     `[permissions.skill-eval.network]\nenabled = false\n`;
 }
 
@@ -202,6 +204,7 @@ async function main() {
     startedRuns: 0, providerRequests: null, claude: "unavailable", corpusDigest: digest(JSON.stringify({ selected, variants: activeVariants })),
     catalogueDigest: digest(loaded.bytes), results: [], snapshots: {} };
   const secrets = [];
+  let toolchainStage;
   const safeSave = (path, value) => writeFileSync(path, redact(JSON.stringify(value, null, 2) + "\n", secrets), { mode: 0o600 });
   try {
     const harness = join(evidence, "harness"); mkdirSync(harness);
@@ -213,14 +216,36 @@ async function main() {
     }
     writeFileSync(join(harness, "catalogue.json"), loaded.bytes, { mode: 0o600 });
     report.harnessFiles["catalogue.json"] = report.catalogueDigest;
-    const repo = realpathSync(values.repo), runtime = realpathSync(process.execPath);
+    const repo = realpathSync(values.repo);
     const systemTemp = [...new Set(["/tmp", "/var/tmp"].filter(existsSync).map(path => realpathSync(path)))];
     const codex = values.codex.includes("/") ? resolve(values.codex) : (await run("which", [values.codex])).trim();
-    const bin = join(work, "bin"); mkdirSync(bin);
-    const git = (await run(process.platform === "darwin" ? "xcrun" : "which", process.platform === "darwin" ? ["--find", "git"] : ["git"])).trim();
-    const node = (await run("node", ["-p", "process.execPath"])).trim();
+    let runtime = realpathSync(process.execPath);
+    let git = realpathSync((await run(process.platform === "darwin" ? "xcrun" : "which", process.platform === "darwin" ? ["--find", "git"] : ["git"])).trim());
+    let node = realpathSync((await run("node", ["-p", "process.execPath"])).trim());
+    let bin = join(work, "bin");
+    if (process.platform === "linux" && [runtime, git, node].some(path => systemTemp.includes(dirname(path)))) {
+      // Linux masks denied ancestors after read grants. Stage only colliding executables
+      // outside those trees, never under a fixture or artifact directory the model can write.
+      const denied = path => systemTemp.some(root => path === root || path.startsWith(root + sep));
+      const root = denied(evidence) ? realpathSync(homedir()) : evidence;
+      if (denied(root)) throw new Error("Cannot stage evaluation executables outside denied system temp directories; use a home or TMPDIR outside those directories");
+      try { toolchainStage = realpathSync(mkdtempSync(join(root, "supermatt-evals-toolchain-"))); }
+      catch (error) { throw new Error(`Cannot create read-only evaluation toolchain staging under ${root}; use a writable home or TMPDIR outside denied system temp directories: ${error.message}`); }
+      bin = toolchainStage;
+      const staged = new Map();
+      const stage = path => {
+        if (!systemTemp.includes(dirname(path))) return path;
+        if (!staged.has(path)) {
+          const target = join(bin, `executable-${staged.size}`);
+          copyFileSync(path, target, constants.COPYFILE_EXCL);
+          staged.set(path, target);
+        }
+        return staged.get(path);
+      };
+      runtime = stage(runtime); git = stage(git); node = stage(node);
+    } else mkdirSync(bin);
     for (const [name, executable] of [["git", git], ["node", node], [process.versions.bun ? "bun" : "node-runtime", runtime]]) symlinkSync(executable, join(bin, name));
-    const toolchain = { path: `${bin}:/usr/bin:/bin`, roots: [bin, dirname(realpathSync(git)), dirname(realpathSync(node))] };
+    const toolchain = { path: `${bin}:/usr/bin:/bin`, roots: [bin], executables: [git, node] };
     report.toolchain = { git, node, runtime };
     report.cli = (await run(codex, ["--version"])).trim();
     const bare = (await run("git", ["-C", repo, "rev-parse", "--is-bare-repository"])).trim() === "true";
@@ -269,10 +294,11 @@ async function main() {
       // A canary in each system temp directory, outside the evidence root, proves the profile's
       // deny even when TMPDIR points elsewhere. It never outlives the preflight.
       const tempCanaries = systemTemp.map(dir => join(dir, `supermatt-evals-canary-${randomUUID()}`));
+      report.isolation = { status: "blocked", canaries: tempCanaries };
       try {
         for (const path of tempCanaries) writeFileSync(path, "synthetic canary\n", { flag: "wx" });
-        report.isolation = await preflight(codex, { cwd, env: { ...env, PATH: toolchain.path, OPENSSL_CONF: "/dev/null" } }, cwd,
-          [...forbidden, ...tempCanaries], runtime, shellEnvironment({ temp, toolchain }), systemTemp);
+        Object.assign(report.isolation, await preflight(codex, { cwd, env: { ...env, PATH: toolchain.path, OPENSSL_CONF: "/dev/null" } }, cwd,
+          [...forbidden, ...tempCanaries], runtime, shellEnvironment({ temp, toolchain }), systemTemp));
       } finally { for (const path of tempCanaries) rmSync(path, { force: true }); }
       if (existsSync(auth)) symlinkSync(auth, join(env.CODEX_HOME, "auth.json"));
       else if (process.env.OPENAI_API_KEY) { env.OPENAI_API_KEY = process.env.OPENAI_API_KEY; secrets.push(env.OPENAI_API_KEY); }
@@ -336,8 +362,12 @@ async function main() {
   } catch (error) { report.status = "blocked"; report.error = redact(error.message, secrets); }
   finally {
     report.completedRuns = report.results.length;
-    safeSave(join(evidence, "report.json"), report);
-    rmSync(work, { recursive: true, force: true });
+    try {
+      safeSave(join(evidence, "report.json"), report);
+      rmSync(work, { recursive: true, force: true });
+    } finally {
+      if (toolchainStage) rmSync(toolchainStage, { recursive: true, force: true });
+    }
     console.log(JSON.stringify({ status: report.status, startedRuns: report.startedRuns, completedRuns: report.completedRuns, error: report.error, evidence }, null, 2));
     if (report.status !== "pass") process.exitCode = 1;
   }
