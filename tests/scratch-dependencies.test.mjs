@@ -56,6 +56,65 @@ test("scratch preflight still rejects missing packages mixed with built-ins", (t
   assert.doesNotMatch(result.stderr, /Cannot resolve node:/);
 });
 
+test("scratch preflight names the workspace member that declares a missing package", (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "scratch-dependencies-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const store = join(scratch, "node_modules/.pnpm/vitest@5.0.1/node_modules/vitest");
+  const member = join(scratch, "apps/a");
+  mkdirSync(store, { recursive: true });
+  mkdirSync(join(member, "node_modules"), { recursive: true });
+  mkdirSync(join(scratch, "apps/b"), { recursive: true });
+  writeFileSync(join(scratch, "package.json"), JSON.stringify({ name: "root", private: true }));
+  writeFileSync(join(scratch, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
+  writeFileSync(join(store, "package.json"), JSON.stringify({ name: "vitest", main: "index.js", dependencies: { "decoy-only": "1" } }));
+  writeFileSync(join(store, "index.js"), "throw new Error('Resolution must not execute the package');\n");
+  writeFileSync(join(member, "package.json"), JSON.stringify({ name: "a", devDependencies: { vitest: "5.0.1" } }));
+  writeFileSync(join(scratch, "apps/b/package.json"), JSON.stringify({ name: "b" }));
+  symlinkSync(store, join(member, "node_modules/vitest"));
+  const run = (directory, ...packages) => spawnSync(process.execPath, [...runtimeArgs, script, directory, ...packages], { encoding: "utf8" });
+
+  const fromRoot = run(scratch, "vitest");
+  assert.equal(fromRoot.status, 1);
+  assert.ok(fromRoot.stderr.startsWith(`Cannot resolve vitest from ${scratch}: `), fromRoot.stderr);
+  assert.ok(fromRoot.stderr.includes(`vitest is declared by \`apps/a\`: rerun with \`${member}\``), fromRoot.stderr);
+  assert.doesNotMatch(fromRoot.stderr, /apps\/b/);
+
+  const fromMember = run(member, "vitest");
+  assert.equal(fromMember.status, 0, fromMember.stderr);
+  assert.match(fromMember.stdout, /node_modules\/\.pnpm\/vitest@5\.0\.1\/node_modules\/vitest\/index\.js/);
+
+  const nodeModulesOnly = run(scratch, "decoy-only");
+  assert.equal(nodeModulesOnly.status, 1);
+  assert.doesNotMatch(nodeModulesOnly.stderr, /declared by/);
+});
+
+test("scratch preflight lists every declaring member in relative-path order", (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "scratch-dependencies-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const outside = mkdtempSync(join(tmpdir(), "scratch-dependencies-outside-"));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  for (const [path, manifest] of [
+    ["packages/kit", { dependencies: { "still-missing": "1" } }],
+    ["apps/z", { devDependencies: { "still-missing": "1" } }],
+    ["apps/peer", { peerDependencies: { "still-missing": "1" } }],
+    ["apps/broken", null],
+  ]) {
+    mkdirSync(join(scratch, path), { recursive: true });
+    writeFileSync(join(scratch, path, "package.json"), manifest ? JSON.stringify(manifest) : "{ not json");
+  }
+  writeFileSync(join(outside, "package.json"), JSON.stringify({ dependencies: { "still-missing": "1" } }));
+  symlinkSync(outside, join(scratch, "linked"));
+  const result = spawnSync(process.execPath, [...runtimeArgs, script, scratch, "still-missing"], { encoding: "utf8" });
+
+  assert.equal(result.status, 1);
+  assert.ok(result.stderr.startsWith(`Cannot resolve still-missing from ${scratch}: `), result.stderr);
+  const hints = result.stderr.split("\n").filter((line) => line.includes("declared by"));
+  assert.deepEqual(hints, [
+    `still-missing is declared by \`apps/z\`: rerun with \`${join(scratch, "apps/z")}\``,
+    `still-missing is declared by \`packages/kit\`: rerun with \`${join(scratch, "packages/kit")}\``,
+  ]);
+});
+
 test("scratch preflight requires a directory and at least one package", () => {
   const result = spawnSync(process.execPath, [...runtimeArgs, script], { encoding: "utf8" });
   assert.equal(result.status, 2);
