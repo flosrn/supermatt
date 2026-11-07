@@ -202,7 +202,9 @@ test("the helper refuses a scratch or repository path holding a quote, backslash
   for (const [repository, scratch] of cases) {
     const result = prepare(join(root, repository), join(root, scratch));
     assert.equal(result.status, 1, `${scratch}: ${result.stdout}`);
-    assert.match(result.stderr, /^Scratch Python preparation failed: .* holds a quote, backslash, or line break/);
+    // Bun's realpathSync fails on a path holding a backslash, so under Bun that refusal comes earlier, as ENOENT.
+    const reason = process.versions.bun && scratch.includes("\\") ? "ENOENT" : "holds a quote, backslash, or line break";
+    assert.match(result.stderr, new RegExp(`^Scratch Python preparation failed: .*${reason}`));
   }
   assert.deepEqual(snapshot(root), before);
 });
