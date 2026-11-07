@@ -14,8 +14,8 @@ const needsSystemPython = {
   skip: !existsSync(systemPython) ? `${systemPython} is missing` : process.getuid?.() === 0 && "root can write system files",
 };
 
-function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), "scratch containment "));
+function fixture(t, prefix = "scratch containment ") {
+  const root = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scratch = join(root, "copy");
   mkdirSync(join(scratch, "data"), { recursive: true });
@@ -32,6 +32,15 @@ function sitePackages(scratch) {
   const path = join(scratch, ".venv/lib/python3.12/site-packages");
   mkdirSync(path, { recursive: true });
   return path;
+}
+
+function environmentFiles(scratch) {
+  const venv = join(scratch, ".venv");
+  const sitePackages = join(venv, "lib/python3.12/site-packages");
+  mkdirSync(join(venv, "bin"), { recursive: true });
+  mkdirSync(sitePackages, { recursive: true });
+  writeFileSync(join(venv, "pyvenv.cfg"), "home = /usr/bin\n");
+  return { venv, sitePackages };
 }
 
 test("scratch containment permits internal links and directory cycles", (t) => {
@@ -122,14 +131,16 @@ test("scratch containment blocks absolute and relative links to a sibling tree",
   }
 });
 
-test("scratch containment refuses unresolved links and a linked root", (t) => {
+test("scratch containment names a dangling link and refuses a linked root", (t) => {
   const { root, scratch } = fixture(t);
-  symlinkSync("missing", join(scratch, "broken"));
-  assert.equal(run(scratch).status, 1);
-  rmSync(join(scratch, "broken"));
+  symlinkSync("missing", join(scratch, "data/broken"));
+  let result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /dangling link \(target missing in scratch\): .*copy\/data\/broken -> missing$/m);
+  rmSync(join(scratch, "data/broken"));
   const alias = join(root, "alias");
   symlinkSync(scratch, alias);
-  const result = run(alias);
+  result = run(alias);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /scratch root is a symlink/);
 });
@@ -288,4 +299,71 @@ test("scratch containment checks dist-packages and missing targets behind symlin
   assert.equal(result.status, 1, result.stdout);
   assert.ok(result.stderr.includes(pth), result.stderr);
   assert.ok(result.stderr.includes(join(outside, "missing")), result.stderr);
+});
+
+test("scratch containment blocks a virtualenv .pth path line outside scratch and permits import lines", (t) => {
+  const { root, scratch } = fixture(t);
+  const { sitePackages } = environmentFiles(scratch);
+  symlinkSync(scratch, join(root, "alias"));
+  const lines = ["# comment", "", "import os", "../../../../data", join(scratch, "data"), join(root, "alias/data"), join(root, "alias/missing/lib")];
+  writeFileSync(join(sitePackages, "inside.pth"), `${lines.join("\n")}\n`);
+  let result = run(scratch);
+  assert.equal(result.status, 0, result.stderr);
+  const source = join(root, "source/src");
+  writeFileSync(join(sitePackages, "_editable_impl_engine.pth"), `${source}\n`);
+  result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /\.pth path escapes scratch: .*site-packages\/_editable_impl_engine\.pth -> .*source\/src;/m);
+});
+
+test("scratch containment blocks a virtualenv script whose shebang names an interpreter outside scratch", (t) => {
+  const { root, scratch } = fixture(t, "scratch-containment-");
+  const { venv } = environmentFiles(scratch);
+  symlinkSync(scratch, join(root, "alias"));
+  writeFileSync(join(venv, "bin/inside"), `#!${join(venv, "bin/python")}\nprint()\n`);
+  writeFileSync(join(venv, "bin/aliased"), `#!${join(root, "alias/.venv/bin/python")}\nprint()\n`);
+  writeFileSync(join(venv, "bin/relative"), "#!python\nprint()\n");
+  writeFileSync(join(venv, "bin/data"), "no shebang\n");
+  let result = run(scratch);
+  assert.equal(result.status, 0, result.stderr);
+  const interpreter = join(root, "source/.venv/bin/python");
+  writeFileSync(join(venv, "bin/engine"), `#!${interpreter}\nprint()\n`);
+  result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /shebang points outside scratch: .*\.venv\/bin\/engine -> .*source\/\.venv\/bin\/python$/m);
+});
+
+test("scratch containment reads the interpreter of a /bin/sh exec launcher script in each quoting", (t) => {
+  const { root, scratch } = fixture(t, "scratch-containment-");
+  const { venv } = environmentFiles(scratch);
+  const launcher = (python) => `#!/bin/sh\n'''exec' ${python} "$0" "$@"\n' '''\nprint()\n`;
+  writeFileSync(join(venv, "bin/inside"), launcher(`'${join(venv, "bin/python")}'`));
+  let result = run(scratch);
+  assert.equal(result.status, 0, result.stderr);
+  const interpreter = join(root, "source/.venv/bin/python");
+  for (const quoted of [`'${interpreter}'`, `"${interpreter}"`, interpreter]) {
+    writeFileSync(join(venv, "bin/engine"), launcher(quoted));
+    result = run(scratch);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /shebang points outside scratch: .*\.venv\/bin\/engine -> .*source\/\.venv\/bin\/python$/m);
+  }
+});
+
+test("scratch containment permits system shebangs but not another virtualenv's link to a system interpreter", needsSystemPython, (t) => {
+  const { root, scratch } = fixture(t, "scratch-containment-");
+  const { venv } = environmentFiles(scratch);
+  writeFileSync(join(venv, "bin/env-script"), "#!/usr/bin/env python3\nprint()\n");
+  writeFileSync(join(venv, "bin/system-script"), `#!${systemPython} -I\nprint()\n`);
+  let result = run(scratch);
+  assert.equal(result.status, 0, result.stderr);
+  const source = join(root, "source");
+  virtualenv(source, systemPython);
+  writeFileSync(join(venv, "bin/engine"), `#!${join(source, ".venv/bin/python")}\nprint()\n`);
+  result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /shebang points outside scratch: .*\.venv\/bin\/engine -> .*source\/\.venv\/bin\/python$/m);
+  writeFileSync(join(venv, "bin/engine"), "#!/dev/null\nprint()\n");
+  result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /shebang points outside scratch: .*\.venv\/bin\/engine -> \/dev\/null$/m);
 });

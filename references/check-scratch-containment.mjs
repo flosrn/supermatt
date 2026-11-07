@@ -1,31 +1,48 @@
 #!/usr/bin/env node
-import { accessSync, constants, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { canonicalHome, canonicalPath, lockedSystemEntry, lockedSystemFile, outside, scriptInterpreter } from "./scratch-paths.mjs";
 
-function outside(base, path) {
-  const offset = relative(base, path);
-  return isAbsolute(offset) || offset === ".." || offset.startsWith(`..${sep}`);
-}
-
-// A link may leave scratch only for a system file the user cannot change: a non-directory owned by root,
-// not writable by the user, and outside the user's home, such as a virtualenv's interpreter link.
-function lockedSystemFile(path, home) {
+function linkTarget(path) {
   try {
-    accessSync(path, constants.W_OK);
-    return false;
-  } catch {
-    const stats = statSync(path);
-    return stats.uid === 0 && !stats.isDirectory() && outside(home, path);
+    return realpathSync(path);
+  } catch (error) {
+    if (error.code === "ENOENT") throw new Error(`dangling link (target missing in scratch): ${path} -> ${readlinkSync(path)}`);
+    throw error;
   }
 }
 
-function canonicalHome() {
+function entries(path) {
   try {
-    return realpathSync(homedir());
-  } catch {
-    return resolve(homedir());
+    return readdirSync(path, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return [];
+    throw error;
+  }
+}
+
+function head(file) {
+  const buffer = Buffer.alloc(4096);
+  const descriptor = openSync(file, "r");
+  try {
+    return buffer.toString("utf8", 0, readSync(descriptor, buffer, 0, buffer.length, 0));
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+// A script in bin/ runs the environment its interpreter path belongs to, which the path's directory decides,
+// so the path counts as inside scratch by its canonical directory, not by where its links end.
+function checkScripts(venv, root, home) {
+  for (const entry of entries(join(venv, "bin")).filter((item) => item.isFile())) {
+    const file = join(venv, "bin", entry.name);
+    const interpreter = scriptInterpreter(head(file));
+    if (!interpreter || !isAbsolute(interpreter)) continue;
+    const location = join(canonicalPath(dirname(interpreter)), basename(interpreter));
+    if (outside(root, location) && !lockedSystemEntry(interpreter, home)) {
+      throw new Error(`shebang points outside scratch: ${file} -> ${interpreter}`);
+    }
   }
 }
 
@@ -68,12 +85,14 @@ if (!directory || extra.length) {
         if (entry.name === ".git" && !entry.isDirectory()) {
           throw new Error(`.git is not a directory: ${path}`);
         } else if (entry.isSymbolicLink()) {
-          const target = realpathSync(path);
+          const target = linkTarget(path);
           if (outside(root, target) && !lockedSystemFile(target, home)) {
             throw new Error(`symlink escapes scratch: ${path} -> ${target}`);
           }
         } else if (entry.isDirectory()) {
           pending.push(path);
+        } else if (entry.name === "pyvenv.cfg" && entry.isFile()) {
+          checkScripts(current, root, home);
         }
         if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".pth") &&
             ["site-packages", "dist-packages"].includes(basename(current))) {

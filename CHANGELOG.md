@@ -83,6 +83,7 @@ All notable changes to this project are documented here. The format follows [Kee
   Uses the shared clone-first scratch copy helper for its no-subagent fallback, with unchanged containment, dependency, and source-integrity checks.
   Reads optional `docs/agents/qa.md` before scenarios, runs explicitly authorized live or paid checks within its limits, independently briefs and judges named role-play agents from raw output, and returns post-deploy obligations; the networkless fallback reports unreachable authorized checks as gaps. Keeps defaults without a convention.
   Treats host-browser timeouts during character-by-character long text entry as a demonstrated capability gap for the existing scratch Playwright fallback. Stops QA-owned servers, browsers, and containers before returning evidence.
+  The shared scratch containment check, which `code-review` readers run too, reports a link whose target is missing as `dangling link (target missing in scratch)` instead of a raw `ENOENT` error, and in each virtualenv fails a `bin/` script whose interpreter, from its `#!` line or its `'''exec'` launcher, lies outside scratch (`shebang points outside scratch`) (#99).
   Personal OMP patch: independent QA uses the `qa` mission agent.
 - `refactor`: hands branch-assessment readers a written branch diff so read-only subagents need no Git access.
   Verifies complete, runnable manual examples against automation in scratch before applying a mechanical sweep, including coupled declarations and callers.
