@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, closeSync, constants, cpSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { LAUNCHER, canonicalHome, lockedSystemFile, outside, shellWord } from "./scratch-paths.mjs";
 
 // Each copied runtime lives inside its own virtualenv, which repositories already ignore.
@@ -61,26 +62,38 @@ function regularFiles(venv) {
 // Text is handled as latin1 so every byte round-trips unchanged, whatever the file's encoding.
 const bytes = (text) => Buffer.from(text, "utf8").toString("latin1");
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, (character) => `\\${character}`);
-const PATH_CHARACTER = "[\\w.~+@\\x80-\\xff-]";
+const PATH_CHARACTER = "[\\w.~+@%\\x80-\\xff-]";
+
+// A file URL's path as Python's pathlib encodes it, keeping only letters, digits, and _.-~/, and as uv and
+// Node encode it under the WHATWG URL rules, which keep more characters.
+const pythonUrlPath = (path) => [...Buffer.from(path, "utf8")].map((byte) => (/[\w.~/-]/.test(String.fromCharCode(byte)) ? String.fromCharCode(byte) : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)).join("");
+const urlPaths = (path) => [pythonUrlPath(path), pathToFileURL(path).pathname];
 
 // Replaces each repository path, as given or canonical, with the canonical scratch path, where it stands as a
-// whole path or a path prefix. Scratch paths already present stay as they are, so a scratch path that starts
-// with the repository path is not rewritten again on a later run.
+// whole path or a path prefix: as text, it becomes the scratch path as text, and in a file URL in either
+// encoding, such as in direct_url.json, the scratch path in Python's encoding, which every URL parser decodes
+// the same way. Scratch paths already present as text stay as they are, so a scratch path that starts with the
+// repository path is not rewritten again on a later run; in an encoded scratch path, the character after such a
+// prefix is always % or a path character, which blocks the match.
 function pathRewriter(repositoryPaths, scratchPaths, scratch) {
-  const targets = new Map(repositoryPaths.map((path) => [bytes(path), bytes(scratch)]));
+  const targets = new Map();
+  for (const path of repositoryPaths) {
+    for (const encoded of urlPaths(path)) targets.set(`file://${encoded}`, `file://${pythonUrlPath(scratch)}`);
+    targets.set(bytes(path), bytes(scratch));
+  }
   for (const path of scratchPaths) targets.set(bytes(path), bytes(path));
   const alternatives = [...targets.keys()].sort((left, right) => right.length - left.length).map(escapeRegExp);
   const pattern = new RegExp(`(?<!${PATH_CHARACTER})(?:${alternatives.join("|")})(?!${PATH_CHARACTER})`, "g");
-  const needles = repositoryPaths.map((path) => Buffer.from(path, "utf8"));
+  const needles = repositoryPaths.flatMap((path) => [Buffer.from(path, "utf8"), ...urlPaths(path).map((encoded) => Buffer.from(encoded))]);
   return {
     mentions: (buffer) => needles.some((needle) => buffer.includes(needle)),
     rewrite: (text) => text.replace(pattern, (match) => targets.get(match)),
   };
 }
 
-// Each quote in the path becomes '\'', which never puts three unescaped quotes in a row, so Python's
-// triple-quoted string around the launcher line stays closed until its own end.
-const shellQuote = (path) => `'${path.replaceAll("'", () => "'\\''")}'`;
+// Paths with these characters are refused, so a path never needs escaping in the files it is written into.
+const UNWRITABLE = /['"\\\r\n]/;
+const shellQuote = (path) => `'${path}'`;
 
 // A launcher script gets its interpreter requoted. A rewritten #! line longer than the kernel reads or holding
 // a space becomes a launcher, as pip and uv write it. Text is latin1, so a line's length is its size in bytes.
@@ -131,11 +144,20 @@ function resolveLink(path) {
   }
 }
 
+// cpSync leaves copied directories at the default mode, so each takes its source's mode, deepest first.
+function copyDirectoryModes(source, target) {
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    if (entry.isDirectory()) copyDirectoryModes(join(source, entry.name), join(target, entry.name));
+  }
+  chmodSync(target, lstatSync(source).mode & 0o7777);
+}
+
 // Copies a user-owned runtime into the virtualenv and relinks every bin/ link into it. A runtime is the parent
 // of the bin directory holding the interpreter's canonical path, so an alias link such as uv's is resolved first.
 function relocateRuntime(venv, context, log) {
   const { root, repository, home } = context;
   const bin = join(venv, "bin");
+  if (!existing(bin)?.isDirectory()) throw new Error(`${bin} is not a directory`);
   const interpreter = resolveLink(interpreterLink(venv));
   if (!outside(root, interpreter) || lockedSystemFile(interpreter, home)) return;
   if (basename(dirname(interpreter)) !== "bin") {
@@ -152,6 +174,7 @@ function relocateRuntime(venv, context, log) {
   const copy = join(runtimes, basename(runtime));
   removeTree(copy);
   cpSync(runtime, copy, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+  copyDirectoryModes(runtime, copy);
   log(`copied runtime ${runtime} -> ${relative(root, copy)}`);
   for (const entry of readdirSync(bin, { withFileTypes: true }).filter((item) => item.isSymbolicLink())) {
     const link = join(bin, entry.name);
@@ -257,13 +280,18 @@ function prepare(repositoryArgument, scratchArgument) {
   const root = realpathSync(scratchPath);
   if (!outside(repository, root)) throw new Error("scratch directory must be outside the repository");
 
-  const context = { root, repository, home: canonicalHome() };
-  const rewriter = pathRewriter([...new Set([repositoryPath, repository])], [...new Set([scratchPath, root])], root);
   const environments = virtualenvs(root);
   if (!environments.length) {
     console.log(`Scratch Python ready: no virtualenv under ${root}`);
     return;
   }
+  for (const [name, path] of [["repository", repositoryPath], ["repository", repository], ["scratch", scratchPath], ["scratch", root]]) {
+    if (UNWRITABLE.test(path)) {
+      throw new Error(`${name} path ${JSON.stringify(path)} holds a quote, backslash, or line break, which virtualenv files store escaped or cannot hold`);
+    }
+  }
+  const context = { root, repository, home: canonicalHome() };
+  const rewriter = pathRewriter([...new Set([repositoryPath, repository])], [...new Set([scratchPath, root])], root);
   let changes = 0;
   const log = (line) => {
     changes += 1;

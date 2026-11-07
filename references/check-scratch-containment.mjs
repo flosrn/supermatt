@@ -22,6 +22,7 @@ function entries(path) {
   }
 }
 
+
 function head(file) {
   const buffer = Buffer.alloc(4096);
   const descriptor = openSync(file, "r");
