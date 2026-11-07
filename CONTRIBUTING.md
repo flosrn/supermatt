@@ -67,6 +67,8 @@ bun test --timeout=30000 tests/
 `tests/scratch-copy.test.mjs` compares clone and forced-fallback copies with rsync and checks metadata exclusion, symlinks, modes, source isolation, and special files. `tests/tdd-scratch-commit.test.mjs` extracts and executes the `tdd` skill's documented shell blocks. It checks linked-worktree isolation with inherited Git variables and redirecting templates, force-tracked ignored files and deletions, successive mutant independence, and interrupted TEST cleanup.
 The common-directory assertion resolves filesystem aliases such as macOS's `/var` to `/private/var`. Raw non-UTF-8 filename coverage runs where the fixture filesystem supports those names; only a failed creation with `EILSEQ`, as on APFS, skips that case.
 
+`tests/scratch-python.test.mjs` copies the system `python3` binary to stand in for a user-owned interpreter such as uv's, builds an offline virtualenv with editable installs and console scripts from it, and checks that `references/prepare-scratch-python.mjs` makes a scratch copy run and import from the copy without changing the source. Its cases that build a virtualenv skip on macOS, whose `/usr/bin/python3` is a launcher that cannot be copied, and as root.
+
 The changelog guard reports the protected base heading and complete new-side range for mixed Unreleased/released hunks, because replacement lines cannot be unambiguously aligned. Edits wholly within protected content report their new-side start line; pure deletions use Git's new-side anchor.
 
 To run the `lint` job's dash and whitespace checks locally, compare your branch with `main`:
