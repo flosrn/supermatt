@@ -419,6 +419,21 @@ export const cases = [
     ],
   },
   {
+    id: "spec-per-ticket-fixes", skill: "implement-spec", unchanged: true,
+    files: {
+      "run.md": "Spec #50 runs in one PR per ticket mode. Default branch main. Integration worktree /Users/dev/wt/spec-50, branch feat/50-integration, contains the verified commits of all three tickets, each merged with a merge commit. It has no pull request.\nTicket #51 owns src/storage/query.ts: worktree /Users/dev/wt/t51, branch feat/51-query, draft PR #61 against main.\nTicket #52 owns src/worker/schedule.ts: worktree /Users/dev/wt/t52, branch feat/52-schedule, prerequisite #51, no pull request yet.\nTicket #53 owns docs/retention.md: worktree /Users/dev/wt/t53, branch feat/53-retention, draft PR #63 against main.\nAll worktrees are prepared, clean and idle. The snapshots match. No ticket has shipped.\n",
+      "reports.md": "Two independent checkpoints from this run, not simultaneous findings:\n\nCheckpoint A: whole-spec QA on integration commit 6a7b8c9 fails because src/storage/query.ts skips the final page of prune candidates. The change belongs entirely to #51. Code review has not started.\n\nCheckpoint B: later, whole-spec QA passed on integration commit 8b9c0d1. Code review of that commit reports a verified finding: src/worker/schedule.ts schedules the same job twice on retry. The change belongs entirely to #52. The QA report and review aggregate, with their tested commits and evidence, are available.\n",
+      "proposal.md": "At each checkpoint the coordinator proposes: fix the named file directly in /Users/dev/wt/spec-50, commit on feat/50-integration, run its full gate and follow-up QA/review there, then mark all ticket PRs ready. The ticket branches would remain unchanged.\n",
+    },
+    prompt: "Apply only the whole-spec QA/review fix-routing part of the skill to run.md, reports.md and proposal.md. For each independent checkpoint, assess the proposal and give the ordered recovery plan: which worktree and branch carry the fix, what verification happens where, how the fix returns to combined verification, and what follow-up QA and review receive before readiness. Do not run git or checks, create worktrees, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "Both checkpoints reject the integration-only proposal: its fix would not ship on the ticket PR. A makes and commits the fix in /Users/dev/wt/t51 on feat/51-query; B does so in /Users/dev/wt/t52 on feat/52-schedule, not in #51 or #53 merely because of dependencies or integration order.",
+      "Each fix is verified on its owning ticket branch as that ticket's own work, including the full required gate and applicable sync/snapshot checks before reintegration; an integration-only green gate does not replace ticket-branch verification.",
+      "After ticket-branch verification, the coordinator merges that branch into feat/50-integration again with a merge commit (git merge --no-ff), before follow-up QA and review. It neither leaves the fix only on integration nor merges integration into the ticket branch.",
+      "Follow-up QA exercises the affected behavior on the updated integration commit before follow-up code review. A carries the failed QA report and tested 6a7b8c9 into the rerun, then reviews the combined result; B carries the prior QA and review reports, tested 8b9c0d1 and fix diff, and reviews from the last reviewed commit. Valid unaffected evidence is retained, and readiness waits for the required checks, QA and all verified findings to be settled.",
+    ],
+  },
+  {
     id: "spec-single-pr-default", skill: "implement-spec", unchanged: true,
     files: {
       "spec.md": "# Spec #70: Saved searches\n\nUsers can save a search and rerun it from the sidebar.\n\nTickets: #71, #72.\n",
