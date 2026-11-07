@@ -5,7 +5,7 @@ import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const reference = (name) => fileURLToPath(new URL(`../references/${name}`, import.meta.url));
 const runtimeArgs = process.versions.bun ? ["--no-env-file"] : [];
@@ -21,12 +21,15 @@ const unsupported = process.platform === "darwin"
 const needsPython = { skip: unsupported };
 
 // A user-owned interpreter is the system python3 binary copied into <root>/runtime/bin with a relative alias
-// link, the way uv or pyenv keeps one under the home directory. The source repository holds a virtualenv made
-// with it, an editable install as a .pth path line, an editable finder module, and console scripts in both
-// shebang forms.
-function fixture(t, { interpreter = "user", bin = "runtime/bin" } = {}) {
+// link and directories of restricted modes, the way uv or pyenv keeps one under the home directory. The source
+// repository holds a virtualenv made with it, an editable install as a .pth path line, an editable finder
+// module, and console scripts in both shebang forms.
+function fixture(t, { interpreter = "user", bin = "runtime/bin", sourceName = "source" } = {}) {
   const root = mkdtempSync(join(tmpdir(), "scratch-python-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    spawnSync("chmod", ["-R", "u+rwx", root]);
+    rmSync(root, { recursive: true, force: true });
+  });
   let python = systemPython;
   if (interpreter === "user") {
     const name = basename(realpathSync(systemPython));
@@ -35,12 +38,16 @@ function fixture(t, { interpreter = "user", bin = "runtime/bin" } = {}) {
     copyFileSync(realpathSync(systemPython), python);
     chmodSync(python, 0o755);
     symlinkSync(name, join(root, bin, "python3-alias"));
+    for (const [directory, mode] of [["lib/private", 0o700], ["share", 0o555]]) {
+      mkdirSync(join(root, bin, "..", directory), { recursive: true });
+      chmodSync(join(root, bin, "..", directory), mode);
+    }
     if (spawnSync(python, ["-c", "pass"]).status !== 0) {
       t.skip("a copy of the system python3 cannot run");
       return null;
     }
   }
-  const source = join(root, "source");
+  const source = join(root, sourceName);
   for (const directory of ["src/engine", "vendor/other"]) {
     mkdirSync(join(source, directory), { recursive: true });
     writeFileSync(join(source, directory, "__init__.py"), "");
@@ -51,7 +58,9 @@ function fixture(t, { interpreter = "user", bin = "runtime/bin" } = {}) {
   const sitePackages = join(venv, "lib", readdirSync(join(venv, "lib"))[0], "site-packages");
   writeFileSync(join(sitePackages, "engine.pth"), `${join(source, "src")}\n`);
   writeFileSync(join(sitePackages, "_editable_impl_other.pth"), "import _editable_impl_other\n");
-  writeFileSync(join(sitePackages, "_editable_impl_other.py"), `import sys\nsys.path.append(${JSON.stringify(join(source, "vendor"))})\n`);
+  writeFileSync(join(sitePackages, "_editable_impl_other.py"), `import sys\nsys.path.append('${join(source, "vendor")}')\n`);
+  mkdirSync(join(sitePackages, "engine-0.1.0.dist-info"));
+  writeFileSync(join(sitePackages, "engine-0.1.0.dist-info/direct_url.json"), JSON.stringify({ url: pathToFileURL(source).href, dir_info: { editable: true } }));
   const body = "import engine, sys\nprint(engine.__file__)\nprint(sys.prefix)\n";
   writeFileSync(join(venv, "bin/engine-where"), `#!${join(venv, "bin/python")}\n${body}`, { mode: 0o755 });
   writeFileSync(join(venv, "bin/engine-launch"), `#!/bin/sh\n'''exec' '${join(venv, "bin/python")}' "$0" "$@"\n' '''\n${body}`, { mode: 0o755 });
@@ -111,6 +120,10 @@ test("the helper makes a copied virtualenv with a user-owned interpreter run fro
   for (const path of [join(root, "runtime/"), join(source, "/")]) assert.ok(!config.includes(path), config);
   assert.equal(readFileSync(join(scratch, sitePackages, "paths.txt"), "utf8"), `${outsidePaths}${join(scratch, "src")}\n`);
   assert.deepEqual(readFileSync(join(scratch, sitePackages, "engine.bin")), binary);
+  for (const directory of ["lib/private", "share"]) {
+    const mode = (path) => lstatSync(path).mode & 0o7777;
+    assert.equal(mode(join(scratch, ".venv/.scratch-python/runtime", directory)), mode(join(root, "runtime", directory)), directory);
+  }
   assert.deepEqual(snapshot(source), before);
 });
 
@@ -126,12 +139,14 @@ test("a second helper run reports no change and leaves the scratch tree as it wa
   assert.deepEqual(snapshot(scratch), prepared);
 });
 
-test("a scratch path with a space, a quote, or past the shebang limit gets /bin/sh exec launchers that run", needsPython, (t) => {
-  const { root, source } = fixture(t) ?? {};
+test("a scratch path with a space or past the shebang limit gets /bin/sh exec launchers that run and an encoded file URL", needsPython, (t) => {
+  const { root, source, sitePackages } = fixture(t) ?? {};
   if (!source) return;
-  for (const name of ["scratch copy", "it's copy", "s".repeat(130)]) {
+  for (const name of ["scratch copy", "s".repeat(130)]) {
     const scratch = copy(source, join(root, name));
     assert.equal(prepare(source, scratch).status, 0);
+    const url = JSON.parse(readFileSync(join(scratch, sitePackages, "engine-0.1.0.dist-info/direct_url.json"), "utf8")).url;
+    assert.equal(fileURLToPath(url), scratch);
     for (const file of ["engine-where", "engine-launch"]) {
       const script = join(scratch, ".venv/bin", file);
       assert.match(readFileSync(script, "utf8"), /^#!\/bin\/sh\n'''exec' '[^\n]*\/\.venv\/bin\/python' "\$0" "\$@"\n' '''\n/);
@@ -140,6 +155,56 @@ test("a scratch path with a space, a quote, or past the shebang limit gets /bin/
     }
     assert.equal(check(scratch).status, 0, check(scratch).stderr);
   }
+});
+
+test("the helper points file URLs of the repository at scratch, in Python's and uv's encodings", needsPython, (t) => {
+  const { root, source, sitePackages } = fixture(t, { sourceName: "source (dir)" }) ?? {};
+  if (!source) return;
+  const pythonUri = (path) => spawnSync(systemPython, ["-c", "import pathlib, sys; print(pathlib.Path(sys.argv[1]).as_uri())", path], { encoding: "utf8" }).stdout.trim();
+  writeFileSync(join(source, sitePackages, "python-url.txt"), `${pythonUri(source)}\n`);
+  const scratch = copy(source, join(root, "scratch (copy)"));
+  const result = prepare(source, scratch);
+  assert.equal(result.status, 0, result.stderr);
+  const url = JSON.parse(readFileSync(join(scratch, sitePackages, "engine-0.1.0.dist-info/direct_url.json"), "utf8")).url;
+  assert.equal(fileURLToPath(url), scratch);
+  assert.equal(readFileSync(join(scratch, sitePackages, "python-url.txt"), "utf8"), `${pythonUri(scratch)}\n`);
+  const imported = run(join(scratch, ".venv/bin/python"), ["-c", "import engine; print(engine.__file__)"]);
+  assert.equal(imported.stdout.trim(), join(scratch, "src/engine/__init__.py"), imported.stderr);
+});
+
+test("the helper refuses a linked bin directory without writing through it", needsPython, (t) => {
+  const { root, source } = fixture(t) ?? {};
+  if (!source) return;
+  const before = snapshot(source);
+  const scratch = copy(source, join(root, "scratch"));
+  rmSync(join(scratch, ".venv/bin"), { recursive: true });
+  symlinkSync(join(source, ".venv/bin"), join(scratch, ".venv/bin"));
+  const result = prepare(source, scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /^Scratch Python preparation failed: .*\/scratch\/\.venv\/bin is not a directory$/m);
+  assert.deepEqual(snapshot(source), before);
+});
+
+test("the helper refuses a scratch or repository path holding a quote, backslash, or line break, without writing", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scratch-python-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const environment = (directory, repository) => {
+    mkdirSync(join(directory, ".venv/lib/python3/site-packages"), { recursive: true });
+    writeFileSync(join(directory, ".venv/pyvenv.cfg"), "home = /usr/bin\n");
+    writeFileSync(join(directory, ".venv/lib/python3/site-packages/engine.pth"), `${join(repository, "src")}\n`);
+  };
+  const cases = [["source", "it's copy"], ["source", 'say "hi"'], ["source", "back\\slash"], ["source", "line\nbreak"], ['source "q"', "scratch"]];
+  for (const [repository, scratch] of cases) {
+    environment(join(root, repository), join(root, repository));
+    environment(join(root, scratch), join(root, repository));
+  }
+  const before = snapshot(root);
+  for (const [repository, scratch] of cases) {
+    const result = prepare(join(root, repository), join(root, scratch));
+    assert.equal(result.status, 1, `${scratch}: ${result.stdout}`);
+    assert.match(result.stderr, /^Scratch Python preparation failed: .* holds a quote, backslash, or line break/);
+  }
+  assert.deepEqual(snapshot(root), before);
 });
 
 test("a virtualenv linked to a locked system interpreter keeps its link and still imports from scratch", needsPython, (t) => {

@@ -22,13 +22,14 @@ function entries(path) {
 }
 
 // Python's site module adds a top-level .pth file's path lines to sys.path, resolved against site-packages.
-// Its comment, blank, and import lines resolve inside site-packages here, so they need no exception.
+// It skips comment lines and runs import lines instead; a blank line resolves to site-packages itself.
 function checkPathFiles(venv, root) {
   for (const lib of entries(join(venv, "lib")).filter((entry) => entry.isDirectory())) {
     const sitePackages = join(venv, "lib", lib.name, "site-packages");
     for (const entry of entries(sitePackages).filter((item) => item.isFile() && item.name.endsWith(".pth"))) {
       const file = join(sitePackages, entry.name);
       for (const line of readFileSync(file, "utf8").split(/\r\n|\r|\n/)) {
+        if (line.startsWith("#") || /^import[ \t]/.test(line)) continue;
         const path = resolve(sitePackages, line);
         if (outside(root, canonicalPath(path))) throw new Error(`.pth path points outside scratch: ${file} -> ${path}`);
       }

@@ -169,7 +169,8 @@ test("scratch containment blocks a virtualenv .pth path line outside scratch and
   const { root, scratch } = fixture(t);
   const { sitePackages } = environmentFiles(scratch);
   symlinkSync(scratch, join(root, "alias"));
-  const lines = ["# comment", "", "import os", "../../../../data", join(scratch, "data"), join(root, "alias/data"), join(root, "alias/missing/lib")];
+  const climb = "../".repeat(20);
+  const lines = ["# comment", `# ${climb}outside`, "", "import os", `import sys # ${climb}outside`, "../../../../data", join(scratch, "data"), join(root, "alias/data"), join(root, "alias/missing/lib")];
   writeFileSync(join(sitePackages, "inside.pth"), `${lines.join("\n")}\n`);
   let result = run(scratch);
   assert.equal(result.status, 0, result.stderr);
@@ -211,6 +212,10 @@ test("scratch containment reads the interpreter of a /bin/sh exec launcher scrip
     assert.equal(result.status, 1, result.stdout);
     assert.match(result.stderr, /shebang points outside scratch: .*\.venv\/bin\/engine -> .*source\/\.venv\/bin\/python$/m);
   }
+  writeFileSync(join(venv, "bin/engine"), launcher(`'${scratch}'\\''x/python'`));
+  result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /shebang points outside scratch: .*\.venv\/bin\/engine -> .*\/copy'x\/python$/m);
 });
 
 test("scratch containment permits system shebangs but not another virtualenv's link to a system interpreter", needsSystemPython, (t) => {
