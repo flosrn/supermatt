@@ -389,6 +389,97 @@ export const cases = [
     rubric: ["In situation 1, B does not run its tests while A's live process still holds app_test, port 4100 and /shared/build; A holding the merge slot does not make that overlap safe, because the slot serializes integration, not the use of mutable resources before integration.", "In situation 1, B waits for verified release of those resources (A's process exited and the database, port and build directory are free) or for verified distinct targets, rather than for a status claim or for the merge slot itself.", "In situation 2, B may run its tests now against its verified distinct database, port and build directory although A still holds the merge slot; only B's integration waits for the slot. Refusing or serializing B's tests in this situation fails this item.", "C stays eligible for independent work in both situations; neither A's merge slot nor the A/B conflict blocks it. Naming the merge-slot distinction without these per-situation decisions does not pass."],
   },
   {
+    id: "spec-per-ticket-plan", skill: "implement-spec", unchanged: true,
+    files: {
+      "spec.md": "# Spec #50: Image pruning\n\nShipping requirement: each ticket ships as its own pull request against main, reviewed and merged separately. Do not combine tickets into one pull request.\n\nTickets: #51, #52, #53.\n",
+      "tickets.md": "#51 (A): add the prune job's storage query. Blocked by: none. Edits src/storage/query.ts.\n#52 (B): schedule pruning in the worker. Blocked by: #51. Edits src/worker/schedule.ts.\n#53 (C): document the retention setting. Blocked by: none. Edits docs/retention.md.\n",
+      "repo.md": "Repository acme/app on GitHub; issues close through pull requests. Default branch main; freshly fetched origin/main is at 4e5f6a7. No run directory exists yet for this spec. Branch convention: feat/<issue>-<slug>.\n",
+    },
+    prompt: "Apply only the task-graph, branch-preparation, integration and pull-request parts of the skill to spec.md, tickets.md and repo.md. Report what the coordinator records in the task graph, the branch and starting point of each ticket and of the integration branch, how each verified ticket enters the integration branch, and which pull requests are opened, for which branches and when. Do not create branches or worktrees, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The task graph records one PR per ticket mode, because spec.md requires a separate pull request per ticket, and keeps it for a later resume; it also records each ticket's prerequisite branches and the ship order, #51 before #52, with #53 independent.",
+      "#51 and #53 start from the freshly fetched default-branch tip 4e5f6a7. #52 is dispatched only after #51 is verified, and starts from that default-branch tip merged with #51's verified commit and nothing else: not the integration branch tip, and not #53.",
+      "The integration branch is for verification only: each verified ticket branch enters it with a merge commit, not `git merge --ff-only`; it hosts the whole-spec gate, QA and code review; and no pull request is opened for it.",
+      "Each ticket gets its own pull request against main, not one based on another ticket's branch. #52's pull request is not opened until #51 has merged into main and #52 has synced with main.",
+    ],
+  },
+  {
+    id: "spec-per-ticket-sync", skill: "implement-spec", unchanged: true,
+    files: {
+      "run.md": "Spec #50 runs in one PR per ticket mode, recorded in its task graph. Default branch main. Integration worktree /Users/dev/wt/spec-50, branch feat/50-integration.\nTicket #51 (A): branch feat/51-query, verified at 3c4d5e6 and merged into the integration branch with a merge commit. Its draft PR #61 targets main and is open, not merged.\nTicket #52 (B), blocked by #51: branch feat/52-schedule, created from origin/main at 4e5f6a7 merged with 3c4d5e6, then dispatched.\nTicket #53 (C): verified and merged into the integration branch with a merge commit.\n",
+      "state.md": "# Captured state (raw command results)\n\n$ git fetch origin\n$ git rev-parse --short origin/main\n9a8b7c6\n$ git log --oneline 4e5f6a7..origin/main\n9a8b7c6 feat(billing): add invoice export (#47)\n$ git log --oneline 3c4d5e6..origin/feat/51-query\n7f6e5d4 fix(storage): page the prune query\n2b3c4d5 docs(storage): describe the prune query\n$ git -C /Users/dev/wt/spec-50 log -1 --format=%s\nMerge branch 'feat/53-retention' into feat/50-integration\n",
+      "worker-message.md": "Worker #52 finished its commit 8d9e0f1 and now holds the merge slot. It writes: \"#51's branch moved on since I started: it now pages the prune query, and my scheduler calls that query. I plan to run `git merge origin/feat/51-query` so I build on the latest #51, then `git merge feat/50-integration` to pick up #53, then run the gate. OK?\"\n",
+    },
+    prompt: "Apply only the merge-slot sync and pull-request parts of the skill to run.md, state.md and worker-message.md. Answer the worker: say which of its proposed merges it runs, what it merges instead, when #52 takes #51's later commits, and when #52's pull request opens. Do not run git, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The worker does not merge origin/feat/51-query: #51 has not merged into main, so its later commits 2b3c4d5 and 7f6e5d4 are not pulled into #52 from #51's branch.",
+      "The worker does not merge feat/50-integration either: the integration branch is never merged into a ticket branch, and #53 is not one of #52's prerequisites.",
+      "In the merge slot, #52 syncs only with the freshly fetched default branch, origin/main at 9a8b7c6, and reruns the checks that merge invalidates, the full required gate included, before its verified commit enters the integration branch.",
+      "#52 takes #51's later work only after #51 merges into main, by syncing with main again; #52's pull request waits for that merge and that sync.",
+    ],
+  },
+  {
+    id: "spec-per-ticket-fixes", skill: "implement-spec", unchanged: true,
+    files: {
+      "run.md": "Spec #50 runs in one PR per ticket mode. Default branch main. Integration worktree /Users/dev/wt/spec-50, branch feat/50-integration, contains the verified commits of all three tickets, each merged with a merge commit. It has no pull request.\nTicket #51 owns src/storage/query.ts: worktree /Users/dev/wt/t51, branch feat/51-query, draft PR #61 against main.\nTicket #52 owns src/worker/schedule.ts: worktree /Users/dev/wt/t52, branch feat/52-schedule, prerequisite #51, no pull request yet.\nTicket #53 owns docs/retention.md: worktree /Users/dev/wt/t53, branch feat/53-retention, draft PR #63 against main.\nAll worktrees are prepared, clean and idle. The snapshots match. No ticket has shipped.\n",
+      "reports.md": "Two independent checkpoints from this run, not simultaneous findings:\n\nCheckpoint A: whole-spec QA on integration commit 6a7b8c9 fails because src/storage/query.ts skips the final page of prune candidates. The change belongs entirely to #51. Code review has not started.\n\nCheckpoint B: later, whole-spec QA passed on integration commit 8b9c0d1. Code review of that commit reports a verified finding: src/worker/schedule.ts schedules the same job twice on retry. The change belongs entirely to #52. The QA report and review aggregate, with their tested commits and evidence, are available.\n",
+      "proposal.md": "At each checkpoint the coordinator proposes: fix the named file directly in /Users/dev/wt/spec-50, commit on feat/50-integration, run its full gate and follow-up QA/review there, then mark all ticket PRs ready. The ticket branches would remain unchanged.\n",
+    },
+    prompt: "Apply only the whole-spec QA/review fix-routing part of the skill to run.md, reports.md and proposal.md. For each independent checkpoint, assess the proposal and give the ordered recovery plan: which worktree and branch carry the fix, what verification happens where, how the fix returns to combined verification, and what follow-up QA and review receive before readiness. Do not run git or checks, create worktrees, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "Both checkpoints reject the integration-only proposal: its fix would not ship on the ticket PR. A makes and commits the fix in /Users/dev/wt/t51 on feat/51-query; B does so in /Users/dev/wt/t52 on feat/52-schedule, not in #51 or #53 merely because of dependencies or integration order.",
+      "Each fix is verified on its owning ticket branch as that ticket's own work, including the full required gate and applicable sync/snapshot checks before reintegration; an integration-only green gate does not replace ticket-branch verification.",
+      "After ticket-branch verification, the coordinator merges that branch into feat/50-integration again with a merge commit (git merge --no-ff), before follow-up QA and review. It neither leaves the fix only on integration nor merges integration into the ticket branch.",
+      "Follow-up QA exercises the affected behavior on the updated integration commit before follow-up code review. A carries the failed QA report and tested 6a7b8c9 into the rerun, then reviews the combined result; B carries the prior QA and review reports, tested 8b9c0d1 and fix diff, and reviews from the last reviewed commit. Valid unaffected evidence is retained, and readiness waits for the required checks, QA and all verified findings to be settled.",
+    ],
+  },
+  {
+    id: "spec-single-pr-default", skill: "implement-spec", unchanged: true,
+    files: {
+      "spec.md": "# Spec #70: Saved searches\n\nUsers can save a search and rerun it from the sidebar.\n\nTickets: #71, #72.\n",
+      "tickets.md": "#71 (A): store saved searches. Blocked by: none. Edits src/search/store.ts.\n#72 (B): list saved searches in the sidebar. Blocked by: #71. Edits src/ui/sidebar.tsx.\n",
+      "repo.md": "Repository acme/app on GitHub; issues close through pull requests. Default branch main at 1a2b3c4. No run directory exists yet for this spec. Branch convention: feat/<issue>-<slug>.\n",
+    },
+    prompt: "Apply only the task-graph, branch-preparation, merge-slot, integration and pull-request parts of the skill to spec.md, tickets.md and repo.md. Report what the coordinator records in the task graph, where each ticket's branch starts, what each finished worker merges into its branch before integration, the git command that integrates it, and which pull requests are opened, for which branches. Do not create branches or worktrees, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The task graph records the single integration PR mode: nothing in spec.md, tickets.md or repo.md requires a pull request per ticket.",
+      "#71 starts from the integration branch tip, created from main at 1a2b3c4, and #72 from the integration tip once #71 is integrated; in the merge slot each finished worker brings the latest integration tip into its branch.",
+      "Each verified worker commit enters the integration branch with `git merge --ff-only`.",
+      "Exactly one pull request is opened: a draft for the integration branch against main that references #70, #71 and #72. No ticket gets a pull request of its own.",
+    ],
+  },
+  {
+    id: "sync-gate-merge-head", skill: "implement-spec", unchanged: true,
+    files: {
+      "AGENTS.md": "# App\n\n## Checks\n\nThe required gate is `pnpm gate`: `pnpm lint`, then `turbo run test --affected`, which tests the packages changed since the merge base of HEAD and origin/main.\n",
+      "run.md": "Spec #40 runs in single integration PR mode. Integration worktree /Users/dev/wt/spec-40, branch feat/40-integration at 5d6e7f8.\nTicket #42: worktree /Users/dev/wt/t42, branch feat/42-export. Its worker committed 2a3b4c5, whose full gate passed, then took the merge slot and ran `git merge feat/40-integration`, which stopped on a conflict in src/export/csv.ts. The worker resolved that conflict, staged the file, and ran the gate.\n",
+      "state.md": "# Captured command results (raw)\n\n$ git -C /Users/dev/wt/t42 status --short --branch\n## feat/42-export\nM  src/export/csv.ts\nM  src/export/index.ts\n$ git -C /Users/dev/wt/t42 rev-parse -q --verify MERGE_HEAD\n5d6e7f8c9b0a1f2e3d4c5b6a7f8e9d0c1b2a3f4e\n$ pnpm gate\n> pnpm lint\nlint: 0 problems\n> turbo run test --affected\nfatal: multiple merge bases found\nERROR run failed: command exited (1)\n$ echo $?\n1\n",
+      "worker-report.md": "Worker #42 reports: \"Lint passed. The test step failed with `fatal: multiple merge bases found`, a turbo problem rather than my code, and the gate on 2a3b4c5 was green before the sync. I count the gate as passed, so I will commit the merge and hand the branch over for the fast-forward.\"\n",
+    },
+    prompt: "Apply only the merge-slot part of the skill to run.md, state.md and worker-report.md. Say whether the `pnpm gate` run in state.md counts as passing evidence or as a failed check, whether #42 may be integrated on the worker's report, and list in order the steps from here to the integration decision. Do not run git or pnpm, contact a tracker, launch workers, or edit files in this scoped probe.",
+    rubric: [
+      "The `pnpm gate` run in state.md counts neither as passing evidence nor as a code failure: it ran while the merge was still in progress (MERGE_HEAD exists and the resolution is staged, not committed), and `fatal: multiple merge bases found` is the affected-scope tool failing on that state, not a test result.",
+      "#42 is not integrated on the worker's report: the green gate on 2a3b4c5 predates the sync and does not cover the combined code.",
+      "The steps are: commit the verified conflict resolution so the merge is complete and MERGE_HEAD is gone, then run the full required gate, `pnpm gate`, on that merge commit; only that run decides whether #42 enters the integration branch with `git merge --ff-only`.",
+    ],
+  },
+  {
+    id: "merge-train-fresh-check", skill: "ship-pr", unchanged: true,
+    files: {
+      "docs/agents/merge.md": "# Merge\n\nThis repository merges through a Merge Train. To merge a PR, add the `merge` label. The train batches labelled PRs, runs the Merge Gate on each batch, and merges it into main. When a batch member conflicts with main or with a PR ahead of it in the batch, the train removes its `merge` label and comments `ejected: conflicts`. To re-enqueue, fix the cause and add the `merge` label again.\n",
+      "shipping-record.md": "PR #42 https://github.com/acme/app/pull/42, branch feat/42-export, head 7c8d9e0, pushed at 10:00.\nAt 10:02: `git fetch origin main` exited 0, then `git merge-tree --write-tree origin/main HEAD` exited 0, with `git rev-parse --short origin/main` printing 1a2b3c4.\nCI is running on 7c8d9e0. The `merge` label has not been added yet.\n",
+      "state.md": "# Captured command results (raw)\n\n$ date +%H:%M\n10:24\n$ git config --get-all remote.origin.fetch\n+refs/heads/feat/42-export:refs/remotes/origin/feat/42-export\n$ git ls-remote origin refs/heads/main\n5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f\trefs/heads/main\n$ gh pr list --label merge --json number,headRefName\n[{\"number\":45,\"headRefName\":\"feat/45-csv\"},{\"number\":46,\"headRefName\":\"fix/46-locale\"}]\n",
+      "later.md": "Later the same day, the train ejected PR #42 with the comment `ejected: conflicts with main or with #45, #46 ahead in the batch` and removed its `merge` label. #45 and #46 have since merged into main.\n",
+    },
+    prompt: "Apply only the part of the skill that starts the documented Merge operation, and its ejection handling, to these files. List, in order, every step ship-pr takes for PR #42 before it adds the `merge` label now, with the exact commands, and what it does when a step finds a conflict. Then do the same for re-enqueueing after the ejection in later.md, and say what those steps can and cannot catch. Do not run git or gh, push, label, or edit files in this scoped probe.",
+    rubric: [
+      "Immediately before adding the label now, ship-pr fetches main into its tracking ref explicitly (for example `git fetch origin +refs/heads/main:refs/remotes/origin/main`), because this clone's fetch refspec maps only feat/42-export, so a plain `git fetch origin main` leaves origin/main at the stale 1a2b3c4. It then runs `git merge-tree --write-tree` on the branch head and that fresh origin/main at 5e6f7a8; the clean 10:02 check does not count.",
+      "On a conflict, it merges the fresh origin/main into feat/42-export rather than rewriting the published branch, resolves through resolving-merge-conflicts, reruns the full required gate on the committed merge, pushes, and repeats the fetch and check before adding the label.",
+      "Before re-enqueueing after the ejection, it runs the same fetch and merge-tree check, with the same sync, gate, push and recheck on a conflict, before adding the `merge` label again.",
+      "It states that this check cannot see conflicts with PRs still ahead in the train, such as #45 and #46 while they were queued, so the train's ejection handling stays the backstop.",
+    ],
+  },
+  {
     id: "worktree-setup-source", skill: "implement-spec", unchanged: true,
     files: {
       "docs/agents/worktree-setup.md": "# Worktree setup\n\nRun these from the worktree root, in order:\n\n1. `bun install --frozen-lockfile`\n2. `git submodule update --init --recursive`\n",
