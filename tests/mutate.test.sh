@@ -8,6 +8,18 @@ trap 'rm -rf "$TMP"' EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# A process mutate.sh killed can still answer kill -0 until init reaps it, so
+# wait up to 5 s for the pid in file $1 to go before failing with message $2.
+assert_gone() {
+  gone_pid=$(cat "$1")
+  gone_tries=50
+  while kill -0 "$gone_pid" 2>/dev/null && [ "$gone_tries" -gt 0 ]; do
+    sleep 0.1
+    gone_tries=$((gone_tries - 1))
+  done
+  ! kill -0 "$gone_pid" 2>/dev/null || fail "$2"
+}
+
 cd "$TMP"
 printf '# sum\n\techo $((1+1))\n' > add.sh
 cp add.sh add.orig
@@ -160,7 +172,7 @@ esac
 # Nothing TEST starts outlives it, as a test runner's child does when the
 # runner is killed on its own timeout.
 sh "$REPO/skills/tdd/scripts/mutate.sh" 'sleep 30 & echo $! > left.pid; [ "$(sh add.sh)" = 2 ]' red.m >/dev/null
-! kill -0 "$(cat left.pid)" 2>/dev/null || fail "a process TEST started outlived it"
+assert_gone left.pid "a process TEST started outlived it"
 
 # A mutation that never ends, as a deleted loop guard does, is stopped at -t
 # SECONDS with everything it started, and reported as a timeout.
@@ -169,7 +181,7 @@ out="$(sh "$REPO/skills/tdd/scripts/mutate.sh" -t 1 \
   '[ "$(sh add.sh)" = 2 ] || { sleep 30 & echo $! > hung.pid; wait; }' red.m)" || code=$?
 [ "$out" = "red.m timeout" ] || fail "a hung mutation reported: $out"
 [ "$code" = 1 ] || fail "a run with a timeout exited $code, want 1"
-! kill -0 "$(cat hung.pid)" 2>/dev/null || fail "a hung mutation's process outlived the timeout"
+assert_gone hung.pid "a hung mutation's process outlived the timeout"
 cmp -s add.sh add.orig || fail "add.sh was not restored after a timeout"
 
 # A run interrupted mid-mutation stops TEST, restores the target, and leaves
@@ -186,7 +198,7 @@ until [ -s stuck.pid ]; do
 done
 kill -TERM "$run"
 wait "$run" || true
-! kill -0 "$(cat stuck.pid)" 2>/dev/null || fail "an interrupted run's TEST outlived it"
+assert_gone stuck.pid "an interrupted run's TEST outlived it"
 cmp -s add.sh add.orig || fail "add.sh was not restored after an interrupt"
 [ -z "$(ls -A tmpd)" ] || fail "an interrupted run left files behind: $(ls -A tmpd)"
 
@@ -211,7 +223,7 @@ kill -TERM "$run"
 code=0
 wait "$run" || code=$?
 [ "$code" = 2 ] || fail "an interrupted restore failure exited $code, want 2"
-! kill -0 "$(cat recovery-stuck.pid)" 2>/dev/null || fail "an interrupted restore left TEST running"
+assert_gone recovery-stuck.pid "an interrupted restore left TEST running"
 backup=$(sed -n 's/^mutate.sh: cannot restore add.sh; backup retained at //p' interrupted.err)
 [ -f "$backup" ] || fail "an interrupted restore lost its recovery copy"
 cmp -s "$backup" add.orig || fail "the interrupted recovery copy lost the original bytes"
