@@ -69,31 +69,48 @@ const PATH_CHARACTER = "[\\w.~+@%\\x80-\\xff-]";
 const pythonUrlPath = (path) => [...Buffer.from(path, "utf8")].map((byte) => (/[\w.~/-]/.test(String.fromCharCode(byte)) ? String.fromCharCode(byte) : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)).join("");
 const urlPaths = (path) => [pythonUrlPath(path), pathToFileURL(path).pathname];
 
+// A path in an ASCII-only Python string literal: json.dumps escapes each UTF-16 unit above 0x7f as \uXXXX, and
+// ascii() writes \xXX, \uXXXX, or \UXXXXXXXX by code point.
+const hex = (number, width) => number.toString(16).padStart(width, "0");
+const jsonEscaped = (path) => path.replace(/[^\x00-\x7f]/g, (unit) => `\\u${hex(unit.charCodeAt(0), 4)}`);
+const asciiEscaped = (path) => [...path].map((character) => {
+  const point = character.codePointAt(0);
+  if (point < 0x80) return character;
+  return point <= 0xff ? `\\x${hex(point, 2)}` : point <= 0xffff ? `\\u${hex(point, 4)}` : `\\U${hex(point, 8)}`;
+}).join("");
+
 // Replaces each repository path, as given or canonical, with the canonical scratch path, where it stands as a
-// whole path or a path prefix: as text, it becomes the scratch path as text, and in a file URL in either
-// encoding, such as in direct_url.json, the scratch path in Python's encoding, which every URL parser decodes
-// the same way. Scratch paths already present as text stay as they are, so a scratch path that starts with the
+// whole path or a path prefix: as text, it becomes the scratch path as text; escaped as json.dumps or ascii()
+// writes it, the scratch path escaped the same way; and in a file URL in either encoding, such as in
+// direct_url.json, the scratch path in Python's encoding, which every URL parser decodes the same way.
+// Scratch paths already present as text or escaped stay as they are, so a scratch path that starts with the
 // repository path is not rewritten again on a later run; in an encoded scratch path, the character after such a
 // prefix is always % or a path character, which blocks the match.
 function pathRewriter(repositoryPaths, scratchPaths, scratch) {
   const targets = new Map();
   for (const path of repositoryPaths) {
     for (const encoded of urlPaths(path)) targets.set(`file://${encoded}`, `file://${pythonUrlPath(scratch)}`);
+    for (const escape of [jsonEscaped, asciiEscaped]) targets.set(escape(path), escape(scratch));
     targets.set(bytes(path), bytes(scratch));
   }
-  for (const path of scratchPaths) targets.set(bytes(path), bytes(path));
+  for (const path of scratchPaths) {
+    for (const form of [jsonEscaped(path), asciiEscaped(path), bytes(path)]) targets.set(form, form);
+  }
   const alternatives = [...targets.keys()].sort((left, right) => right.length - left.length).map(escapeRegExp);
   const pattern = new RegExp(`(?<!${PATH_CHARACTER})(?:${alternatives.join("|")})(?!${PATH_CHARACTER})`, "g");
-  const needles = repositoryPaths.flatMap((path) => [Buffer.from(path, "utf8"), ...urlPaths(path).map((encoded) => Buffer.from(encoded))]);
+  const needles = repositoryPaths.flatMap((path) => [path, jsonEscaped(path), asciiEscaped(path), ...urlPaths(path)].map((form) => Buffer.from(form, "utf8")));
   return {
     mentions: (buffer) => needles.some((needle) => buffer.includes(needle)),
     rewrite: (text) => text.replace(pattern, (match) => targets.get(match)),
   };
 }
 
-// Paths with these characters are refused, so a path never needs escaping in the files it is written into.
-const UNWRITABLE = /['"\\\r\n]/;
-const shellQuote = (path) => `'${path}'`;
+// A repository or scratch path with a quote, backslash, or control character is refused, since virtualenv files
+// store it escaped or cannot hold it; a virtualenv path below scratch only needs to name its interpreter in a
+// launcher, which holds anything but a control character.
+const UNWRITABLE_ROOT = /['"\\\x00-\x1f\x7f]/;
+const CONTROL = /[\x00-\x1f\x7f]/;
+const shellQuote = (path) => `'${path.replaceAll("'", () => "'\\''")}'`;
 
 // A launcher script gets its interpreter requoted. A rewritten #! line longer than the kernel reads or holding
 // a space becomes a launcher, as pip and uv write it. Text is latin1, so a line's length is its size in bytes.
@@ -286,9 +303,12 @@ function prepare(repositoryArgument, scratchArgument) {
     return;
   }
   for (const [name, path] of [["repository", repositoryPath], ["repository", repository], ["scratch", scratchPath], ["scratch", root]]) {
-    if (UNWRITABLE.test(path)) {
-      throw new Error(`${name} path ${JSON.stringify(path)} holds a quote, backslash, or line break, which virtualenv files store escaped or cannot hold`);
+    if (UNWRITABLE_ROOT.test(path)) {
+      throw new Error(`${name} path ${JSON.stringify(path)} holds a quote, backslash, or control character, which virtualenv files store escaped or cannot hold`);
     }
+  }
+  for (const venv of environments) {
+    if (CONTROL.test(venv)) throw new Error(`virtualenv path ${JSON.stringify(venv)} holds a control character, which its scripts cannot name`);
   }
   const context = { root, repository, home: canonicalHome() };
   const rewriter = pathRewriter([...new Set([repositoryPath, repository])], [...new Set([scratchPath, root])], root);

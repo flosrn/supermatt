@@ -24,7 +24,7 @@ const needsPython = { skip: unsupported };
 // link and directories of restricted modes, the way uv or pyenv keeps one under the home directory. The source
 // repository holds a virtualenv made with it, an editable install as a .pth path line, an editable finder
 // module, and console scripts in both shebang forms.
-function fixture(t, { interpreter = "user", bin = "runtime/bin", sourceName = "source" } = {}) {
+function fixture(t, { interpreter = "user", bin = "runtime/bin", sourceName = "source", venvPath = ".venv" } = {}) {
   const root = mkdtempSync(join(tmpdir(), "scratch-python-"));
   t.after(() => {
     spawnSync("chmod", ["-R", "u+rwx", root]);
@@ -52,9 +52,9 @@ function fixture(t, { interpreter = "user", bin = "runtime/bin", sourceName = "s
     mkdirSync(join(source, directory), { recursive: true });
     writeFileSync(join(source, directory, "__init__.py"), "");
   }
-  const created = spawnSync(python, ["-m", "venv", "--without-pip", join(source, ".venv")], { encoding: "utf8" });
+  const venv = join(source, venvPath);
+  const created = spawnSync(python, ["-m", "venv", "--without-pip", venv], { encoding: "utf8" });
   assert.equal(created.status, 0, created.stderr);
-  const venv = join(source, ".venv");
   const sitePackages = join(venv, "lib", readdirSync(join(venv, "lib"))[0], "site-packages");
   writeFileSync(join(sitePackages, "engine.pth"), `${join(source, "src")}\n`);
   writeFileSync(join(sitePackages, "_editable_impl_other.pth"), "import _editable_impl_other\n");
@@ -62,9 +62,10 @@ function fixture(t, { interpreter = "user", bin = "runtime/bin", sourceName = "s
   mkdirSync(join(sitePackages, "engine-0.1.0.dist-info"));
   writeFileSync(join(sitePackages, "engine-0.1.0.dist-info/direct_url.json"), JSON.stringify({ url: pathToFileURL(source).href, dir_info: { editable: true } }));
   const body = "import engine, sys\nprint(engine.__file__)\nprint(sys.prefix)\n";
+  const quoted = `'${join(venv, "bin/python").replaceAll("'", () => "'\\''")}'`;
   writeFileSync(join(venv, "bin/engine-where"), `#!${join(venv, "bin/python")}\n${body}`, { mode: 0o755 });
-  writeFileSync(join(venv, "bin/engine-launch"), `#!/bin/sh\n'''exec' '${join(venv, "bin/python")}' "$0" "$@"\n' '''\n${body}`, { mode: 0o755 });
-  return { root, source, sitePackages: relative(source, sitePackages) };
+  writeFileSync(join(venv, "bin/engine-launch"), `#!/bin/sh\n'''exec' ${quoted} "$0" "$@"\n' '''\n${body}`, { mode: 0o755 });
+  return { root, source, sitePackages: relative(source, sitePackages), python };
 }
 
 function copy(source, scratch) {
@@ -185,7 +186,59 @@ test("the helper refuses a linked bin directory without writing through it", nee
   assert.deepEqual(snapshot(source), before);
 });
 
-test("the helper refuses a scratch or repository path holding a quote, backslash, or line break, without writing", (t) => {
+test("a virtualenv under a directory holding a quote keeps console scripts that run", needsPython, (t) => {
+  const { root, source } = fixture(t, { venvPath: "apps/it's-app/.venv" }) ?? {};
+  if (!source) return;
+  const scratch = copy(source, join(root, "scratch copy"));
+  const result = prepare(source, scratch);
+  assert.equal(result.status, 0, result.stderr);
+  const venv = join(scratch, "apps/it's-app/.venv");
+  for (const file of ["engine-where", "engine-launch"]) {
+    const console = run(join(venv, "bin", file));
+    assert.deepEqual(console.stdout.trim().split("\n"), [join(scratch, "src/engine/__init__.py"), venv], `${file}: ${console.stderr}`);
+  }
+  assert.equal(check(scratch).status, 0, check(scratch).stderr);
+});
+
+test("the helper rewrites a repository path that Python wrote with JSON or ASCII escapes", needsPython, (t) => {
+  const sourceName = "source-\u00e9\u30e6\u{1f600}";
+  const { root, source, sitePackages } = fixture(t, { sourceName }) ?? {};
+  if (!source) return;
+  const escaped = (format, path) => spawnSync(systemPython, ["-c", `import json, sys; print(${format})`, path], { encoding: "utf8" }).stdout.trim();
+  for (const name of ["jsonfinder", "asciifinder"]) {
+    mkdirSync(join(source, name, name), { recursive: true });
+    writeFileSync(join(source, name, name, "__init__.py"), "");
+    writeFileSync(join(source, sitePackages, `_editable_impl_${name}.pth`), `import _editable_impl_${name}\n`);
+  }
+  // json.dumps escapes JSON text, which a finder reads with json; ascii() escapes a Python literal.
+  writeFileSync(join(source, sitePackages, "jsonfinder.json"), escaped("json.dumps({'path': sys.argv[1]})", join(source, "jsonfinder")));
+  writeFileSync(join(source, sitePackages, "_editable_impl_jsonfinder.py"), "import json, os, sys\nsys.path.append(json.load(open(os.path.join(os.path.dirname(__file__), 'jsonfinder.json')))['path'])\n");
+  writeFileSync(join(source, sitePackages, "_editable_impl_asciifinder.py"), `import sys\nsys.path.append(${escaped("ascii(sys.argv[1])", join(source, "asciifinder"))})\n`);
+  const scratch = copy(source, join(root, `${sourceName} copy`));
+  const result = prepare(source, scratch);
+  assert.equal(result.status, 0, result.stderr);
+  const imported = run(join(scratch, ".venv/bin/python"), ["-c", "import jsonfinder, asciifinder; print(jsonfinder.__file__); print(asciifinder.__file__)"]);
+  assert.deepEqual(imported.stdout.trim().split("\n"), [join(scratch, "jsonfinder/jsonfinder/__init__.py"), join(scratch, "asciifinder/asciifinder/__init__.py")], imported.stderr);
+  assert.match(prepare(source, scratch).stdout, /^Scratch Python ready: no change needed/);
+});
+
+test("the helper refuses a virtualenv path holding a control character, without writing", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scratch-python-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const directory of ["source", "scratch"]) {
+    const venv = join(root, directory, "apps/line\napp/.venv");
+    mkdirSync(join(venv, "lib/python3/site-packages"), { recursive: true });
+    writeFileSync(join(venv, "pyvenv.cfg"), "home = /usr/bin\n");
+    writeFileSync(join(venv, "lib/python3/site-packages/engine.pth"), `${join(root, "source/src")}\n`);
+  }
+  const before = snapshot(root);
+  const result = prepare(join(root, "source"), join(root, "scratch"));
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /^Scratch Python preparation failed: virtualenv path ".*apps\/line\\napp\/\.venv" holds a control character/);
+  assert.deepEqual(snapshot(root), before);
+});
+
+test("the helper refuses a scratch or repository path holding a quote, backslash, or control character, without writing", (t) => {
   const root = mkdtempSync(join(tmpdir(), "scratch-python-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const environment = (directory, repository) => {
@@ -193,7 +246,7 @@ test("the helper refuses a scratch or repository path holding a quote, backslash
     writeFileSync(join(directory, ".venv/pyvenv.cfg"), "home = /usr/bin\n");
     writeFileSync(join(directory, ".venv/lib/python3/site-packages/engine.pth"), `${join(repository, "src")}\n`);
   };
-  const cases = [["source", "it's copy"], ["source", 'say "hi"'], ["source", "back\\slash"], ["source", "line\nbreak"], ['source "q"', "scratch"]];
+  const cases = [["source", "it's copy"], ["source", 'say "hi"'], ["source", "back\\slash"], ["source", "line\nbreak"], ["source", "tab\there"], ['source "q"', "scratch"]];
   for (const [repository, scratch] of cases) {
     environment(join(root, repository), join(root, repository));
     environment(join(root, scratch), join(root, repository));
@@ -203,7 +256,7 @@ test("the helper refuses a scratch or repository path holding a quote, backslash
     const result = prepare(join(root, repository), join(root, scratch));
     assert.equal(result.status, 1, `${scratch}: ${result.stdout}`);
     // Bun's realpathSync fails on a path holding a backslash, so under Bun that refusal comes earlier, as ENOENT.
-    const reason = process.versions.bun && scratch.includes("\\") ? "ENOENT" : "holds a quote, backslash, or line break";
+    const reason = process.versions.bun && scratch.includes("\\") ? "ENOENT" : "holds a quote, backslash, or control character";
     assert.match(result.stderr, new RegExp(`^Scratch Python preparation failed: .*${reason}`));
   }
   assert.deepEqual(snapshot(root), before);
