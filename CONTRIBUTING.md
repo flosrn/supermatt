@@ -4,10 +4,10 @@ Bug reports, skill ideas, and pull requests are welcome. For a new skill or a la
 
 ## Set up
 
-Fork the repository and clone your fork. Install [lefthook](https://lefthook.dev) and [betterleaks](https://github.com/betterleaks/betterleaks), then turn on the git hooks. They scan commits for secrets and dashes, keep changelog edits under Unreleased, check commit messages, and run the tests before a push:
+Fork the repository and clone your fork. Install [lefthook](https://lefthook.dev), [betterleaks](https://github.com/betterleaks/betterleaks), and [tmux](https://github.com/tmux/tmux), then turn on the git hooks. They scan commits for secrets and dashes, keep changelog edits under Unreleased, check commit messages, and run the tests before a push. `tests/tui.test.sh` needs tmux, which CI installs too:
 
 ```
-brew install lefthook betterleaks
+brew install lefthook betterleaks tmux
 lefthook install
 ```
 
@@ -59,10 +59,10 @@ Run these checks before you open a pull request. CI runs them too:
 claude plugin validate --strict .
 claude plugin validate --strict ./skills
 for t in tests/*.test.sh; do sh "$t" || exit 1; done
-bun test tests/
+bun test --timeout=30000 tests/
 ```
 
-`bun test tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner. The local shell loop runs every `tests/*.test.sh` file and stops on the first failure, matching the pre-push hook. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`. `tests/changelog-unreleased.test.sh` tests `scripts/check-changelog-unreleased.sh`, the changelog guard that the pre-commit hook and CI run. `tests/dashes-whitespace.test.sh` tests `scripts/check-dashes-whitespace.sh`, the dash and whitespace check that CI's `lint` job runs. `tests/tui.test.sh` requires tmux and tests the `qa` terminal helper, including process-cleanup regressions on a private tmux server.
+`bun test --timeout=30000 tests/` runs the JavaScript tests, including PR discovery and monitoring state, recovery budgets, review snapshots, orchestration, scratch dependencies, QA scratch sources, plugin discovery, and evaluation controls. CI runs them with Node's built-in test runner, which has no per-test time limit. Bun's default limit is 5 seconds, which fails slow tests on a loaded host, so the command raises it to 30 seconds, the suite's longest explicit per-test timeout. The local shell loop runs every `tests/*.test.sh` file and stops on the first failure, matching the pre-push hook. `tests/link-skills.test.sh` tests `scripts/link-skills.sh` and syntax-checks the shell templates in `skills/`. `tests/mutate.test.sh` tests the `tdd` skill's mutation runner. `tests/release.test.sh` and `tests/directory-branch.test.sh` test the maintainer's `scripts/release.sh` and `scripts/directory-branch.sh`. `tests/changelog-unreleased.test.sh` tests `scripts/check-changelog-unreleased.sh`, the changelog guard that the pre-commit hook and CI run. `tests/dashes-whitespace.test.sh` tests `scripts/check-dashes-whitespace.sh`, the dash and whitespace check that CI's `lint` job runs. `tests/tui.test.sh` requires tmux and tests the `qa` terminal helper, including process-cleanup regressions on a private tmux server.
 
 `tests/scratch-copy.test.mjs` compares clone and forced-fallback copies with rsync and checks metadata exclusion, symlinks, modes, source isolation, and special files. `tests/tdd-scratch-commit.test.mjs` extracts and executes the `tdd` skill's documented shell blocks. It checks linked-worktree isolation with inherited Git variables and redirecting templates, force-tracked ignored files and deletions, successive mutant independence, and interrupted TEST cleanup.
 
@@ -80,13 +80,15 @@ Dash locations decode Git's quoted pathnames and ignore inter-hunk context setti
 
 The workflow also captures betterleaks stderr, which can relay Git warnings outside the scanner's finding redaction, and substitutes a content-free notice. Redacted findings on stdout remain visible; a scanner error still fails the job.
 
-CI runs the JavaScript tests with this command:
+Before you commit, trust this command: it runs the JavaScript tests the way CI does, with Node's test runner and CI's temporary directory:
 
 ```
-node --test tests/*.test.mjs
+TMPDIR=/tmp node --test tests/*.test.mjs
 ```
 
-`bun test tests/` and `node --test tests/*.test.mjs` each take about 3 to 3.5 minutes. Run each runner in its own tool call with a timeout of at least 10 minutes, never chained with the other checks or with each other. A red runner still blocks the commit, so check its exit status before you commit. Keep the runner's full output, unfiltered: the summary comes at the end, and Node prints it as `ℹ tests N`, `ℹ pass N`, and `ℹ fail N` lines, not as TAP `#` lines, so a filter for `# tests` finds nothing.
+CI's Ubuntu runner sets no `TMPDIR`, so its temporary files live in `/tmp`, and a test can pass on a Linux host whose `TMPDIR` points elsewhere, then fail in CI. On macOS, run `node --test tests/*.test.mjs` with your default `TMPDIR` instead: forcing `/tmp` there adds failures that CI never sees.
+
+`bun test --timeout=30000 tests/` and `node --test tests/*.test.mjs` each take about 3 to 3.5 minutes. Run each runner in its own tool call with a timeout of at least 10 minutes, never chained with the other checks or with each other. A red runner still blocks the commit, so check its exit status before you commit. Keep the runner's full output, unfiltered: the summary comes at the end, and Node prints it as `ℹ tests N`, `ℹ pass N`, and `ℹ fail N` lines, not as TAP `#` lines, so a filter for `# tests` finds nothing.
 
 The shell loop and pre-push hook need no TUI environment overrides. `tests/tui.test.sh` checks the exact spacing after the private-use folder glyph (U+F07B) using the pane's terminal settings. On Linux, `tui.sh` enables kernel tab expansion (`TAB3`): with `IUTF8` enabled, the kernel counts the glyph as one column and inserts seven spaces before `end`; without it, the kernel counts its three UTF-8 bytes and inserts five. This difference occurs before tmux renders the text, not in its `wcwidth` implementation. The suite also exercises the exact five-space case explicitly on Linux; other platforms keep the original five-space comparison. No space-count assertion is skipped in CI or locally.
 
