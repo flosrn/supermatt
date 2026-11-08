@@ -283,7 +283,8 @@ async function main() {
     report.cli = (await run(codex, ["--version"])).trim();
     const bare = (await run("git", ["-C", repo, "rev-parse", "--is-bare-repository"])).trim() === "true";
     report.sourceHead = (await run("git", ["-C", repo, "rev-parse", bare ? `${values.candidate}^{commit}` : "HEAD"])).trim();
-    report.sourceStatus = bare ? null : await run("git", ["-C", repo, "status", "--porcelain"]);
+    // No optional lock: a refresh would rewrite the checkout's index, and a run killed meanwhile leaves index.lock.
+    report.sourceStatus = bare ? null : await run("git", ["--no-optional-locks", "-C", repo, "status", "--porcelain"]);
     // Freeze both arms before the first model call, including an uncommitted
     // candidate. Editing the checkout during a long run cannot change its arm.
     // The selected corpus is checked against both before any run starts.

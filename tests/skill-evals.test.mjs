@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { grade, parseTrace, verdict, redact, selectCases, reviewResults, collectState, comparisonStatus, planComparison, absentResult } from "../scripts/lib/skill-evals.mjs";
-import { chmodSync, constants, copyFileSync, existsSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
+import { chmodSync, constants, copyFileSync, existsSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync, mkdirSync, realpathSync, statSync, utimesSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -257,6 +257,21 @@ test("CLI run against a baseline that predates the Cursor manifest installs it a
   const { summary, report } = stubRun(t, repo, beforeCursor, withSkill);
   assert.deepEqual([summary.error, summary.startedRuns], ["Native Codex auth is unavailable; no model calls started", 0]);
   assert.deepEqual([report.baselineAbsent, report.plannedRuns, report.absentRuns], [["babysit-feedback-first"], 6, 2]);
+});
+
+// The evaluator records the source checkout's status, and a killed run must not leave an index.lock
+// behind there: the status read takes no optional lock, so it never refreshes the index.
+test("CLI records the source status without rewriting the source index or leaving an index.lock", t => {
+  const { repo, beforeCursor, withSkill } = history(t);
+  const touched = join(repo, ".cursor-plugin", "plugin.json"), edited = join(repo, "skills", "qa", "SKILL.md");
+  const later = new Date(Date.now() + 60_000);
+  utimesSync(touched, later, later);
+  writeFileSync(edited, "---\nname: qa\n---\nedited\n");
+  const index = join(repo, ".git", "index"), state = () => ({ sha256: digest(readFileSync(index)), mtimeMs: statSync(index).mtimeMs }), before = state();
+  const { report } = stubRun(t, repo, beforeCursor, withSkill);
+  assert.equal(report.sourceStatus, " M skills/qa/SKILL.md\n");
+  assert.deepEqual(state(), before, "the source index was rewritten");
+  assert.equal(existsSync(join(repo, ".git", "index.lock")), false);
 });
 
 test("CLI cleanup reports only its own canaries while another evaluation's canary remains", t => {
