@@ -216,6 +216,10 @@ test("scratch containment reads the interpreter of a /bin/sh exec launcher scrip
   result = run(scratch);
   assert.equal(result.status, 1, result.stdout);
   assert.match(result.stderr, /shebang points outside scratch: .*\.venv\/bin\/engine -> .*\/copy'x\/python$/m);
+  writeFileSync(join(venv, "bin/engine"), launcher(`'${scratch}\nx/python'`));
+  result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.ok(result.stderr.includes(`shebang points outside scratch: ${join(venv, "bin/engine")} -> ${scratch}\nx/python`), result.stderr);
 });
 
 test("scratch containment permits system shebangs but not another virtualenv's link to a system interpreter", needsSystemPython, (t) => {

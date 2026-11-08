@@ -57,16 +57,19 @@ export function lockedSystemEntry(path, home) {
 // sh runs it, while Python reads it as the start of a string that the next line closes.
 export const LAUNCHER = "'''exec' ";
 
-// The first shell word of a line with its quoted and backslash-escaped parts unquoted, so a path written as
+// The first shell word of a text with its quoted and backslash-escaped parts unquoted, so a path written as
 // '/a/it'\''s copy' reads back as /a/it's copy, and the length of its written form.
 export function shellWord(line) {
   const [written] = line.match(/^(?:'[^']*'|"[^"]*"|\\.|[^\s'"\\])*/);
   return { word: written.replace(/'([^']*)'|"([^"]*)"|\\(.)/g, (_, single, double, escaped) => single ?? double ?? escaped), length: written.length };
 }
 
-// The interpreter a script's first lines name: the launcher's, or the #! line's first word.
+// The interpreter a script's first lines name: the launcher's, whose quoted path may span lines, or the #!
+// line's first word.
 export function scriptInterpreter(text) {
-  const [first, second = ""] = text.split(/\r?\n/);
+  const end = text.indexOf("\n");
+  const first = end === -1 ? text : text.slice(0, end);
   if (!first.startsWith("#!")) return null;
-  return second.startsWith(LAUNCHER) ? shellWord(second.slice(LAUNCHER.length)).word : first.slice(2).trim().split(/\s/)[0];
+  const rest = end === -1 ? "" : text.slice(end + 1);
+  return rest.startsWith(LAUNCHER) ? shellWord(rest.slice(LAUNCHER.length)).word : first.slice(2).trim().split(/\s/)[0];
 }
