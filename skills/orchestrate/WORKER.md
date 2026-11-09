@@ -63,12 +63,15 @@ Worktree: <absolute WT>; code and Git operations stay here.
 Phase: <current phase and session letter>.
 Approval scope: <the user's actual delegated actions and restrictions for this phase>.
 Use only `orchestrate`'s delegated commands and model-invoked dependencies. Preserve the called skills' safety and mandatory human-consent gates. Stop and report any action outside this scope; the coordinator cannot supply separate human consent.
+Finish cleanup: <FINISH_MODE or legacy, from coordinator state>. Cleanup is coordinator-owned: return evidence without offering cleanup, calling `worktree_finish`, or answering its final consent question. In FINISH_MODE, retain shipped issue/repair worktrees and local branches unchanged until the operator's end-of-run choice; remote-branch, general process, and container cleanup are outside this finish scope. Only the coordinator handles temporary spec/non-READY triage removal. This narrower scope takes precedence over a generic safe-action permission to remove a worktree or branch.
 Resources and tracker: <current resource ownership; tracker configuration; for local Markdown, the absolute paths and ownership rules from LOCAL.md>.
 Prior evidence: <relevant handoffs, decisions, unresolved questions, full findings and QA/review reports with checked commits and retained artifact paths, plus intervening changes>.
 Recovery history: <attempts, outcomes, remaining limits, and shipping record when applicable>.
 ```
 
 Use explicit `none yet` only when no prior evidence or recovery history exists. Missing evidence is `unavailable: <reason>`, never a clean result. Include enough source evidence in the prompt or readable absolute artifact paths for a fresh context to continue without relying on another session's memory. A retry or restart keeps the same decisions, findings, and recovery budget. Set the approval scope from the user's authorization and the current phase, not from a worker recommendation or the mere fact that an action stays inside WT. Verification and retro are read-only; any later authorized tracker-writing phase receives its own updated scope.
+
+On OMP, the finish extension recognizes the exact assignment line ``This worker is assigned by the user's explicit `orchestrate` invocation.`` inside DISPATCH, after TASK and the blank line. It does not require that line at the start of the whole prompt. Keep the line unchanged in every dispatch, including shipping, Retro, and restarted sessions, so workers stay silent about cleanup. Keep the skill command first in TASK. `worktree_finish` scope and readiness belong to the coordinator, never to a worker's completed turn.
 
 **Send the prompt**: translate the task's skill command using KIND and [Skill notation](SKILL.md#skill-notation). Put the complete task text in TASK and the populated shared preamble in DISPATCH, then send:
 
