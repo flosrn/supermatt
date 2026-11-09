@@ -17,7 +17,9 @@ When no fresh subagent can start, follow [code-review step 5](../code-review/SKI
 
 Both forms confine writes to the copy and `$DIR` with no network (Codex's workspace sandbox; Claude's `--restricted` plus its OS sandbox); the Codex form also closes `/tmp` and the inherited `TMPDIR`. If a sandbox cannot start, report the QA gap rather than broadening permissions. Give no tracker or GitHub access; the copy has no `.git` to push from. Before the reader starts, copy the trusted, installed [repository snapshot helper](../code-review/scripts/snapshot-tree.mjs) to `$DIR/snapshot-tree.mjs`. From the real repository root, run `node "$DIR/snapshot-tree.mjs" "<repo>" > "$DIR/tree.before"` (Bun: `bun --no-env-file`) and require exit status zero before starting the reader. This captures `HEAD`, status, separate binary-capable working-tree and staged diffs, and nonignored untracked contents. Afterward, run the same helper into `$DIR/tree.after` and require exit status zero before running `cmp "$DIR/tree.before" "$DIR/tree.after"`. A snapshot failure or comparison error is incomplete coverage, never proof of unchanged state. Then run `node <this file's directory>/scripts/scratch-sources.mjs verify <repo> "$DIR/scratch" "$DIR"`, which prints each source in the manifest whose content, type, executable bits, or link target changed in the copy or went missing from either tree, each deleted path the copy recreated, and each entry it cannot read. Report any real-tree difference or any line from the source comparison as a QA failure of the run, not of the change, and name the reader as a same-family fallback.
 
-QA runs before `code-review`: once QA shows the change does what was asked, the review can spend itself on how the code is written and how it fails.
+The networkless fallback still reads the repository QA convention below. For any authorized live-service scenario due at the current stage that it cannot reach, report an independence/network gap with the command or surface needed and a **Passes with gaps** verdict unless another scenario fails. Run the reachable scenarios; keep the sandbox boundary rather than enabling network access or silently dropping coverage.
+
+QA due before merge runs before `code-review`: once those scenarios show the change does what was asked, the review can spend itself on how the code is written and how it fails. Report any required post-deploy QA separately as pending.
 
 QA reports to its caller and leaves the code and the issue tracker as it found them: it files, comments on, and labels no issue, since a fail in unmerged work is the caller's to fix, not a ticket. Scratch state, scenario lists, reports, screenshots, and raw evidence go in `$DIR`, a fresh `mktemp -d` in the OS temporary directory outside the repository. Return the report to the caller with paths to retained evidence there. Saving or committing QA artifacts in the repository requires an explicit user request; callers keep them out of the repository when handing off or shipping the work, though a caller may copy the evidence a report cites to its own durable directory outside the repository. The caller fixes each fail, test-first, and runs QA again.
 
@@ -28,6 +30,8 @@ QA reports to its caller and leaves the code and the issue tracker as it found t
 The change is the diff since a fixed point: the one the caller or user names; else the default branch, when `HEAD` is on another branch; else `HEAD`, when the default branch has uncommitted work. Write the diff to disk with `git diff <fixed-point> > "$DIR/diff.patch"` and read that file in full: a shell hook can shorten a diff printed to the terminal, and a redirected one lands on disk whole. Read large files in bounded windows, keeping the combined output of each tool response below the host's limit. Advance to the next window only after the current one is complete; reread a truncated window in smaller parts. Also read each untracked file `git status --short` lists.
 
 The request is what the change was meant to do: the spec or issue the caller passes, else the issue its commits reference, else the request settled in this conversation. With none, ask.
+
+Before writing scenarios, read `docs/agents/qa.md` from the repository root when it exists, and follow the protocols it references for the affected change. This optional convention can define authorized surfaces, accounts and paid commands, budgets, stop rules, forbidden effects, role-play agents, and whether scenarios run before merge or after deploy. Without it, keep this skill's existing defaults. If it exists but cannot be read, report the affected coverage as blocked rather than assuming authorization. Its authorization overrides only the generic live-account blocking rule in step 3, not higher-priority safety rules, required approvals, or execution sandbox boundaries.
 
 For a follow-up with a prior report and its tested commit, inspect the intervening diff. Rerun the earlier fails, scenarios affected by the fix, and one adjacent regression flow. Carry forward unaffected passes and blocked scenarios with their original evidence and tested commit; a gap stays blocked until observed. Expand only where the diff, a new failure, or an explicit repository requirement makes earlier evidence invalid. Without a usable prior report, run the full pass. A test-only or report-only diff with unchanged runtime code and configuration keeps the earlier browser verdict.
 
@@ -45,13 +49,15 @@ A **scenario** is one thing a user does and the result they should then see: the
 
 Above the scenarios, list the change's invariants under **Never and always**: what must never happen (data lost, a file left half-written, a secret in a log) and what must always hold (the terminal restored, the old data still readable). Check them after every scenario, the unhappy ones most of all.
 
+Apply the convention's timing to each scenario. Run scenarios due at the current stage; list those explicitly required after deploy as **Post-deploy QA obligations**, with their deployment trigger, command or procedure, limits, and expected evidence. Timing alone is neither a blocked scenario nor a pass: these obligations remain pending until observed after the named deployment. Do not defer a scenario the convention requires before merge.
+
 For a change meant to keep behavior (a refactor), the expected result is the base build's screen. Create the export directory and export the base commit with `mkdir -p "$DIR/base" && git archive <base> | tar -x -C "$DIR/base"` and build it there with a private dependency directory and generated caches. Prepare dependencies with the base's lockfile and repository commands inside the export. Before comparing a scenario, confirm the base renders its normal screen; a server URL that answers with a runner error is a blocked comparison, with its startup evidence. A `git worktree` shares `.git/hooks` with the main checkout, so a dependency install in one runs the old commit's `prepare` script and rewrites the main checkout's hooks. Drive both builds with the same keys, from folders with the same name and the same seeded state, and diff the captures. Mask only what changes on every run, such as a clock.
 
 Done when every requirement and every changed user-reachable path maps to at least one scenario.
 
 ### 3. Launch the program
 
-Use the repository's own build and start commands (its README, `package.json` scripts, `Makefile`, or `--help`) when a current build or preview is not already available and verified. Point it at scratch state: a directory under `$DIR`, a test database, a seeded test account, a local server. A scenario that can only run against real user data, a production service, or a live account is **blocked**: name what it needs and move on.
+Use the repository's own build and start commands (its README, `package.json` scripts, `Makefile`, or `--help`) when a current build or preview is not already available and verified. Point it at scratch state: a directory under `$DIR`, a test database, a seeded test account, a local server. A scenario that can only run against real user data, a production service, or a live account is **blocked** unless `docs/agents/qa.md` explicitly authorizes its surface, account, or command. Run authorized scenarios within the convention's budget, stop rules, and forbidden-effect limits, including paid commands; being live or paid alone does not block them. Missing access, a required approval, an exhausted budget, or infrastructure failure still blocks a scenario: name what it needs and move on. Authorization for one surface or effect does not extend to another.
 
 Pick the driver by the program's interface:
 
@@ -61,7 +67,9 @@ Pick the driver by the program's interface:
 
 ### 4. Run the required scenarios
 
-Run every scenario on an initial pass; on a follow-up, run those selected in step 1 and retain the others with their prior evidence. Do each step as the user would: type the command, press the keys, click, fill in the form, submit. After each step, read what the program shows and compare it with the expected result. Check the logs, stderr, and browser console for errors on every scenario you run, passing ones too.
+Run every scenario due at the current stage on an initial pass; on a follow-up, run those selected in step 1 and retain the others with their prior evidence. Do each step as the user would: type the command, press the keys, click, fill in the form, submit. After each step, read what the program shows and compare it with the expected result. Check the logs, stderr, and browser console for errors on every scenario you run, passing ones too.
+
+When the convention names role-play subagents, the independent QA context writes their briefs from the request and convention, spawns them through the host's subagent mechanism, and judges their raw output against the scenarios and oracles below. Require each player to retain verbatim interactions and command results in `$DIR`; read that evidence yourself rather than accepting the player's verdict. The implementing session neither writes the role-play briefs nor judges the output. If no independent QA context or required player can start, report the affected scenarios as an independence/capability gap rather than having the implementing session fill those roles.
 
 Judge each result with the FEW HICCUPPS oracles as well as the request. A result that matches the request still fails when it contradicts the rest of the product (a sibling command names its flags, keys, or exit codes another way), the program's own claims (`--help`, the README, its error text), or the conventions of its platform and of comparable tools (`NO_COLOR`, `-` for stdin, a 4xx status for a bad request). An error message passes when it names the bad input and what to do next.
 
@@ -76,9 +84,9 @@ Record each scenario in `$DIR/scenarios.md` as **pass**, **fail**, or **blocked*
 
 A fail ends that scenario, not the run.
 
-Once every scripted scenario has a status, run one exploratory charter on the riskiest part of the change: "Explore <target> with <resources> to discover <information>", for about twenty actions. On a follow-up, keep exploration within the fix and its adjacent regression flow. Add each problem it finds to `$DIR/scenarios.md` as a new scenario with its status.
+Once every scenario due at this stage has a status, run one exploratory charter on the riskiest part of the change: "Explore <target> with <resources> to discover <information>", for about twenty actions, within the same authorization and timing limits. On a follow-up, keep exploration within the fix and its adjacent regression flow. Add each problem it finds to `$DIR/scenarios.md` as a new scenario with its status.
 
-Done when every scenario has a status and its evidence.
+Done when every scenario due at this stage has a status and its evidence, and every post-deploy obligation is recorded separately.
 
 ### 5. Clean up and report
 
@@ -88,9 +96,12 @@ Report one line per scenario (status, what it checked, the evidence or its path)
 
 - **Not covered**: what no scenario tested and why, such as a platform, a browser, or a terminal you did not run.
 - **Concerns**: what is neither a pass nor a fail but looked wrong, such as a slow first load or a stray warning. A result that contradicts a sentence of the request is a fail, also when that sentence calls the path unchanged or out of scope.
+- **Post-deploy QA obligations**: each pending scenario, its deployment trigger, command or procedure, limits, and expected evidence. Return these to the caller even when no scenario is due before merge. They are not observed passes or blocked merely because deployment is pending.
 
 Then the verdict:
 
 - Any fail: **Fails QA**.
 - Otherwise, any blocked scenario: **Passes with gaps**, naming each blocked scenario and what it needs.
 - Otherwise: **Passes QA**.
+
+The verdict covers only scenarios due at the current stage. When post-deploy obligations remain, append **Post-deploy QA pending** and name them; do not present the whole change as fully verified.

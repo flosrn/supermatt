@@ -1,6 +1,6 @@
 ---
 name: setup-supermatt-skills
-description: "Configure this repo for the engineering skills: set up its issue tracker, triage and tier labels, domain doc layout, and external peer policy. Run once before first use of the other engineering skills."
+description: "Configure this repo for the engineering skills: set up its issue tracker, triage and tier labels, domain doc layout, external peer policy, and optional QA convention. Run once before first use of the other engineering skills."
 disable-model-invocation: true
 license: MIT
 ---
@@ -13,6 +13,7 @@ Scaffold the per-repo configuration that the engineering skills assume:
 - **Triage and tier labels**: the strings used for the seven canonical triage roles (two category, five state) and three separate tier roles
 - **Domain docs**: where `GLOSSARY.md` and ADRs live, and the consumer rules for reading them
 - **External peers**: whether `code-review` and `jury` stay on the current host or call a configured Claude, Codex, Cursor Agent, or OMP CLI
+- **QA convention** (optional): a place for repository-specific QA authorization, role-play agents, limits, and timing
 
 This is a prompt-driven skill, not a deterministic script. Explore, present what you found, confirm with the user, then write.
 
@@ -25,7 +26,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `git remote -v` and `.git/config`: is this a GitHub repo? Which one?
 - `AGENTS.md` and `CLAUDE.md` at the repo root: does either exist? Is there already an `## Agent skills` section in either?
 - Resolve glossary, map, and ADR paths from an existing `docs/agents/domain.md` first, using its selected layout rather than unused template examples. Preserve configured paths even before the files exist. Where unset, follow domain paths referenced by the repo's existing instructions and discover `GLOSSARY.md`, `GLOSSARY-MAP.md`, their legacy names `CONTEXT.md` and `CONTEXT-MAP.md`, and existing ADR directories such as `docs/adr/` and `src/*/docs/adr/`. Read any map for its per-context paths. Preserve discovered names; use default names only where neither configuration nor existing files supply a path. If candidates conflict, resolve the choice in Section C. Offer a rename only as a second option, and before any approved rename, find and update its references.
-- `docs/agents/`: does this skill's prior output already exist, including `cross-model.json`?
+- `docs/agents/`: does this skill's prior output already exist, including `cross-model.json` and the optional `qa.md`?
 - `.scratch/`: a sign that a local-markdown issue tracker convention is already in use
 - Monorepo signals: a `pnpm-workspace.yaml`, a `workspaces` field in `package.json`, or a populated `packages/*` with its own `src/`. These are present only in a genuinely large multi-package repo; their absence means single-context, which is almost every repo.
 - Installed peer commands: `claude`, `codex`, `agent`, and `omp`. Check only whether each command exists. Do not make a paid authentication or quota probe.
@@ -73,12 +74,15 @@ Preserve `auto` by default. Recommend `host-only` when the requested executable 
 
 Before the user chooses Cursor, explain that Ask mode prevents agent edits but inherits local and repository rules, MCP, plugins, executable hooks, and persistent session storage. Before the user chooses OMP, explain that it receives only the prepared evidence bundle and disables repository tools, but cannot fully isolate inherited configuration or MCP and cannot inspect omitted repository evidence.
 
+**Section E: QA convention (optional).** Preserve an existing `docs/agents/qa.md` unchanged. Otherwise offer to create an empty file (default: **no**) for the user to fill with authorized surfaces or commands, budgets, stop rules, forbidden effects, role-play agents, and before-merge or post-deploy timing. An empty file grants no authorization and changes no QA behavior. Do not infer permissions or spend limits from the repository's tools or accounts.
+
 ### 3. Confirm and edit
 
 Print the drafts as text in your reply, then ask whether to write them:
 
 - The `## Agent skills` block to add to whichever of `CLAUDE.md` / `AGENTS.md` is being edited (see step 4 for selection rules)
 - The contents of `docs/agents/issue-tracker.md`, `docs/agents/domain.md`, `docs/agents/triage-labels.md`, and `docs/agents/cross-model.json`
+- `docs/agents/qa.md` as an empty file, only if Section E selected creation
 
 A file taken from its template as-is drafts as its name plus the lines you filled in (the repo slug, selected label mappings, resolved domain layout and paths). Done when every file Step 4 will write has its draft printed above the question. Write after the user answers.
 
@@ -131,8 +135,10 @@ When a `docs/agents/` file already exists, diff it against its template. Take th
 
 For `docs/agents/cross-model.json`, require the exact seed shape with every profile present. `mode` accepts only `auto`, `host-only`, `claude`, `codex`, `cursor`, or `omp`. Reject unknown or missing keys. Every `model` is either `null` or a nonempty string. Claude, Codex, and OMP `effort` is either `null` or a nonempty string. Cursor has no `effort` key. Preserve a valid existing file on reruns unless the user changes Section D answers. If the existing file is invalid, draft the seed with the user's answers instead.
 
+Create `docs/agents/qa.md` empty only when approved in Section E, and leave an existing file's contents untouched. This optional convention has no seed permissions or template to merge. When it exists or is being created, add a `### QA` subsection to the chosen `## Agent skills` block pointing to `docs/agents/qa.md` for the repository's QA convention; otherwise omit that subsection.
+
 For "other" issue trackers, write `docs/agents/issue-tracker.md` from scratch using the user's answers, under the same headings as the GitHub template.
 
 ### 5. Done
 
-Tell the user the setup is complete and which engineering skills will now read from these files. Mention they can edit `docs/agents/*.md` and `docs/agents/cross-model.json` directly later; re-running this skill is only necessary if they want to repeat the guided setup or restart from scratch.
+Tell the user the setup is complete and which engineering skills will now read from these files. Mention they can edit `docs/agents/*.md` and `docs/agents/cross-model.json` directly later; re-running this skill is only necessary if they want to repeat the guided setup or restart from scratch. If `qa.md` exists, explain that `qa` reads it before writing scenarios and `implement` carries its post-deploy QA obligations into the final message; a newly created empty file leaves the existing QA defaults in force.
