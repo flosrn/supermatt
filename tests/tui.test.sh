@@ -313,7 +313,15 @@ out="$(sh "$TUI" wait qa-t "got -hello" 5)" || fail "wait did not see the answer
 sh "$TUI" gone qa-t ready 5 >/dev/null || fail "gone did not see ready go"
 
 sh "$TUI" wait qa-t "not on screen" 5 >/dev/null 2>&1 && fail "wait passed after the program exited"
-[ "$(tmux display -p -t qa-t '#{pane_dead_status}')" = 3 ] || fail "the pane did not keep the exit status"
+tries=100
+while :; do
+  status=$(tmux display -p -t qa-t '#{pane_dead_status}') || fail "could not read pane exit status"
+  [ -z "$status" ] || break
+  [ "$tries" -gt 0 ] || fail "pane exit status did not become observable"
+  sleep 0.1
+  tries=$((tries - 1))
+done
+[ "$status" = 3 ] || fail "the pane did not keep the exit status: $status"
 
 sh "$TUI" stop qa-t
 tmux has-session -t qa-t 2>/dev/null && fail "stop left the session"
