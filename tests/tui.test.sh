@@ -81,13 +81,18 @@ line" " 	 spaced " '雪' '$(touch injected); * `false` $HOME \"'
 printf '%s\0' "$@" >"$TMP/argv.expected"
 sh "$TUI" start qa-argv 80 24 sh -c 'printf "%s\0" "$@" >"$0"; exit 7' "$TMP/argv.actual" "$@" \
   || fail "argument recorder did not start"
+# tmux 3.4 can report pane_dead when the PTY closes, before SIGCHLD makes
+# pane_dead_status available. Wait for the status itself, not just PTY EOF.
 tries=100
-while [ "$(tmux display -p -t qa-argv '#{pane_dead}')" != 1 ] && [ "$tries" -gt 0 ]; do
+while :; do
+  status=$(tmux display -p -t qa-argv '#{pane_dead_status}') || fail "could not read argument recorder exit status"
+  [ -z "$status" ] || break
+  [ "$tries" -gt 0 ] || fail "argument recorder exit status did not become observable"
   sleep 0.1
   tries=$((tries - 1))
 done
 cmp "$TMP/argv.expected" "$TMP/argv.actual" || fail "start changed argument bytes"
-[ "$(tmux display -p -t qa-argv '#{pane_dead_status}')" = 7 ] || fail "argument recorder lost its exit status"
+[ "$status" = 7 ] || fail "argument recorder lost its exit status: $status"
 for launch in "$TMP"/tui-launch.*; do
   [ ! -e "$launch" ] || fail "argument recorder left its launch script behind"
 done
