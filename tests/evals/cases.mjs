@@ -389,6 +389,98 @@ export const cases = [
     rubric: ["In situation 1, B does not run its tests while A's live process still holds app_test, port 4100 and /shared/build; A holding the merge slot does not make that overlap safe, because the slot serializes integration, not the use of mutable resources before integration.", "In situation 1, B waits for verified release of those resources (A's process exited and the database, port and build directory are free) or for verified distinct targets, rather than for a status claim or for the merge slot itself.", "In situation 2, B may run its tests now against its verified distinct database, port and build directory although A still holds the merge slot; only B's integration waits for the slot. Refusing or serializing B's tests in this situation fails this item.", "C stays eligible for independent work in both situations; neither A's merge slot nor the A/B conflict blocks it. Naming the merge-slot distinction without these per-situation decisions does not pass."],
   },
   {
+    id: "spec-label-dispatch", skill: "implement-spec", unchanged: true,
+    files: {
+      "dispatch.json": JSON.stringify({
+        checkoutRemotes: { origin: "https://github.com/example-org/client.git", upstream: "https://github.com/example-org/client-upstream.git" },
+        trackerConvention: "Reuse existing tracker claims and reconcile active owners. No claim-comment protocol is configured.",
+        tickets: [
+          { url: "https://github.example.test/example-org/service/issues/41", proposedWorker: "worker-new", graphOwner: null, issueRead: { exitCode: 0, labels: [] }, labelRead: { exitCode: 0, complete: true, pages: [["bug"], ["in-progress", "In Progress"]] }, labelWrite: null },
+          { url: "https://github.example.test/example-org/service/issues/42", proposedWorker: "worker-second", graphOwner: "worker-original", runningAgents: ["worker-original", "worker-original/helper"], issueRead: { exitCode: 0, labels: ["in-progress"] }, labelRead: { exitCode: 0, complete: true, names: ["in-progress"] } },
+          { url: "https://github.example.test/example-org/service/issues/43", execution: "sequential fallback, no worker capability", graphOwner: null, issueRead: { exitCode: 0, labels: [] }, labelRead: { exitCode: 0, complete: true, names: ["in-progress"] }, labelWrite: null },
+        ],
+      }, null, 2) + "\n",
+    },
+    prompt: "Apply only implement-spec dispatch planning to dispatch.json. Report each ticket's next decision, task-graph ownership record, worker and nested-agent instructions, and exact proposed gh read/write commands with resolved repository values. For #41 and #43, distinguish current evidence from a later confirmed successful label write and state when code edits could begin. This is report-only: leave files unchanged, do not run gh, use the network, mutate a tracker, create worktrees, or launch agents.",
+    rubric: [
+      "Issue and label-edit commands explicitly use -R github.example.test/example-org/service (or a shell variable explicitly assigned that value), not either checkout remote or an ambient default. The repository-label API read resolves HOST=github.example.test and OWNER_REPO=example-org/service, uses gh api --hostname with repos/$OWNER_REPO/labels?per_page=100, and requires successful complete pagination before concluding absence.",
+      "For #41 the coordinator proposes adding the exact existing in-progress label, for example gh issue edit 41 -R github.example.test/example-org/service --add-label in-progress; the second page counts, and it neither creates a label nor selects In Progress.",
+      "The report distinguishes successful reads from the still-unperformed writes: #41 and #43 do not begin implementation until their label writes succeed, and success is not claimed from proposed commands alone.",
+      "The coordinator records worker-new as #41's single task-graph owner before dispatch and retains sole label-write responsibility; the worker and its nested agents do not repeat ownership or label writes. It honors configured tracker claims without inventing a claim-comment protocol.",
+      "For #42 the existing label is presence, not an exclusive lock newly acquired by this run; worker-original and its live helper require ownership reconciliation before duplicate worker-second dispatch.",
+      "Sequential fallback #43 records the coordinator as the single implementation owner and completes the same label gate before its first code edit; missing worker capability does not bypass the gate.",
+    ],
+  },
+  {
+    id: "spec-label-failures", skill: "implement-spec", unchanged: true,
+    files: {
+      "observations.json": JSON.stringify({
+        repo: "github.com/example-org/service",
+        tickets: [
+          { issue: 51, labelRead: { exitCode: 0, complete: true, names: ["bug"] }, issueRead: { exitCode: 0, labels: [] } },
+          { issue: 52, labelRead: { exitCode: 0, complete: true, names: ["In Progress", "in_progress", "in-progress-review"] }, issueRead: { exitCode: 0, labels: [] } },
+          { issue: 53, labelRead: { exitCode: 4, stderr: "Authentication required" } },
+          { issue: 54, labelRead: { exitCode: 1, stderr: "HTTP 503 reading repository labels" } },
+          { issue: 55, labelRead: { exitCode: 0, complete: true, names: ["in-progress"] }, issueRead: { exitCode: 1, stderr: "HTTP 502 reading issue" } },
+          { issue: 56, labelRead: { exitCode: 0, complete: true, names: ["in-progress"] }, issueRead: { exitCode: 0, labels: [] }, coordinatorLabelWrite: { exitCode: 1, stderr: "HTTP 403 adding issue label" } },
+          { issue: 57, labelRead: { exitCode: 0, complete: false, names: ["bug"], nextPage: 2 }, issueRead: { exitCode: 0, labels: [] } },
+        ],
+        taskGraph: { owners: {}, runningAgents: [] },
+        localTicket: { id: "LOCAL-7", tracker: "local", path: "tasks/LOCAL-7.md", status: "ready" },
+      }, null, 2) + "\n",
+    },
+    prompt: "Apply only the label/dispatch gate to observations.json. For every ticket report the recorded label outcome, whether implementation may start, who owns the next action, and any prerequisite. Give exact proposed repo-qualified gh commands where a GitHub check or action is needed, but do not execute them. This is a report-only probe: do not edit or create files, call gh, access the network, contact any tracker, or launch workers. Treat supplied observations as captured responses, not live actions you performed.",
+    rubric: [
+      "#51 and #52 record the exact in-progress label as absent and may proceed under normal single-owner dispatch rules; near matches on #52 do not count, and neither case proposes creating or adding a nonexistent label.",
+      "#53 authentication failure and #54 repository-label read failure are failed/unknown, not absence or success, and each blocks code edits pending resolution.",
+      "#55 issue-read failure blocks code edits despite confirmed repository label existence, and #56 failed label write is not recorded as successful acquisition or allowed to proceed with code edits.",
+      "#57 is unknown, not absent: a successful but incomplete first page does not authorize code edits. A successful complete paginated read is required before deciding whether the exact label exists.",
+      "Issue and label-edit commands carry -R github.com/example-org/service (or a variable explicitly assigned that value); API label reads explicitly use --hostname github.com and repos/example-org/service/labels with complete pagination. Recovery remains the coordinator's responsibility, not worker or nested-agent writes.",
+      "LOCAL-7 follows the local tracker's state/ownership convention without gh commands or a GitHub-label prerequisite; it is not treated as a failed GitHub lookup.",
+      "The report neither performs tracker actions nor claims the supplied captured responses were commands it executed.",
+    ],
+  },
+  {
+    id: "spec-label-lifecycle", skill: "implement-spec", unchanged: true,
+    files: {
+      "lifecycle.json": JSON.stringify({
+        repo: "github.com/example-org/service",
+        trackerConvention: "The coordinator or authorized shipping owner removes in-progress when closing completed work or releasing an abandoned claim.",
+        singleIntegrationPR: {
+          mode: "single integration PR", defaultBranch: "main",
+          tickets: [
+            { issue: 61, event: "worker completed; nested agents stopped", issueState: "OPEN", label: "in-progress", graphOwner: "worker-a" },
+            { issue: 62, event: "worker branch merged into integration branch; QA running", issueState: "OPEN", label: "in-progress", graphOwner: "worker-b" },
+            { issue: 63, event: "QA passed; review running", issueState: "OPEN", label: "in-progress", graphOwner: "worker-c" },
+            { issue: 64, event: "review passed; integration draft PR ready; shipping handoff requested", prBase: "main", prMerged: false, issueState: "OPEN", label: "in-progress", labelOutcome: "attached, write exit 0", graphOwner: "worker-d" },
+            { issue: 65, event: "integration PR merge into default branch main verified", issueState: "OPEN", label: "in-progress", graphOwner: "worker-e" },
+            { issue: 66, event: "integration PR merge into default branch main verified; issue closure confirmed", issueState: "CLOSED", label: "in-progress", graphOwner: "worker-f", runningAgents: [] },
+            { issue: 67, event: "caller explicitly abandoned work", issueState: "OPEN", label: "in-progress", graphOwner: "worker-g", runningAgents: ["worker-g/helper"] },
+            { issue: 68, event: "caller explicitly abandoned work; worker and nested agents confirmed stopped; claim release confirmed", issueState: "OPEN", label: "in-progress", graphOwner: null, runningAgents: [] },
+            { issue: 69, event: "run paused by caller while blocked on credentials; agents stopped", issueState: "OPEN", label: "in-progress", graphOwner: "worker-i", runningAgents: [] },
+          ],
+        },
+        onePRPerTicket: {
+          mode: "one PR per ticket", defaultBranch: "main", integrationBranchPurpose: "combined verification only, no integration PR",
+          tickets: [
+            { issue: 71, event: "own ticket PR merge into default branch main verified; own issue closure confirmed", issueState: "CLOSED", label: "in-progress", graphOwner: "worker-j", runningAgents: [] },
+            { issue: 72, prerequisites: [71], event: "prerequisite #71 shipped; own work integrated and QA passed; own PR still under review", prMerged: false, issueState: "OPEN", label: "in-progress", graphOwner: "worker-k" },
+            { issue: 73, event: "worker completed; integration QA running; own ticket PR not merged", prMerged: false, issueState: "OPEN", label: "in-progress", graphOwner: "worker-l" },
+          ],
+        },
+      }, null, 2) + "\n",
+    },
+    prompt: "Apply only implement-spec label lifecycle and shipping-handoff rules to lifecycle.json. For every issue in both PR modes report retain or remove, the responsible actor, and missing prerequisites. State what the shipping handoff must record. Give exact proposed repository-qualified gh commands for eligible removals and necessary closure checks, distinguishing proposed actions from supplied observations. This is report-only: do not run gh, use the network, mutate a tracker, edit files, launch or stop agents, merge, close issues, or ship anything.",
+    rubric: [
+      "In single integration PR mode, #61 through #64 retain in-progress across worker completion, integration merge, QA, review, ready draft and shipping handoff; none of those events closes the issue or releases the label.",
+      "#65 retains the label until actual issue closure is confirmed after the verified default-branch merge; merge alone is not reported as confirmed closure. #66 is eligible for removal by the coordinator or authorized shipping owner after the captured merge and closure, not by a worker merely because it finished.",
+      "#67 retains the label until its live helper is stopped and the configured claim released; #68 is eligible because explicit abandonment, stopped worker/nested agents and released ownership are confirmed. #69 remains paused/blocked, not abandoned, and keeps the label and claim despite stopped agents.",
+      "In one PR per ticket mode, #71's own verified default-branch merge and confirmed issue closure make only #71 eligible for removal. Its dependent #72 keeps its label while its own PR is under review; #73 keeps its label through combined QA and shipping. It neither waits for every dependent to ship before releasing #71 nor releases dependents with their prerequisite.",
+      "The shipping handoff names the lifecycle owner and carries the canonical repository, each ticket and its label outcome; the authorized shipping owner inherits cleanup responsibility without an early label removal or duplicate worker writes.",
+      "Eligible removal proposals use gh issue edit for 66, 68 and 71 with --remove-label in-progress and explicit -R github.com/example-org/service (or a variable explicitly assigned that value); issue reads are likewise repo-qualified, API reads resolve the hostname and repository path explicitly, and no removal or closure is claimed as executed.",
+    ],
+  },
+  {
     id: "spec-per-ticket-plan", skill: "implement-spec", unchanged: true,
     files: {
       "spec.md": "# Spec #50: Image pruning\n\nShipping requirement: each ticket ships as its own pull request against main, reviewed and merged separately. Do not combine tickets into one pull request.\n\nTickets: #51, #52, #53.\n",
