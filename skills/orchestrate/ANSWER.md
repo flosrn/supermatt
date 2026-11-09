@@ -4,12 +4,13 @@
 
 Never approve removing a worktree this run did not create, even when it is clean or inside the checkout.
 
-An action is safe when everything it deletes, overwrites, or rewrites is inside the repo checkout, or it is one of these:
+An action is safe when everything it deletes, overwrites, or rewrites is inside the repo checkout or the lane's WT, which `tern-wt` mode places outside the repo, or it is one of these:
 
 - Clear a cache that rebuilds itself: a subfolder of `~/.cache`, or a package manager's own clean command (`bun pm cache rm`, `npm cache clean`).
 - Remove a `mktemp -d` directory that the worker made in this run, under `$TMPDIR` or `/tmp`. Before you answer, read the path it names and list the directory.
 - Remove a git worktree only through [Remove the worktree](SKILL.md#lanes), including its ownership, process-exit, clean-tree, plain-removal-first, and conditional submodule-removal checks. Park rather than approve when any required check fails.
 - Push the issue branch, `--force-with-lease` included, and delete it locally or on the remote after its PR merged.
+- Trust the lane's WT in a harness's folder-trust prompt when a worker starts there, after checking that the prompt names exactly that path. Grant no broader trust, such as a parent directory or every folder.
 
 Every other delete, overwrite, or rewrite outside the checkout is unsafe: files elsewhere in the home folder, another repo, system config, anything with `sudo`, a push to DEFAULT, or a force-push to any other branch.
 
