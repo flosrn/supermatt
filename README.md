@@ -76,9 +76,12 @@ docs/agents/issue-tracker.md    where issues live
 docs/agents/triage-labels.md    label names for the triage roles
 docs/agents/domain.md           where GLOSSARY.md and ADRs live
 docs/agents/cross-model.json    external peer mode, model, and effort settings
+docs/agents/qa.md               optional QA convention (empty when scaffolded)
 ```
 
 `host-only` prevents every supported external peer subprocess while preserving current-host readers. `auto` keeps the hardened Claude or Codex family selection. Cursor and OMP require explicit selection and runtime confirmation because their inherited configuration cannot provide the same isolation boundary. You can edit `docs/agents/cross-model.json` directly after setup.
+
+Setup can optionally create an empty `docs/agents/qa.md` and preserves an existing one unchanged. Fill it with authorized QA surfaces, accounts or paid commands, their budgets and stop rules, forbidden effects, any role-play agents, and before-merge or post-deploy timing. An absent or empty file keeps the existing QA defaults; it grants no live-service permission.
 
 <details>
 <summary>Claude Code's bundled <code>/code-review</code></summary>
@@ -145,14 +148,14 @@ SuperMatt starts from [mattpocock/skills](https://github.com/mattpocock/skills) 
 - `tdd` checks that each test goes red for the reason it names, runs affected-seam checks during cycles and the full required gate for completed work, ends with a mutation check, and flags change-detector tests.
 - `diagnosing-bugs` asks what you already tried, rules out the environment and uncommitted work, and fixes nothing until the causal chain has no gaps. It escalates to you after 2-3 dead hypotheses or 3 failed fixes.
 - `improve-architecture` assesses the codebase first and stops when it is healthy. It finds hot spots by change count over the last year, maps the structure before it looks for friction, visits every module in the map, and skips modules that are shallow by design. `refactor` and `improve-tests` gate on an assessment the same way.
-- `qa`, new in SuperMatt, runs the changed program the way its user would (a terminal program in tmux, a web app in a browser) and checks every requested behavior before `code-review` reads the code.
+- `qa`, new in SuperMatt, runs the changed program the way its user would (a terminal program in tmux, a web app in a browser) and checks every requested behavior before `code-review` reads the code. It reads optional `docs/agents/qa.md` before writing scenarios: authorized live or paid scenarios run within the stated limits instead of being blocked merely for using a live service. An independent QA context briefs and spawns any named role-play agents, then judges their raw evidence, not the implementing session. A networkless fallback reports authorized live-service scenarios it cannot reach as gaps without weakening its sandbox.
 - `ideate`, new in SuperMatt, has a fresh subagent or session try to refute each idea before it ranks the survivors. When neither is available, it performs the check itself and reports the lack of an independent verifier; if no idea passes, it reports no survivors.
 
 ### Skills hand off to each other
 
 Both implementation flows consult `codebase-design` for changes to data contracts, state transitions, shared mutable state, or retryable effects. Adversarial review checks duplicate execution and recovery after interruption. Replay requires verified test stores and endpoints; otherwise the review reports the verification gap.
 
-- `implement` completes the full required gate before committing each finished behavior, reuses checks whose inputs are unchanged, runs `qa` in a fresh subagent or session when available and fixes every fail test-first, then passes the spec to `code-review`. When fresh context is unavailable, QA reports the independence gap. Follow-ups check the fix diff and affected behavior. Every verified finding is fixed or raised as a question; the issue stays open until merge.
+- `implement` completes the full required gate before committing each finished behavior, reuses checks whose inputs are unchanged, runs `qa` in a fresh subagent or session when available and fixes every fail test-first, then passes the spec to `code-review`. When fresh context is unavailable, QA reports the independence gap. Follow-ups check the fix diff and affected behavior. Its final message lists post-deploy QA obligations declared by `docs/agents/qa.md`, separately from blocked pre-merge checks and observed passes. Every verified finding is fixed or raised as a question; the issue stays open until merge.
 - `implement-spec`, adapted from upstream v1.3.1, builds a whole spec through native subagents in ticket worktrees and integrates it into one branch for a single PR. It runs QA and review on the combined spec, serializes merges, and keeps issues open until shipping. Use it for one feature reviewed together; use `orchestrate` to ship a queue of issues separately through Herdr.
 - `diagnosing-bugs` writes the regression test through `tdd` and reviews the fix with `code-review`, using the bug report as the spec.
 - Test seams agreed in `to-spec` or `triage` travel through `to-tickets` into `implement` and `tdd`, so no skill asks about them twice.

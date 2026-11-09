@@ -7,15 +7,16 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - `codebase-design`: defines data contracts, state transitions, validation ownership, concurrent writes, and recovery after duplicate or interrupted execution in a focused reference.
-- `implement`: consults the shared state-contract guidance before changing data contracts, state transitions, shared mutable state, or retryable effects.
+- `implement`: consults the shared state-contract guidance before changing data contracts, state transitions, shared mutable state, or retryable effects; reads optional `docs/agents/qa.md`, leaves role-play briefs and judgment to independent QA, and reports post-deploy QA obligations separately from blocked checks and observed passes.
 - `implement-spec`: gives each worker the same conditional state-contract check as `implement`.
 - `code-review`: checks duplicate execution and interruption between durable effects against the intended recovery contract. Requires verified test stores and endpoints before replay, otherwise reports a verification gap.
-- `ask-supermatt`: maps implementation flows to the shared state-contract guidance and recovery review, and describes verified examples before mechanical sweeps.
+- `ask-supermatt`: maps implementation flows to the shared state-contract guidance and recovery review, describes verified examples before mechanical sweeps, and routes repository QA conventions and post-deploy obligations.
 - `refactor`: verifies complete, runnable manual examples against automation in scratch before applying a mechanical sweep, including coupled declarations and callers.
+- `qa`: reads optional `docs/agents/qa.md` before scenarios, runs explicitly authorized live or paid checks within its limits, independently briefs and judges named role-play agents from raw output, and returns post-deploy obligations; the networkless fallback reports unreachable authorized checks as gaps. Keeps defaults without a convention and accepts Node built-ins in the shared scratch dependency preflight while preserving package resolution and missing-package failures.
+- `setup-supermatt-skills`: optionally creates an empty `docs/agents/qa.md`, grants no permissions by default, and preserves an existing QA convention.
 
 ### Fixed
 
-- `qa`: accepts Node built-ins in the shared scratch dependency preflight, including built-in-only checks, while preserving package resolution and missing-package failures.
 - `retro`: recognizes OMP `skill-prompt` custom messages as user evidence with their original source lines while skipping other custom types and rejecting userless sessions.
 
 ## [0.23.0] - 2026-10-18
