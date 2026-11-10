@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,7 +80,7 @@ test("the tdd scratch commit recipe ignores templates that redirect the common G
   const result = follow(setup, { GIT_TEMPLATE_DIR: template });
   assert.equal(setup.refs(), before, "the template must not move any source branch");
   assertContained(setup, before, result);
-  assert.equal(setup.git(setup.scratch, "rev-parse", "--path-format=absolute", "--git-common-dir"), join(setup.scratch, ".git"));
+  assert.equal(setup.git(setup.scratch, "rev-parse", "--path-format=absolute", "--git-common-dir"), realpathSync(join(setup.scratch, ".git")));
 });
 
 test("the tdd scratch baseline preserves force-tracked ignored files and source deletions", (t) => {
@@ -175,7 +175,14 @@ test("scratch tracking preserves non-UTF-8 names without tracking their replacem
   const name = Buffer.concat([Buffer.from("raw-"), Buffer.from([255]), Buffer.from(".json")]);
   const source = Buffer.concat([Buffer.from(`${setup.worktree}/`), name]);
   writeFileSync(join(setup.worktree, ".gitignore"), "*.json\n");
-  writeFileSync(source, "tracked bytes\n");
+  try {
+    writeFileSync(source, "tracked bytes\n");
+  } catch (error) {
+    if (error.code !== "EILSEQ") throw error;
+    // APFS rejects invalid UTF-8 names; keep exercising raw-byte tracking on filesystems that support them.
+    t.skip("the fixture filesystem rejects non-UTF-8 filenames (EILSEQ)");
+    return;
+  }
   writeFileSync(join(setup.worktree, "raw-�.json"), "untracked alias\n");
   execFileSync("git", ["update-index", "--add", "-z", "--stdin"], {
     cwd: setup.worktree, env: setup.env, input: Buffer.concat([name, Buffer.from([0])]),
