@@ -41,6 +41,13 @@ for DEST in "${DESTS[@]}"; do
   fi
 
   mkdir -p "$DEST"
+  target="$(dirname "$DEST")/references"
+  if [ -e "$target" ] && [ ! -L "$target" ]; then
+    rm -rf "$target"
+  fi
+  ln -sfn "$REPO/references" "$target"
+  echo "linked references -> $REPO/references ($(dirname "$DEST"))"
+
 
   for i in "${!names[@]}"; do
     name="${names[$i]}"
