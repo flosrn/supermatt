@@ -46,6 +46,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- Scratch containment: rejects Python editable-install `.pth` paths and `direct_url.json` file URLs that escape the copy, preserving the read-only system-file exception and documenting reinstallation inside scratch.
 - Skill linking: links shared references beside each harness's skills directory so installed skills can read their relative reference paths.
 - `code-review`: host readers and both host validator paths launch with shell and file-writing tools, and a trigger or mutation in the reader's own scratch copy is part of the review, not an optional step. Host-run reproduction stays for genuine execution gaps; a host reader or validator launched on a read-only agent type is relaunched rather than handed to the host (#53). Checks whether `docs/agents/cross-model.json` exists before reading it and applies the harness contract's virtual value when it is absent, so a repository without the file no longer costs each review a failed read (#62).
   Shares a clone-first scratch copy helper with `qa`, preserving rsync exclusions and falling back after a failed clone. A measured 1.7 GB worktree took 2 to 5 minutes per rsync copy, with 190 overnight copies consuming 2h14 and leaving 40 GB in temporary storage. Checks duplicate execution and interruption between durable effects against the intended recovery contract. Requires verified test stores and endpoints before replay, otherwise reports a verification gap.

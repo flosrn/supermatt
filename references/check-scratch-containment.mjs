@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { accessSync, constants, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function outside(base, path) {
   const offset = relative(base, path);
@@ -53,6 +54,25 @@ if (!directory || extra.length) {
           }
         } else if (entry.isDirectory()) {
           pending.push(path);
+        }
+        if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".pth")) {
+          for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+            const value = line.trim();
+            if (!value || value.startsWith("#") || /^import[ \t]/.test(value)) continue;
+            const target = realpathSync(resolve(current, value));
+            if (outside(root, target) && !lockedSystemFile(target, home)) {
+              throw new Error(`.pth path escapes scratch: ${path} -> ${target}`);
+            }
+          }
+        }
+        if ((entry.isFile() || entry.isSymbolicLink()) && entry.name === "direct_url.json") {
+          const { url } = JSON.parse(readFileSync(path, "utf8"));
+          if (typeof url === "string" && url.startsWith("file:")) {
+            const target = realpathSync(fileURLToPath(url));
+            if (outside(root, target) && !lockedSystemFile(target, home)) {
+              throw new Error(`direct_url.json path escapes scratch: ${path} -> ${target}`);
+            }
+          }
         }
       }
     }
