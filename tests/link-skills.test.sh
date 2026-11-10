@@ -13,7 +13,7 @@ sh -n "$REPO/skills/diagnosing-bugs/scripts/hitl-loop.template.sh" || fail "hitl
 
 # Run against a copy, so a broken guard cannot write into this checkout.
 mkdir "$TMP/repo" "$TMP/home"
-cp -R "$REPO/scripts" "$REPO/skills" "$TMP/repo/"
+cp -R "$REPO/scripts" "$REPO/skills" "$REPO/references" "$TMP/repo/"
 COPY="$(cd "$TMP/repo" && pwd -P)"
 expected="$(find "$COPY/skills" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')"
 
@@ -27,6 +27,19 @@ for dest in .claude/skills .agents/skills; do
     count=$((count + 1))
   done
   [ "$count" = "$expected" ] || fail "$dest has $count links, expected $expected"
+done
+
+for dest in .claude .agents; do
+  link="$TMP/home/$dest/references"
+  [ -L "$link" ] || fail "$link is not a symlink"
+  [ "$(readlink "$link")" = "$COPY/references" ] || fail "$link points elsewhere"
+  [ -r "$TMP/home/$dest/skills/tdd/../../references/scratch-dependencies.md" ] || fail "$dest skill references do not resolve"
+done
+
+HOME="$TMP/home" bash "$COPY/scripts/link-skills.sh" >/dev/null || fail "link-skills.sh is not idempotent"
+for dest in .claude .agents; do
+  [ "$(readlink "$TMP/home/$dest/references")" = "$COPY/references" ] || fail "$dest references changed on rerun"
+  [ ! -L "$COPY/references/references" ] || fail "link-skills.sh wrote a link into references/"
 done
 
 # A destination that is a symlink into the repository must be refused.
