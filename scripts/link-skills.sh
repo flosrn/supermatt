@@ -43,11 +43,11 @@ for DEST in "${DESTS[@]}"; do
   mkdir -p "$DEST"
   target="$(dirname "$DEST")/references"
   if [ -e "$target" ] && [ ! -L "$target" ]; then
-    rm -rf "$target"
+    echo "error: $target already exists and is not a symlink; move it aside before linking." >&2
+    exit 1
   fi
   ln -sfn "$REPO/references" "$target"
   echo "linked references -> $REPO/references ($(dirname "$DEST"))"
-
 
   for i in "${!names[@]}"; do
     name="${names[$i]}"

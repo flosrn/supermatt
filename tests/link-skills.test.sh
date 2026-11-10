@@ -33,6 +33,7 @@ for dest in .claude .agents; do
   link="$TMP/home/$dest/references"
   [ -L "$link" ] || fail "$link is not a symlink"
   [ "$(readlink "$link")" = "$COPY/references" ] || fail "$link points elsewhere"
+  [ -r "$link/scratch-dependencies.md" ] || fail "$dest references are not readable"
   [ -r "$TMP/home/$dest/skills/tdd/../../references/scratch-dependencies.md" ] || fail "$dest skill references do not resolve"
 done
 
@@ -41,6 +42,15 @@ for dest in .claude .agents; do
   [ "$(readlink "$TMP/home/$dest/references")" = "$COPY/references" ] || fail "$dest references changed on rerun"
   [ ! -L "$COPY/references/references" ] || fail "link-skills.sh wrote a link into references/"
 done
+
+rm "$TMP/home/.agents/references"
+mkdir "$TMP/home/.agents/references"
+printf 'user data\n' > "$TMP/home/.agents/references/keep"
+if HOME="$TMP/home" bash "$COPY/scripts/link-skills.sh" >/dev/null 2>&1; then
+  fail "link-skills.sh accepted an existing references directory"
+fi
+[ "$(cat "$TMP/home/.agents/references/keep")" = 'user data' ] || fail "link-skills.sh changed user references"
+rm -r "$TMP/home/.agents/references"
 
 # A destination that is a symlink into the repository must be refused.
 rm -rf "$TMP/home/.claude/skills"
