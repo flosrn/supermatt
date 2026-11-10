@@ -232,7 +232,9 @@ async function main() {
     return;
   }
   const evidence = realpathSync(mkdtempSync(join(tmpdir(), "supermatt-evals-")));
-  const work = join(evidence, "work"); mkdirSync(work);
+  // Codex's Seatbelt writable-root regexes do not escape quotes in paths. Keep the
+  // disposable macOS workspace under canonical /tmp, not an arbitrary evidence path.
+  const work = realpathSync(mkdtempSync(join(process.platform === "darwin" ? "/tmp" : evidence, "supermatt-evals-work-")));
   const report = { status: "blocked", requestedModel: values.model, reportedModel: null, reasoningEffort: "medium", plannedRuns: null,
     startedRuns: 0, providerRequests: null, claude: "unavailable", corpusDigest: digest(JSON.stringify({ selected, variants: activeVariants })),
     catalogueDigest: digest(loaded.bytes), results: [], snapshots: {} };
