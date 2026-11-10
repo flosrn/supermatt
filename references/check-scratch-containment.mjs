@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { accessSync, constants, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 function outside(base, path) {
@@ -29,6 +29,26 @@ function canonicalHome() {
   }
 }
 
+function canonicalTarget(path) {
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const parent = dirname(path);
+    if (parent === path) throw error;
+    return join(canonicalTarget(parent), basename(path));
+  }
+}
+
+function allowedSystemTarget(path, home) {
+  try {
+    return lockedSystemFile(path, home);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return false;
+  }
+}
+
 const [directory, ...extra] = process.argv.slice(2);
 if (!directory || extra.length) {
   console.error("Usage: check-scratch-containment.mjs <scratch-directory>");
@@ -51,12 +71,13 @@ if (!directory || extra.length) {
         } else if (entry.isDirectory()) {
           pending.push(path);
         }
-        if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".pth")) {
+        if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".pth") &&
+            ["site-packages", "dist-packages"].includes(basename(current))) {
           for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
             const value = line.trim();
             if (!value || value.startsWith("#") || /^import[ \t]/.test(value)) continue;
-            const target = realpathSync(resolve(current, value));
-            if (outside(root, target) && !lockedSystemFile(target, home)) {
+            const target = canonicalTarget(resolve(current, value));
+            if (outside(root, target) && !allowedSystemTarget(target, home)) {
               throw new Error(`.pth path escapes scratch: ${path} -> ${target}`);
             }
           }
@@ -64,8 +85,8 @@ if (!directory || extra.length) {
         if ((entry.isFile() || entry.isSymbolicLink()) && entry.name === "direct_url.json") {
           const { url } = JSON.parse(readFileSync(path, "utf8"));
           if (typeof url === "string" && url.startsWith("file:")) {
-            const target = realpathSync(fileURLToPath(url));
-            if (outside(root, target) && !lockedSystemFile(target, home)) {
+            const target = canonicalTarget(fileURLToPath(url));
+            if (outside(root, target) && !allowedSystemTarget(target, home)) {
               throw new Error(`direct_url.json path escapes scratch: ${path} -> ${target}`);
             }
           }
