@@ -38,8 +38,9 @@ An OMP `ask` form takes its keys from the pty, so `HERDR agent send-keys NAME KE
    - Enter on a checkbox question keeps its checks and moves to the next question.
    - ← and → move between questions and the Review tab without changing any answer. Enter on Review submits; Review lists every answer (`b: q`) before you press it.
    - Tab in a form with one question moves to Submit without picking; Enter then submits.
+   - A text or textarea question keeps ← and → for its cursor, so they do not leave it: Tab moves on to the next question, or to Review from the last, keeping the field's text. A preselected-defaults run with N questions therefore sends `Right` up to the first text question, `Tab` there, and `Right` again after it; read the tab strip after each step.
    - Escape is Cancel: it aborts the `ask` call. Never send it to answer.
-4. **Keep the preselected answers:** with one question, `Tab` then `Enter`; with N questions, `Right` N times to reach Review, then `Enter`.
+4. **Keep the preselected answers:** with one question, `Tab` then `Enter`; with N questions, `Right` N times to reach Review (`Tab` instead on each text question), then `Enter`.
 5. **Confirm.** The form is answered once the session file holds the `ask` tool result `User answers:` with the JSON you meant. A result that differs from your choice is a wrong answer: tell the worker in its next prompt. No result after the keys means the form is still open: read it again before sending more.
 
 ## Rules
