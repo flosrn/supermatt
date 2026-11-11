@@ -26,6 +26,22 @@ A registered live shim worker can fall back through `HERDR agent prompt NAME TEX
 
 When neither owner nor coordinator can receive a turn, `tern-notify.mjs --pane BLOCK "TITLE" "BODY"` targets the coordinator's operator, or the originating `TERN_PANE` when no coordinator is supplied. It is a toast/inbox notification, not an OMP message. Report the selected fallback and any unavailable route honestly; a dry-run route plan does not prove delivery.
 
+## Answer an OMP form
+
+An OMP `ask` form takes its keys from the pty, so `HERDR agent send-keys NAME KEY...` answers a worker and `tern send BLOCK keys KEY...` answers any other omp pane, such as a session the user started that `sessions_list` shows `waiting for you`. Both work while the pane's tab is out of sight. Send one or two keys per call, then check the state, never a blind batch.
+
+1. **Read the form.** For a worker, `HERDR agent read NAME --source visible` shows the tab strip (`›` on the current question, `✓` on an answered one), the Review summary and the bar with its controls; the options of the current question are not in that text. Read the options and their preselected values from the last `ask` tool call's `arguments.html` in the session file: `.result.agent.agent_session.value` for a worker, `transcript` from `sessions_read` for any other omp.
+2. **Choose the answer** as [ANSWER.md](ANSWER.md#answer-a-dialog) says.
+3. **Send the keys.** The highlight starts on the first option, not on the preselected one.
+   - ↑ and ↓ move the highlight. Space checks or unchecks the highlighted checkbox.
+   - Enter on a radio question picks the highlighted option, replacing the preselected one, then moves on: to the next question in a form with several questions, to Submit in a form with one.
+   - Enter on a checkbox question keeps its checks and moves to the next question.
+   - ← and → move between questions and the Review tab without changing any answer. Enter on Review submits; Review lists every answer (`b: q`) before you press it.
+   - Tab in a form with one question moves to Submit without picking; Enter then submits.
+   - Escape is Cancel: it aborts the `ask` call. Never send it to answer.
+4. **Keep the preselected answers:** with one question, `Tab` then `Enter`; with N questions, `Right` N times to reach Review, then `Enter`.
+5. **Confirm.** The form is answered once the session file holds the `ask` tool result `User answers:` with the JSON you meant. A result that differs from your choice is a wrong answer: tell the worker in its next prompt. No result after the keys means the form is still open: read it again before sending more.
+
 ## Rules
 
 - Parse every ID from JSON output. Pane IDs are Tern block IDs. Never close a block you did not create.
