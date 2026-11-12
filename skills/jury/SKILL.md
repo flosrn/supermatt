@@ -52,6 +52,8 @@ Before each round, check the host's worker limit and occupied slots. Dispatch on
 
 A host seat is a fresh subagent, never a fork of this conversation, that gets only the juror prompt. When the resolver selected an external adapter, use it for one seat as a background process with a 600000 ms timeout. Make its directory with `mktemp -d`, save the juror prompt to `<temp dir>/juror.prompt.md`, and run the adapter from the repository root. Add configured values as individual literal arguments:
 
+In OMP, spawn the `reviewer` agent (model role `slow`); never `scout` or another `smol`-role agent, which are for search only.
+
 ```text
 codex exec --ignore-user-config --disable apps --disable plugins -s read-only -c 'approval_policy="never"' [--model "$MODEL"] [-c "model_reasoning_effort=\"$EFFORT\""] --ephemeral --skip-git-repo-check -C "$REPO_ROOT" -o "<temp dir>/vote.md" - < "<temp dir>/juror.prompt.md" > "<temp dir>/peer.stdout.log" 2> "<temp dir>/peer.log"
 claude -p --safe-mode --strict-mcp-config --tools Read Grep Glob --permission-mode dontAsk [--model "$MODEL"] [--effort "$EFFORT"] --no-session-persistence < "<temp dir>/juror.prompt.md" > "<temp dir>/vote.md" 2> "<temp dir>/peer.log"
@@ -95,6 +97,8 @@ Run one review round, never more. More rounds make jurors agree with each other,
 1. **Check facts.** Find the factual claims the jurors disagree on that could change the vote. Check each against its source yourself, and mark it verified, contradicted, or unverifiable.
 2. **Anonymize.** Remove the lens names from the juror blocks. Label them Position A, B, C, and give each reviewer its own shuffled order.
 3. **Dispatch fresh reviewers**, one per seat, never forks, using Step 4's capacity checks and queue. Every reviewer gets the same brief, fact checks, and anonymized positions, without earlier reviewers' answers. The external seat reviews through the same selected adapter, safety flags, configured values, runtime confirmation, evidence bundle, and failure checks, with `<temp dir>/review.md` replacing `vote.md`, unless its vote failed. If that call fails, queue a host reviewer and record the configured adapter and exact swap reason. A fresh reviewer wrote none of the positions, so it has no answer of its own to protect.
+
+In OMP, spawn the `reviewer` agent (model role `slow`); never `scout` or another `smol`-role agent, which are for search only.
 
 The reviewer prompt:
 

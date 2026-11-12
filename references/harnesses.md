@@ -45,7 +45,7 @@ A parent-context simulation is not an independent subagent.
 
 A subagent whose work runs commands or writes files is launched on a host agent type that has a shell and file-writing tools. A read-only agent type does not qualify, even when the skill offers a host-run fallback. When the host has no such type, state the exact gap.
 
-- OMP: launch these subagents on the `task` agent, never `scout`, which has no shell and writes only to `xd://` devices and `local://` scratch. This covers `code-review` readers and validators and `triage`'s check subagent.
+- OMP: launch these subagents on the `task` agent, never `scout`, which has no shell and writes only to `xd://` devices and `local://` scratch. For delegated review, verification, or judgment, including `code-review` readers and validators and `triage`'s check subagent, spawn the `reviewer` agent (model role `slow`); never `scout` or another `smol`-role agent, which are for search only.
 
 ## External peer resolver
 
