@@ -57,7 +57,7 @@ Dedupe into one list, then add up to five **combinations**: ideas from different
 
 Spawn one fresh subagent. It gets only the grounding summary and the merged list, never the generation history. Its job is to **refute**: check that every `direct:` quote exists, that every `external:` source says what is claimed, and that every `reasoned:` argument holds. It returns a verdict per idea.
 
-In OMP, spawn the `reviewer` agent (model role `slow`); never `scout` or another `smol`-role agent, which are for search only.
+In OMP, use the `challenger` agent for independent refutation (see [mission agents](../../references/harnesses.md#omp-mission-agents)).
 
 Then you decide which ideas make the final cut. Overrule a verdict only when evidence in context contradicts it, and say so. Every cut idea gets a one-line reason: vague, basis refuted, no basis, duplicate of a stronger idea, already done, cost over value, or outside the focus.
 

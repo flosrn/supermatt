@@ -24,7 +24,7 @@ Check with the user that these seams match their expectations.
 
 4. Check the draft in a fresh context. This context wrote the spec, so it shares the spec's blind spots. Spawn one sub-agent with the draft, repo access, and the authoritative destination and fetched decision records from the map. Where records are passed as retrievable references instead of full text, include the tracker instructions needed to fetch them. Give it this brief: "Report: (a) places where the spec contradicts itself, or a user story conflicts with an implementation decision or Out of Scope; (b) implementation decisions that the current codebase cannot support as written, citing the file; (c) user stories that no implementation or testing decision covers; (d) when the spec came from a decision record (a map's destination or tickets), decisions that contradict it or settle what it never settled. Quote the spec line for each finding. Under 300 words."
 
-In OMP, spawn the `reviewer` agent (model role `slow`); never `scout` or another `smol`-role agent, which are for search only.
+In OMP, use the `verifier` agent for the independent draft check (see [mission agents](../../references/harnesses.md#omp-mission-agents)).
 
 If subagents are unavailable, use a fresh session with the same draft, repo access, authoritative decision records or retrievable references and tracker instructions, and brief where possible. Otherwise review the draft yourself and disclose the lack of independent review before publishing.
 

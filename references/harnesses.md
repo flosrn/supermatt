@@ -45,7 +45,42 @@ A parent-context simulation is not an independent subagent.
 
 A subagent whose work runs commands or writes files is launched on a host agent type that has a shell and file-writing tools. A read-only agent type does not qualify, even when the skill offers a host-run fallback. When the host has no such type, state the exact gap.
 
-- OMP: launch these subagents on the `task` agent, never `scout`, which has no shell and writes only to `xd://` devices and `local://` scratch. For delegated review, verification, or judgment, including `code-review` readers and validators and `triage`'s check subagent, spawn the `reviewer` agent (model role `slow`); never `scout` or another `smol`-role agent, which are for search only.
+### OMP mission agents
+
+Choose the agent by its assigned mission:
+
+| Mission | Agent |
+| --- | --- |
+| Implementation or other general command-running and file-writing work | `task` |
+| Codebase search and grounding, without a verdict | `scout` |
+| Independent runtime QA, including follow-up and whole-spec QA | `qa` |
+| Targeted verification: triage redundancy and prior-rejection checks, spec-draft consistency, outgoing-history screening | `verifier` |
+| Code-review axis readers and validators, refactor candidate assessments, automated code review | `reviewer` |
+| Targeted security analysis of changed trust boundaries | `security-reviewer` |
+| Independent refutation of ideas | `challenger` |
+| Jury host votes and fresh review seats | One host seat on `challenger`; the remaining host seats on `reviewer` |
+
+`scout` and other `smol`-role agents are for search only, not verdicts or command execution. The selected mission agent must have the shell and file-writing tools its work requires; a read-only `juror-*` agent does not qualify for a jury prompt that permits commands. If a mission agent is unavailable or lacks those tools, report the exact capability gap rather than substituting a search-only agent.
+
+When dispatching `task`, describe the remaining uncertainty and unresolved choices in `solutionSpace`. Omit `effort` by default so OMP's automatic effort selection applies; mission routing adds no fixed-effort override.
+
+For a jury, keep the host agent-to-seat assignment in the fresh review round and use `reviewer` for an added host replacement of a failed external seat. This targets one Anthropic host seat and OpenAI host seats, without changing any lens or prescribing a vote. Establish the families that actually answered from authoritative runtime provider metadata, not agent names or lens count. Report only those established families, plus unverified seats; different lenses or several OpenAI seats do not establish a third family. Missing metadata leaves cross-family independence unestablished.
+
+#### Mandatory security review
+
+Before handing off a change, inspect its behavior and affected call paths for these triggers, including configuration changes:
+
+- Authentication, session handling, permissions, or isolation between users, tenants, or environments.
+- Secret or credential handling; command execution; uploads, imports, external URLs, or other untrusted input crossing into privileged code, storage, or AI tool execution.
+- Payments or paid external actions; webhook authenticity, replay protection, or delivery authorization; access to or disclosure of private conversations, media, or other sensitive data.
+- CI or deployment privileges, agent execution identities, production admission, or barriers separating tests from live actions.
+
+Match changed controls and newly reachable paths, not directory names alone. Ordinary copy, layout, or conversation wording changes that leave these boundaries intact do not trigger a security review. Repository instructions can name concrete boundaries and stricter triggers.
+
+If any trigger matches, dispatch one `security-reviewer` with the fixed diff, matched triggers, affected entry points and trust boundaries, and relevant repository rules. Limit it to those changed boundaries and the callers or guards needed to assess them. Keep the existing review axes and validators; the specialist supplements them rather than repeating the whole review. It inspects evidence read-only. Any reproduction that needs writes or external effects stays with the host under the repository's isolation and approval rules.
+
+In `code-review`, apply the integration procedure in that skill. Outside it, include the specialist's findings and coverage in the handoff, with concrete evidence and unresolved limits. Reuse an already completed specialist review only while its relevant diff and inputs are unchanged. An unavailable, failed, or unfinished specialist is incomplete security coverage, never an implicit pass; name the exact gap in the handoff.
+
 
 ## External peer resolver
 

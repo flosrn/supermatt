@@ -35,7 +35,7 @@ That list is the whole clause. What `/handoff` buys is **portability**: a file t
 
 **4. Can the task be done AFK?** Is it scoped tightly enough to run with you away from the keyboard, no steering? Then send it to a **subagent** and leave this session untouched. Automated review is the standard case: the agent reads the diff and reports, and you aren't needed while it does.
 
-In OMP, spawn the `reviewer` agent (model role `slow`); never `scout` or another `smol`-role agent, which are for search only.
+In OMP, use the `reviewer` agent for automated code review; choose other subagents by their [mission](../../references/harnesses.md#omp-mission-agents).
 
 **5. Otherwise, compact.** Relevant context, same harness, same directory, and you need to stay in the loop: this is where the tree lands, and it lands here often. Use the host's compaction control, such as `/compact` where supported, with an instruction that keeps what the next phase needs. If the host cannot compact, write a handoff and start a fresh session.
 
