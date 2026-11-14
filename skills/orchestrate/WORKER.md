@@ -31,9 +31,9 @@ Pass these exact handles as MODEL: Opus is `omniroute/opus-5.5`, Sol is `omnirou
 |---|---|---|---|
 | Triage and tier (T) | Opus `high` | Opus `high` | Opus `high` |
 | Spec verification (V) | Opus `high` | Opus `high` | Opus `high` |
-| Implementation | Opus `medium` | Opus `high` | Opus `xhigh` |
+| Implementation | Opus `medium` | Opus `high` | Opus `high` |
 | QA restart | Sol `medium` | Sol `high` | Sol `high` |
-| Review restart (`/code-review`) | Sol `medium` | Sol `high` | Astra `xhigh` |
+| Review restart (`/code-review`) | Sol `medium` | Sol `high` | Astra `high` |
 | Fix findings | Sol `medium` | Sol `high` | Sol `high` |
 | Refactor and ship | Opus `medium` | Opus `high` | Opus `high` |
 | Lane retro | Opus `high` | Opus `high` | Opus `high` |
