@@ -54,10 +54,10 @@ Choose the agent by its assigned mission:
 | Implementation or other general command-running and file-writing work | `task` |
 | Codebase search and grounding, without a verdict | `scout` |
 | Independent runtime QA, including follow-up and whole-spec QA | `qa` |
-| Targeted verification: triage redundancy and prior-rejection checks, spec-draft consistency, outgoing-history screening | `verifier` |
+| Targeted factual verification: triage checks, spec consistency and feasibility, outgoing-history screening | `verifier` |
 | Code-review axis readers and validators, refactor candidate assessments, automated code review | `reviewer` |
 | Targeted security analysis of changed trust boundaries | `security-reviewer` |
-| Independent refutation of ideas | `challenger` |
+| Independent critique of ideas, proposed designs, and spec assumptions | `challenger` |
 | Jury host votes and fresh review seats | One host seat on `challenger`; the remaining host seats on `reviewer` |
 
 `scout` and other `smol`-role agents are for search only, not verdicts or command execution. The selected mission agent must have the shell and file-writing tools its work requires; a read-only `juror-*` agent does not qualify for a jury prompt that permits commands. If a mission agent is unavailable or lacks those tools, report the exact capability gap rather than substituting a search-only agent.

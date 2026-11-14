@@ -35,6 +35,7 @@ All notable changes to this project are documented here. The format follows [Kee
   Maps implementation flows to the shared state-contract guidance and recovery review, and describes verified examples before mechanical sweeps.
   Routes repository QA conventions and post-deploy obligations.
   Personal OMP patch: routes changed trust boundaries to the mandatory targeted security review within the existing three-axis flow.
+  Personal OMP patch: maps spec review to separate factual and design readers, plus conditional security analysis.
   Maps Tern shipping's durable conflict handoff to the registered owner, coordinator, and operator fallback.
   Routes a whole-spec build that requires a separate pull request per ticket to `implement-spec`'s one PR per ticket mode, whose handoff lists the ticket branches in the order `ship-pr` ships them, and notes `ship-pr`'s fresh conflict check before each Merge Train enqueue (#85).
   Maps OMP's finish handoff to the real three-choice ask, exact MERGED-PR-head and post-merge checks, retained delivered worktrees for the same-worktree retrospective, explicit parked exclusions, and one final coordinator offer. Explains process-exit-before-removal and tab closure with session history preserved, configured local branch teardown, no remote-branch/general process/container cleanup, the coordinator staying open in main, and the unchanged approved dry-run fallback for other hosts or missing capability.
@@ -85,7 +86,7 @@ All notable changes to this project are documented here. The format follows [Kee
   Personal OMP patch: delegated outgoing-history screening uses the `verifier` mission agent.
 - `triage`: the redundancy and prior-rejection check sub-agent is stated to need a shell for read-only commands such as `git log`, and launches per the harness contract's rule for a sub-agent that runs commands (#53). The launch instruction states the shell need and names the read-only agent-type trap, with OMP's `scout` as the example, before saying the sub-agent writes nothing, since a parent that never followed the link launched it on `scout` (#60).
   Personal OMP patch: the check subagent uses the `verifier` mission agent.
-- `to-spec`: personal OMP patch sends the independent draft check to the `verifier` mission agent.
+- `to-spec`: personal OMP patch separates factual draft verification (`verifier`) from independent design critique (`challenger`), adding targeted `security-reviewer` analysis for planned trust-boundary changes. Preserves configured effort and reports each required review's coverage before publication.
 - `ideate`: personal OMP patch sends independent refutation to the `challenger` mission agent, leaving grounding exploration unchanged.
 - `jury`: personal OMP patch assigns one host seat to `challenger` and remaining host seats to `reviewer`, retains those assignments for fresh review seats, and reports actual established model families without inferring diversity from lenses or agent names.
 - `babysit-pr`: personal OMP patch sends follow-up QA to the `qa` mission agent.

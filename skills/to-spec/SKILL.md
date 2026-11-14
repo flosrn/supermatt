@@ -24,7 +24,14 @@ Check with the user that these seams match their expectations.
 
 4. Check the draft in a fresh context. This context wrote the spec, so it shares the spec's blind spots. Spawn one sub-agent with the draft, repo access, and the authoritative destination and fetched decision records from the map. Where records are passed as retrievable references instead of full text, include the tracker instructions needed to fetch them. Give it this brief: "Report: (a) places where the spec contradicts itself, or a user story conflicts with an implementation decision or Out of Scope; (b) implementation decisions that the current codebase cannot support as written, citing the file; (c) user stories that no implementation or testing decision covers; (d) when the spec came from a decision record (a map's destination or tickets), decisions that contradict it or settle what it never settled. Quote the spec line for each finding. Under 300 words."
 
-In OMP, use the `verifier` agent for the independent draft check (see [mission agents](../../references/harnesses.md#omp-mission-agents)).
+In OMP, replace the single draft check with two fresh subagents in parallel, each receiving the same draft and source records:
+
+- `verifier`: use the brief above for factual consistency, codebase feasibility, requirement coverage, and fidelity to recorded decisions.
+- `challenger`: critique the proposed design, assumptions, and failure modes within the approved scope. Report concrete counterexamples, missing safeguards, or a simpler design that meets the same requirements. Cite the spec passage and supporting evidence for each objection; zero objections is valid. Respect settled user decisions and return any genuine conflict to the user rather than silently reopening it.
+
+Assess the planned changes against the [security triggers](../../references/harnesses.md#mandatory-security-review). When one matches, add a `security-reviewer` scoped to the proposed trust boundaries, relevant code, and repository rules; a draft spec needs no implementation diff to trigger this check. It analyzes evidence only, without executing proposed effects.
+
+Omit `effort` on these dispatches to preserve each agent's configured selector. Wait for all required reports before publishing; retain their distinct findings and name any missing coverage using the fallback below. A missing specialist is not covered by a successful verifier. Use the [mission-agent mappings](../../references/harnesses.md#omp-mission-agents), not a model picked from the authoring session.
 
 If subagents are unavailable, use a fresh session with the same draft, repo access, authoritative decision records or retrievable references and tracker instructions, and brief where possible. Otherwise review the draft yourself and disclose the lack of independent review before publishing.
 
