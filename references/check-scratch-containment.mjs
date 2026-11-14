@@ -82,7 +82,7 @@ if (!directory || extra.length) {
             if (!value || value.startsWith("#") || /^import[ \t]/.test(value)) continue;
             const target = canonicalTarget(resolve(current, value));
             if (outside(root, target) && !allowedSystemTarget(target, home)) {
-              throw new Error(`.pth path escapes scratch: ${path} -> ${target}`);
+              throw new Error(`.pth path escapes scratch: ${path} -> ${target}; if the trigger needs no Python, remove the copied virtualenv containing this entry; otherwise rebuild the environment inside scratch and force-reinstall the editable package from the scratch copy. Rerun the containment check.`);
             }
           }
         }

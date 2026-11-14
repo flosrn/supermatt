@@ -34,7 +34,7 @@ A change to a check that can pass while the real thing fails always gets the sil
 Whatever the depth, run each check whose surface the diff touches:
 
 - **Security** (input from outside, auth, permissions, secrets): injection into a query, shell, path, or template; a missing ownership check that lets one user reach another's record; a request to a URL the input controls; a secret or personal data written to a log or an error.
-- **Public contract** (an API, CLI, file format, event, or schema that other code consumes): a removed or renamed field, a changed default, a wider or narrower type, a sentinel given a new meaning. Search for the visible consumers and name the one that breaks.
+- **Public contract** (an API, CLI, file format, event, or schema that other code consumes): a removed or renamed field, an added field facing a consumer that pins the exact shape (a whole-object assertion, JSON fixture, or strict schema), a changed default, a wider or narrower type, a sentinel given a new meaning. Search for the visible consumers and name the one that breaks.
 - **Data and migrations**: a NOT NULL column with no default or backfill on a table that has rows, a rename or drop while old code still runs during the deploy, a write that truncates or converts data it cannot restore.
 - **Reliability** (network calls, retries, jobs, resources): a call with no timeout, a retry with no backoff or no limit, a file, lock, or connection not released on the error path.
 - **Concurrency**: a check and its use split by a gap another caller can enter, shared state written without a lock, two runs of one job at once.
