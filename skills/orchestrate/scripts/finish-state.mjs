@@ -69,6 +69,9 @@ function violations(state) {
   if (typeof state.repository !== "string" || !isAbsolute(state.repository) || posix.normalize(state.repository) !== state.repository
     || (state.repository !== "/" && state.repository.endsWith("/"))) add("repository", "must be a canonical absolute path");
   if (!text(state.run_key)) add("run_key", "must be a non-empty string");
+  if (!object(state.coordinator)) add("coordinator", "must be an object with a block");
+  else if (!text(state.coordinator.block)) add("coordinator.block", "must be a non-empty string");
+  const paneOwners = new Map();
   if (!object(state.lanes)) add("lanes", "must be an object keyed by lane number, not an array");
   else for (const [number, lane] of Object.entries(state.lanes)) {
     const path = `lanes.${keyLocation(number)}`;
@@ -92,6 +95,10 @@ function violations(state) {
       const seen = new Set();
       for (const pane of lane.panes) {
         if (seen.has(pane)) add(`${path}.panes`, `duplicate pane ID ${JSON.stringify(pane)}`);
+        if (!seen.has(pane) && paneOwners.has(pane) && paneOwners.get(pane) !== number) {
+          add(`${path}.panes`, `pane ID ${JSON.stringify(pane)} already belongs to lane ${keyLocation(paneOwners.get(pane))}`);
+        }
+        if (!paneOwners.has(pane)) paneOwners.set(pane, number);
         seen.add(pane);
       }
       if (text(lane.pane) && lane.pane !== lane.panes[lane.panes.length - 1]) add(`${path}.pane`, "must equal the last element of panes");
@@ -100,11 +107,13 @@ function violations(state) {
     if (lane.status === "parked") {
       if (!text(lane.park_reason)) add(`${path}.park_reason`, "must be a non-empty string when parked");
     } else if (lane.park_reason != null) add(`${path}.park_reason`, "must be absent or null unless parked");
+    if (typeof lane.park_reason === "string" && /[\r\n]/.test(lane.park_reason)) add(`${path}.park_reason`, "must not contain a line break");
   }
   if (state.wait != null) {
     if (!object(state.wait)) add("wait", "must be an object or null");
     else {
       if (!text(state.wait.resource)) add("wait.resource", "must be a non-empty string");
+      if (typeof state.wait.resource === "string" && /[\r\n]/.test(state.wait.resource)) add("wait.resource", "must not contain a line break");
       if (!instant(state.wait.since)) add("wait.since", "must be a valid date-time with seconds and a Z or +-HH:MM offset");
     }
   }
@@ -185,20 +194,23 @@ function laneWrite(state, number, values) {
 
 function main(argv) {
   const [command, ...args] = argv;
-  const commands = { create: ["repository", "run-key"], lane: ["issue", "branch", "pane", "status", "park-reason"], "wait-set": [], "wait-clear": [], check: [] };
-  if (!Object.hasOwn(commands, command)) fail(2, "usage: expected create, lane, wait-set, wait-clear or check");
+  const commands = { create: ["repository", "run-key", "coordinator"], coordinator: [], lane: ["issue", "branch", "pane", "status", "park-reason"], "wait-set": [], "wait-clear": [], check: [] };
+  if (!Object.hasOwn(commands, command)) fail(2, "usage: expected create, coordinator, lane, wait-set, wait-clear or check");
   const options = Object.fromEntries(commands[command].map((key) => [key, { type: "string" }]));
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options });
-  const count = command === "lane" || command === "wait-set" ? 2 : 1;
-  if (positionals.length !== count || !positionals[0]) fail(2, `usage: ${command} expects ${count} positional arguments`);
+  const count = command === "lane" || command === "wait-set" || command === "coordinator" ? 2 : 1;
+  if (positionals.length !== count || !positionals[0]) {
+    fail(2, command === "coordinator" ? "usage: coordinator FILE ID" : `usage: ${command} expects ${count} positional arguments`);
+  }
   const [file, argument] = positionals;
   if (command === "lane" && !laneNumber(argument)) fail(2, "usage: lane must be a decimal lane number without leading zeros");
   if (command === "create") {
-    if (values.repository === undefined || values["run-key"] === undefined) fail(2, "usage: create requires --repository and --run-key");
-    const state = { state_version: 1, repository: values.repository, run_key: values["run-key"], lanes: {} };
+    if (values.repository === undefined || values["run-key"] === undefined || values.coordinator === undefined) {
+      fail(2, "usage: create FILE --repository PATH --run-key KEY --coordinator ID");
+    }
+    const state = { state_version: 1, repository: values.repository, run_key: values["run-key"], coordinator: { block: values.coordinator }, lanes: {} };
     check(state);
     makePrivateDirectory(dirname(file));
-    chmodSync(dirname(file), 0o700);
     save(file, state, true);
   } else if (command === "check") {
     check(JSON.parse(readFileSync(file, "utf8")));
@@ -209,6 +221,10 @@ function main(argv) {
     const numberErrors = numberViolations(state);
     if (numberErrors.length) fail(1, numberErrors.join("\n"));
     if (command === "lane") laneWrite(state, argument, values);
+    if (command === "coordinator") {
+      if (!object(state.coordinator)) state.coordinator = {};
+      state.coordinator.block = argument;
+    }
     if (command === "wait-set" && (!object(state.wait) || state.wait.resource !== argument)) {
       state.wait = { ...(object(state.wait) ? state.wait : {}), resource: argument, since: new Date().toISOString().replace(/\.\d{3}Z$/, "Z") };
     }
