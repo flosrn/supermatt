@@ -19,6 +19,8 @@ const issueKey = (value) => typeof value === "string" && (laneNumber(value)
   || (!posix.isAbsolute(value) && posix.normalize(value) === value && value !== ".."
     && !value.startsWith("../") && !value.includes("\\") && value.endsWith(".md")));
 const keyLocation = (key) => /^[A-Za-z0-9_]+$/.test(key) ? key : JSON.stringify(key);
+const MAX_DEPTH = 2500;
+const depthViolation = `root: nested deeper than ${MAX_DEPTH} levels; cannot be rewritten safely`;
 
 function instant(value) {
   if (typeof value !== "string") return false;
@@ -34,16 +36,17 @@ function instant(value) {
 
 function numberViolations(value, location = "") {
   const errors = [];
-  const stack = [[value, location]];
+  const stack = [[value, location, 1]];
   while (stack.length) {
-    const [current, path] = stack.pop();
+    const [current, path, depth] = stack.pop();
     if (typeof current === "number" && !Number.isFinite(current)) {
       errors.push(`${path || "root"}: number is out of range and cannot be preserved`);
     } else if (current !== null && typeof current === "object") {
+      if (depth > MAX_DEPTH) return [depthViolation];
       const entries = Object.entries(current);
       for (let index = entries.length - 1; index >= 0; index--) {
         const [key, child] = entries[index];
-        stack.push([child, path ? `${path}.${keyLocation(key)}` : keyLocation(key)]);
+        stack.push([child, path ? `${path}.${keyLocation(key)}` : keyLocation(key), depth + 1]);
       }
     }
   }
@@ -54,6 +57,7 @@ function violations(state) {
   if (!object(state)) return ["root: must be an object"];
   if (!Object.hasOwn(state, "state_version")) return ["state_version: missing; legacy record, no shape guarantee"];
   const errors = numberViolations(state);
+  if (errors[0] === depthViolation) return errors;
   try {
     JSON.stringify(state, null, 2);
   } catch (error) {
