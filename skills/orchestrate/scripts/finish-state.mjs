@@ -54,6 +54,12 @@ function violations(state) {
   if (!object(state)) return ["root: must be an object"];
   if (!Object.hasOwn(state, "state_version")) return ["state_version: missing; legacy record, no shape guarantee"];
   const errors = numberViolations(state);
+  try {
+    JSON.stringify(state, null, 2);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    errors.push("root: too deeply nested to rewrite");
+  }
   const add = (location, message) => errors.push(`${location}: ${message}`);
   if (state.state_version !== 1) add("state_version", "must be 1");
   if (typeof state.repository !== "string" || !isAbsolute(state.repository) || posix.normalize(state.repository) !== state.repository

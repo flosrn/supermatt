@@ -504,6 +504,21 @@ test("check and writers preserve a finite extra value nested 2000 levels deep", 
   }
 });
 
+test("check and wait-clear refuse extras too deeply nested to rewrite without changing bytes", (t) => {
+  const depth = 100000;
+  const nested = '{"x":'.repeat(depth) + "42" + "}".repeat(depth);
+  const file = create(t);
+  const state = JSON.stringify(record());
+  writeFileSync(file, state.slice(0, -1) + ',"extra":' + nested + "}\n");
+  const before = readFileSync(file);
+  for (const command of ["check", "wait-clear"]) {
+    const result = run(command, file);
+    fails(result, 1, ["root"]);
+    assert.equal(result.stderr, "root: too deeply nested to rewrite\n");
+    assert.deepEqual(readFileSync(file), before);
+  }
+});
+
 for (const [command, change, location] of [
   [["lane", "1", "--status", "idle"], (s) => { s.lanes["1"].issue = "OVERFLOW"; }, "lanes.1.issue"],
   [["wait-set", "new slot"], (s) => { s.wait.since = "OVERFLOW"; }, "wait.since"],
