@@ -2,7 +2,7 @@
 // Versioned durable finish state for orchestrate.
 import { randomUUID } from "node:crypto";
 import { chmodSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, posix } from "node:path";
 import { parseArgs } from "node:util";
 
 function fail(code, message) {
@@ -15,6 +15,10 @@ const object = (value) => value !== null && typeof value === "object" && !Array.
 const text = (value) => typeof value === "string" && value.trim().length > 0;
 const laneNumber = (value) => /^[1-9][0-9]*$/.test(value);
 const statuses = ["working", "idle", "parked", "interrupted"];
+const issueKey = (value) => typeof value === "string" && (laneNumber(value)
+  || (!posix.isAbsolute(value) && posix.normalize(value) === value && value !== ".."
+    && !value.startsWith("../") && !value.includes("\\") && value.endsWith(".md")));
+const keyLocation = (key) => /^[A-Za-z0-9_]+$/.test(key) ? key : JSON.stringify(key);
 
 function instant(value) {
   if (typeof value !== "string") return false;
@@ -28,25 +32,32 @@ function instant(value) {
     && Number.isFinite(Date.parse(value));
 }
 
+function numberViolations(value, location = "") {
+  if (typeof value === "number" && !Number.isFinite(value)) return [`${location || "root"}: number is out of range and cannot be preserved`];
+  if (value === null || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([key, child]) => numberViolations(child, location ? `${location}.${keyLocation(key)}` : keyLocation(key)));
+}
+
 function violations(state) {
   if (!object(state)) return ["root: must be an object"];
   if (!Object.hasOwn(state, "state_version")) return ["state_version: missing; legacy record, no shape guarantee"];
-  const errors = [];
+  const errors = numberViolations(state);
   const add = (location, message) => errors.push(`${location}: ${message}`);
   if (state.state_version !== 1) add("state_version", "must be 1");
-  for (const key of ["repository", "run_key"]) {
-    if (!text(state[key])) add(key, "must be a non-empty string");
-  }
+  if (typeof state.repository !== "string" || !isAbsolute(state.repository) || posix.normalize(state.repository) !== state.repository
+    || (state.repository !== "/" && state.repository.endsWith("/"))) add("repository", "must be a canonical absolute path");
+  if (!text(state.run_key)) add("run_key", "must be a non-empty string");
   if (!object(state.lanes)) add("lanes", "must be an object keyed by lane number, not an array");
   else for (const [number, lane] of Object.entries(state.lanes)) {
-    const path = `lanes.${number}`;
+    const path = `lanes.${keyLocation(number)}`;
     if (!laneNumber(number)) add(path, "lane key must be a decimal lane number without leading zeros");
     if (!object(lane)) {
       add(path, "must be an object");
       continue;
     }
     for (const key of ["issue", "branch"]) {
-      if (lane[key] !== null && !text(lane[key])) add(`${path}.${key}`, "must be a non-empty string or null");
+      if (key === "issue" && lane[key] !== null && !issueKey(lane[key])) add(`${path}.${key}`, "must be a decimal issue number or a repository-relative Markdown path");
+      else if (key === "branch" && lane[key] !== null && !text(lane[key])) add(`${path}.${key}`, "must be a non-empty string or null");
       else if (lane.status === "idle" && lane[key] !== null) add(`${path}.${key}`, "must be null when idle");
       else if (key === "issue" && statuses.includes(lane.status) && lane.status !== "idle" && lane.issue === null) {
         add(`${path}.issue`, "must be non-null unless idle");
@@ -81,6 +92,18 @@ function violations(state) {
 function check(state) {
   const errors = violations(state);
   if (errors.length) fail(1, errors.join("\n"));
+}
+
+function makePrivateDirectory(directory) {
+  try {
+    mkdirSync(directory, { mode: 0o700 });
+  } catch (error) {
+    if (error.code === "EEXIST") return;
+    if (error.code !== "ENOENT") throw error;
+    makePrivateDirectory(dirname(directory));
+    mkdirSync(directory, { mode: 0o700 });
+  }
+  chmodSync(directory, 0o700);
 }
 
 function save(file, state, exclusive = false) {
@@ -140,7 +163,7 @@ function main(argv) {
     if (values.repository === undefined || values["run-key"] === undefined) fail(2, "usage: create requires --repository and --run-key");
     const state = { state_version: 1, repository: values.repository, run_key: values["run-key"], lanes: {} };
     check(state);
-    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    makePrivateDirectory(dirname(file));
     chmodSync(dirname(file), 0o700);
     save(file, state, true);
   } else if (command === "check") {
@@ -149,6 +172,8 @@ function main(argv) {
     const state = JSON.parse(readFileSync(file, "utf8"));
     if (object(state) && !Object.hasOwn(state, "state_version")) fail(1, "state_version: legacy record is not rewritten");
     if (!object(state)) check(state);
+    const numberErrors = numberViolations(state);
+    if (numberErrors.length) fail(1, numberErrors.join("\n"));
     if (command === "lane") laneWrite(state, argument, values);
     if (command === "wait-set" && (!object(state.wait) || state.wait.resource !== argument)) {
       state.wait = { ...(object(state.wait) ? state.wait : {}), resource: argument, since: new Date().toISOString().replace(/\.\d{3}Z$/, "Z") };

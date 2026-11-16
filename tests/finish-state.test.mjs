@@ -75,6 +75,34 @@ test("check accepts extra root, lane and wait keys and every lane status", (t) =
   succeeds(run("check", seed(t, state)));
 });
 
+for (const issue of ["x", "0126", "0", "/notes/issue.md", "../issue.md", "..", "notes/../issue.md", "notes/./issue.md", "notes//issue.md", "notes\\issue.md", "notes/issue.txt"]) {
+  test(`issue rejects invalid key ${JSON.stringify(issue)} in check and lane`, (t) => {
+    const state = record();
+    state.lanes["1"].issue = issue;
+    const invalid = seed(t, state);
+    const invalidBefore = readFileSync(invalid);
+    const checked = run("check", invalid);
+    fails(checked, 1, ["lanes.1.issue"]);
+    assert.equal(checked.stderr, "lanes.1.issue: must be a decimal issue number or a repository-relative Markdown path\n");
+    assert.deepEqual(readFileSync(invalid), invalidBefore);
+    const file = seed(t);
+    const before = readFileSync(file);
+    const written = run("lane", file, "1", "--issue", issue);
+    fails(written, 1, ["lanes.1.issue"]);
+    assert.equal(written.stderr, checked.stderr);
+    assert.deepEqual(readFileSync(file), before);
+  });
+}
+
+for (const issue of ["126", "issue.md", "notes/issue.md", "notes/my issue.md"]) {
+  test(`lane accepts issue key ${JSON.stringify(issue)}`, (t) => {
+    const file = seed(t);
+    succeeds(run("lane", file, "1", "--issue", issue));
+    assert.equal(read(file).lanes["1"].issue, issue);
+    succeeds(run("check", file));
+  });
+}
+
 const invalidRecords = [
   ["array lanes", (s) => { s.lanes = []; }, "lanes"],
   ["non-decimal lane key", (s) => { s.lanes.x = s.lanes["1"]; delete s.lanes["1"]; }, "lanes.x"],
@@ -158,6 +186,49 @@ for (const [name, option, location] of [["repository", "--repository", "reposito
     args[args.indexOf(option) + 1] = "";
     fails(run(...args), 1, [location]);
     assert.equal(existsSync(file), false);
+  });
+}
+
+test("repository must be an absolute path for create and check", (t) => {
+  const file = stateFile(t);
+  const result = run("create", file, "--repository", "project", "--run-key", "run-1");
+  fails(result, 1, ["repository"]);
+  assert.equal(result.stderr, "repository: must be a canonical absolute path\n");
+  assert.equal(existsSync(file), false);
+  const state = record();
+  state.repository = "project";
+  const existing = seed(t, state);
+  const before = readFileSync(existing);
+  const checked = run("check", existing);
+  fails(checked, 1, ["repository"]);
+  assert.equal(checked.stderr, "repository: must be a canonical absolute path\n");
+  assert.deepEqual(readFileSync(existing), before);
+});
+
+for (const repository of ["/project/../other", "/project/./repo", "/project//repo", "/project/"]) {
+  test(`repository rejects non-canonical path ${repository}`, (t) => {
+    const file = stateFile(t);
+    const result = run("create", file, "--repository", repository, "--run-key", "run-1");
+    fails(result, 1, ["repository"]);
+    assert.equal(result.stderr, "repository: must be a canonical absolute path\n");
+    assert.equal(existsSync(file), false);
+    const state = record();
+    state.repository = repository;
+    const existing = seed(t, state);
+    const before = readFileSync(existing);
+    const checked = run("check", existing);
+    fails(checked, 1, ["repository"]);
+    assert.equal(checked.stderr, "repository: must be a canonical absolute path\n");
+    assert.deepEqual(readFileSync(existing), before);
+  });
+}
+
+for (const repository of ["/", "/project name/repo"]) {
+  test(`create accepts canonical repository ${repository}`, (t) => {
+    const file = stateFile(t);
+    succeeds(run("create", file, "--repository", repository, "--run-key", "run-1"));
+    assert.equal(read(file).repository, repository);
+    succeeds(run("check", file));
   });
 }
 
@@ -390,3 +461,107 @@ for (const command of [["lane", "1", "--status", "idle"], ["wait-set", "build sl
     });
   }
 }
+
+test("check reports every out-of-range number at its nested location", (t) => {
+  const state = record();
+  state.evidence.value = "OVERFLOW";
+  state.evidence.values = [0, "UNDERFLOW"];
+  const file = seed(t, state);
+  writeFileSync(file, readFileSync(file, "utf8").replace('"OVERFLOW"', "1e400").replace('"UNDERFLOW"', "-1e400"));
+  const before = readFileSync(file);
+  const result = run("check", file);
+  fails(result, 1, ["evidence.value", "evidence.values.1"]);
+  assert.equal(result.stderr, "evidence.value: number is out of range and cannot be preserved\nevidence.values.1: number is out of range and cannot be preserved\n");
+  assert.deepEqual(readFileSync(file), before);
+});
+
+for (const [command, change, location] of [
+  [["lane", "1", "--status", "idle"], (s) => { s.lanes["1"].issue = "OVERFLOW"; }, "lanes.1.issue"],
+  [["wait-set", "new slot"], (s) => { s.wait.since = "OVERFLOW"; }, "wait.since"],
+  [["wait-clear"], (s) => { s.wait.extra.value = "OVERFLOW"; }, "wait.extra.value"],
+  [["lane", "1", "--branch", "fix/other"], (s) => { s.evidence.value = "OVERFLOW"; }, "evidence.value"],
+]) {
+  test(`${command[0]} refuses an out-of-range number at ${location} without changing bytes`, (t) => {
+    const state = record();
+    change(state);
+    const file = seed(t, state);
+    writeFileSync(file, readFileSync(file, "utf8").replace('"OVERFLOW"', "1e400"));
+    const before = readFileSync(file);
+    const result = run(command[0], file, ...command.slice(1));
+    fails(result, 1, [location]);
+    assert.equal(result.stderr, `${location}: number is out of range and cannot be preserved\n`);
+    assert.deepEqual(readFileSync(file), before);
+  });
+}
+
+test("create makes every missing directory private under umask 0777 without changing ancestors", (t) => {
+  const dir = dirname(dirname(stateFile(t)));
+  chmodSync(dir, 0o755);
+  const levels = [join(dir, "one"), join(dir, "one", "two"), join(dir, "one", "two", "three")];
+  const file = join(levels[2], "finish.json");
+  const result = spawnSync(process.execPath, ["-e", "process.umask(0o777); process.argv = [process.execPath, ...process.argv.slice(1)]; import(process.argv[1]);", script,
+    "create", file, "--repository", "/project", "--run-key", "run-1"], { encoding: "utf8" });
+  succeeds(result);
+  for (const level of levels) assert.equal(mode(level), 0o700);
+  assert.equal(mode(dir), 0o755);
+  assert.equal(mode(file), 0o600);
+  succeeds(run("check", file));
+});
+
+for (const key of ["\n", "\u001b"]) {
+  test(`check escapes lane key ${JSON.stringify(key)} in one diagnostic line`, (t) => {
+    const state = record();
+    state.lanes[key] = state.lanes["1"];
+    delete state.lanes["1"];
+    const file = seed(t, state);
+    const before = readFileSync(file);
+    const result = run("check", file);
+    fails(result, 1, [`lanes.${JSON.stringify(key)}`]);
+    assert.equal(result.stderr, `lanes.${JSON.stringify(key)}: lane key must be a decimal lane number without leading zeros\n`);
+    assert.equal(result.stderr.includes("\u001b"), false);
+    assert.deepEqual(readFileSync(file), before);
+  });
+}
+
+test("number diagnostics quote unsafe nested keys including dots and control characters", (t) => {
+  const state = record();
+  state.evidence["a.b"] = { "\n\u001b": ["OVERFLOW"] };
+  const file = seed(t, state);
+  writeFileSync(file, readFileSync(file, "utf8").replace('"OVERFLOW"', "1e400"));
+  const before = readFileSync(file);
+  const expected = 'evidence."a.b"."\\n\\u001b".0: number is out of range and cannot be preserved\n';
+  for (const command of [["check"], ["wait-clear"]]) {
+    const result = run(command[0], file);
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, expected);
+    assert.equal(result.stderr.trimEnd().split("\n").length, 1);
+    assert.equal(result.stderr.includes("\u001b"), false);
+    assert.deepEqual(readFileSync(file), before);
+  }
+});
+
+test("lane interrupted preserves issue, branch and panes and removes a prior park reason", (t) => {
+  const before = record();
+  const file = seed(t, before);
+  succeeds(run("lane", file, "1", "--status", "interrupted"));
+  let lane = read(file).lanes["1"];
+  assert.equal(lane.status, "interrupted");
+  assert.equal(lane.issue, "126");
+  assert.equal(lane.branch, "fix/state");
+  assert.equal(lane.pane, "p2");
+  assert.deepEqual(lane.panes, ["p1", "p2"]);
+  succeeds(run("lane", file, "1", "--status", "parked", "--park-reason", "Needs input"));
+  succeeds(run("lane", file, "1", "--status", "working"));
+  assert.equal(read(file).lanes["1"].status, "working");
+  succeeds(run("lane", file, "1", "--status", "parked", "--park-reason", "Needs input"));
+  succeeds(run("lane", file, "1", "--status", "interrupted"));
+  lane = read(file).lanes["1"];
+  assert.equal(lane.status, "interrupted");
+  assert.equal(lane.issue, "126");
+  assert.equal(lane.branch, "fix/state");
+  assert.equal(lane.pane, "p2");
+  assert.deepEqual(lane.panes, ["p1", "p2"]);
+  assert.equal(Object.hasOwn(lane, "park_reason"), false);
+  preserved(file, before);
+});
