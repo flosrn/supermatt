@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Versioned durable finish state for orchestrate.
 import { randomUUID } from "node:crypto";
-import { chmodSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, posix } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -33,9 +33,21 @@ function instant(value) {
 }
 
 function numberViolations(value, location = "") {
-  if (typeof value === "number" && !Number.isFinite(value)) return [`${location || "root"}: number is out of range and cannot be preserved`];
-  if (value === null || typeof value !== "object") return [];
-  return Object.entries(value).flatMap(([key, child]) => numberViolations(child, location ? `${location}.${keyLocation(key)}` : keyLocation(key)));
+  const errors = [];
+  const stack = [[value, location]];
+  while (stack.length) {
+    const [current, path] = stack.pop();
+    if (typeof current === "number" && !Number.isFinite(current)) {
+      errors.push(`${path || "root"}: number is out of range and cannot be preserved`);
+    } else if (current !== null && typeof current === "object") {
+      const entries = Object.entries(current);
+      for (let index = entries.length - 1; index >= 0; index--) {
+        const [key, child] = entries[index];
+        stack.push([child, path ? `${path}.${keyLocation(key)}` : keyLocation(key)]);
+      }
+    }
+  }
+  return errors;
 }
 
 function violations(state) {
@@ -95,15 +107,27 @@ function check(state) {
 }
 
 function makePrivateDirectory(directory) {
-  try {
-    mkdirSync(directory, { mode: 0o700 });
-  } catch (error) {
-    if (error.code === "EEXIST") return;
-    if (error.code !== "ENOENT") throw error;
-    makePrivateDirectory(dirname(directory));
-    mkdirSync(directory, { mode: 0o700 });
+  const missing = [];
+  for (let level = directory; ; level = dirname(level)) {
+    try {
+      if (!statSync(level).isDirectory()) fail(2, `${level}: not a directory`);
+      break;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      missing.push(level);
+    }
   }
-  chmodSync(directory, 0o700);
+  while (missing.length) {
+    const level = missing.pop();
+    try {
+      mkdirSync(level, { mode: 0o700 });
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (!statSync(level).isDirectory()) fail(2, `${level}: not a directory`);
+      continue;
+    }
+    chmodSync(level, 0o700);
+  }
 }
 
 function save(file, state, exclusive = false) {

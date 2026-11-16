@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -246,6 +246,22 @@ test("create enforces private modes even with a restrictive umask and an existin
   assert.equal(mode(file), 0o600);
 });
 
+test("create refuses a non-directory parent without changing its file mode", (t) => {
+  const file = stateFile(t);
+  const parent = dirname(file);
+  writeFileSync(parent, "keep this file", { mode: 0o644 });
+  chmodSync(parent, 0o644);
+  const result = run("create", file, "--repository", "/project", "--run-key", "run-1");
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(mode(parent), 0o644);
+  assert.equal(readFileSync(parent, "utf8"), "keep this file");
+  assert.equal(existsSync(file), false);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr.trimEnd().split("\n").length, 1);
+  assert.ok(result.stderr.includes(parent), result.stderr);
+  assert.match(result.stderr, /not a directory/);
+});
+
 function preserved(file, before) {
   const after = read(file);
   assert.deepEqual(after.jobs, before.jobs);
@@ -475,6 +491,19 @@ test("check reports every out-of-range number at its nested location", (t) => {
   assert.deepEqual(readFileSync(file), before);
 });
 
+test("check and writers preserve a finite extra value nested 2000 levels deep", (t) => {
+  const nested = '{"x":'.repeat(2000) + "42" + "}".repeat(2000);
+  const state = record();
+  state.extra = JSON.parse(nested);
+  const file = create(t);
+  writeFileSync(file, JSON.stringify(state));
+  succeeds(run("check", file));
+  for (const command of [["lane", "1", "--branch", "fix/deep"], ["wait-set", "new slot"], ["wait-clear"]]) {
+    succeeds(run(command[0], file, ...command.slice(1)));
+    assert.equal(JSON.stringify(read(file).extra), nested);
+  }
+});
+
 for (const [command, change, location] of [
   [["lane", "1", "--status", "idle"], (s) => { s.lanes["1"].issue = "OVERFLOW"; }, "lanes.1.issue"],
   [["wait-set", "new slot"], (s) => { s.wait.since = "OVERFLOW"; }, "wait.since"],
@@ -506,6 +535,68 @@ test("create makes every missing directory private under umask 0777 without chan
   assert.equal(mode(dir), 0o755);
   assert.equal(mode(file), 0o600);
   succeeds(run("check", file));
+});
+
+test("concurrent creates share two missing directory levels without losing records", async (t) => {
+  const root = dirname(dirname(stateFile(t)));
+  const directory = join(root, "shared", "records");
+  const launcher = `
+    const fs = require("node:fs");
+    const { syncBuiltinESMExports } = require("node:module");
+    const directory = process.argv[1];
+    let ready = false;
+    for (const name of ["mkdirSync", "statSync"]) {
+      const original = fs[name];
+      fs[name] = (...args) => {
+        try { return original(...args); }
+        catch (error) {
+          if (!ready && args[0] === directory && error.code === "ENOENT") {
+            ready = true;
+            fs.writeSync(1, "ready\\n");
+            fs.readSync(0, Buffer.alloc(1), 0, 1, null);
+          }
+          throw error;
+        }
+      };
+    }
+    syncBuiltinESMExports();
+    process.argv = [process.execPath, ...process.argv.slice(2)];
+    import(process.argv[1]);
+  `;
+  const children = Array.from({ length: 16 }, (_, index) => {
+    const file = join(directory, `finish-${index}.json`);
+    const child = spawn(process.execPath, ["-e", launcher, directory, script,
+      "create", file, "--repository", "/project", "--run-key", `run-${index}`], { timeout: 10000 });
+    t.after(() => child.kill());
+    let stdout = "";
+    let stderr = "";
+    let signalReady;
+    const ready = new Promise((resolve) => { signalReady = resolve; });
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      if (stdout.startsWith("ready\n")) signalReady();
+    });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (status) => {
+        signalReady();
+        resolve({ status, stdout: stdout.replace(/^ready\n/, ""), stderr });
+      });
+    });
+    return { child, file, ready, done };
+  });
+  await Promise.all(children.map(({ ready }) => ready));
+  for (const { child } of children) child.stdin.end("x");
+  const results = await Promise.all(children.map(({ done }) => done));
+  results.forEach(succeeds);
+  children.forEach(({ file }, index) => {
+    assert.deepEqual(read(file), { state_version: 1, repository: "/project", run_key: `run-${index}`, lanes: {} });
+    succeeds(run("check", file));
+    assert.equal(mode(file), 0o600);
+  });
+  assert.equal(mode(directory), 0o700);
+  assert.equal(mode(dirname(directory)), 0o700);
 });
 
 for (const key of ["\n", "\u001b"]) {
