@@ -18,6 +18,22 @@ const picked = (issues) => pick(issues, "ready-for-agent", "bug", "needs-triage"
 const numbers = (issues) => picked(issues).map((i) => i.number);
 const scoped = (issues, keys) => only(issues, keys, "ready-for-agent", "bug", "needs-triage", "tier:light", "tier:standard", "tier:heavy");
 
+test("GitHub CLI relays successful gh warnings without changing queue output", (t) => {
+  const bin = mkdtempSync(join(tmpdir(), "next-issue-warning-"));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  writeFileSync(join(bin, "gh"), `#!/bin/sh
+printf 'gh warning\\n' >&2
+printf '%s' '${JSON.stringify([[issue(7)]])}'
+`, { mode: 0o755 });
+  const script = fileURLToPath(new URL("../skills/orchestrate/scripts/next-issue.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [script, "ready-for-agent", "bug", "needs-triage", "tier:light", "tier:standard", "tier:heavy"], {
+    env: { ...process.env, PATH: bin }, encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "7\tt7\tready\tnone\n");
+  assert.equal(result.stderr, "gh warning\n");
+});
+
 test("only keeps named keys in queue order and collapses duplicates", () => {
   const result = scoped([issue(36), issue(35), issue(34)], ["35", "34", "35"]);
   assert.deepEqual(result.issues.map(i => [i.number, i.stage, i.tier]), [[34, "ready", "none"], [35, "ready", "none"]]);

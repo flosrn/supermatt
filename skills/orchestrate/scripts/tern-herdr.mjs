@@ -52,7 +52,7 @@ function tern(...args) {
   const deadline = Math.min(budget, readsUntil ?? Infinity);
   let delay = 100;
   while (true) {
-    const r = spawnSync("tern", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    const r = spawnSync("tern", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
     if (r.error) throw new Failure("tern_failed", `tern ${args[0]}: ${r.error.message}`);
     if (r.status === 0) return r.stdout;
     const failed = new Failure("tern_failed", (r.stderr || `tern ${args[0]} exited ${r.status}`).trim());
