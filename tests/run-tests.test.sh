@@ -12,7 +12,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # A stand-in node whose version the cases choose.
 mkdir "$TMP/bin"
-printf '#!/bin/sh\necho "$FAKE_NODE_VERSION"\n' > "$TMP/bin/node"
+printf '#!/bin/sh\n[ -n "$FAKE_NODE_VERSION" ] || exit 127\necho "$FAKE_NODE_VERSION"\n' > "$TMP/bin/node"
 chmod +x "$TMP/bin/node"
 PATH="$TMP/bin:$PATH"
 FAKE_NODE_VERSION=v1.0.0
@@ -77,5 +77,42 @@ printf 'refs/heads/main %s refs/heads/main %s\nrefs/heads/other %s refs/heads/ot
   | sh "$REPO/scripts/run-tests.sh" --pre-push > /dev/null && [ "$(runs)" = 10 ] || fail "pre-push skipped a push holding an untested ref"
 printf '(delete) %s refs/heads/gone %s\nrefs/heads/main %s refs/heads/main %s\n' "$zero" "$(git rev-parse HEAD~1)" "$(git rev-parse HEAD)" "$zero" \
   | sh "$REPO/scripts/run-tests.sh" --pre-push > /dev/null && [ "$(runs)" = 10 ] || fail "a branch deletion in the push forced a run"
+
+# A suite that commits while it runs did not test the tree it started from, so that tree stays unrecorded.
+echo e > file && git commit -q -am start
+SUPERMATT_TEST_COMMAND="echo run >> '$TMP/runs'; if [ -f '$TMP/move' ]; then rm '$TMP/move'; echo f > file; git commit -q -am moved; fi"
+touch "$TMP/move"
+sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run that moved HEAD exited nonzero"
+pre_push HEAD~1 > /dev/null && [ "$(runs)" = 12 ] || fail "a run that moved HEAD recorded the tree it started from"
+git checkout -q HEAD~1 -- file
+SUPERMATT_TEST_COMMAND="echo run >> '$TMP/runs'; if [ -f '$TMP/move' ]; then rm '$TMP/move'; echo g > file; fi"
+touch "$TMP/move" && git commit -q -am back
+sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run that left changes exited nonzero"
+git checkout -q -- file
+pre_push > /dev/null && [ "$(runs)" = 14 ] || fail "a run that left uncommitted changes was recorded"
+
+# Without a node version the run cannot be bound to one, so it stops before the suite.
+FAKE_NODE_VERSION= && ! sh "$REPO/scripts/run-tests.sh" > /dev/null 2>&1 && [ "$(runs)" = 14 ] || fail "a run without a node version went on"
+FAKE_NODE_VERSION=v1.0.0
+
+# The record holds one entry per passing tree, command and node version.
+sh "$REPO/scripts/run-tests.sh" > /dev/null && sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "repeated green runs exited nonzero"
+[ "$(grep -c "^$(git rev-parse 'HEAD^{tree}') " .git/supermatt-test-runs)" = 1 ] || fail "two identical green runs left two entries"
+
+# The hook tests the worktree: a pushed ref whose tree is not the checked-out one is named, since the suite did not run on it.
+out="$(printf 'refs/heads/other %s refs/heads/other %s\n' "$untested" "$zero" | sh "$REPO/scripts/run-tests.sh" --pre-push)" \
+  || fail "pre-push of an untested ref exited nonzero"
+case "$out" in *refs/heads/other*) ;; *) fail "pre-push did not name the ref it did not test: $out" ;; esac
+echo h > file && git commit -q -am untested-head
+out="$(pre_push)" || fail "pre-push of an untested HEAD exited nonzero"
+case "$out" in *refs/heads/*) fail "pre-push named the ref it tested: $out" ;; esac
+
+# A suite that removes the changes it started with tested them, not the commit's tree.
+echo h2 > file && git commit -q -am dirty-start
+SUPERMATT_TEST_COMMAND="echo run >> '$TMP/runs'; rm -f leftover"
+echo x > leftover
+sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run that removed its starting changes exited nonzero"
+before="$(runs)"
+pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run that started with uncommitted changes was recorded"
 
 echo "ok"
