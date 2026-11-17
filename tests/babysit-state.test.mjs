@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
@@ -88,6 +88,11 @@ function host({ prs = [], live = null, viewer = "me" } = {}) {
         pullRequest.comments = page(p.comments, args);
         pullRequest.reviews = page(p.reviews, args);
       }
+      if (query.includes("rules(first:")) {
+        pullRequest ??= {};
+        pullRequest.baseRef ??= {};
+        pullRequest.baseRef.rules = page(p.graphqlRules ?? [], args);
+      }
       return JSON.stringify({ data: { viewer: { login: viewer }, repository: { pullRequest } } });
     }
     if (group === "api" && verb === "user") return `${viewer}\n`;
@@ -122,6 +127,88 @@ function babysat(t, over = {}) {
   return { live, h, stateFile, look };
 }
 
+test("state open and bind keep dedicated storage private under umask022 without chmodding ancestors", (t) => {
+  const ancestor = stateDir(t);
+  chmodSync(ancestor, 0o751);
+  const dir = join(ancestor, "shared-parent", "babysit-pr");
+  mkdirSync(dirname(dir), { mode: 0o755 });
+  const mask = process.umask(0o022);
+  try {
+    const { stateFile } = open(base(dir, host().gh));
+    assert.equal(statSync(dir).mode & 0o777, 0o700);
+    assert.equal(statSync(stateFile).mode & 0o777, 0o600);
+    const bound = bind(stateFile, 4);
+    assert.equal(statSync(bound).mode & 0o777, 0o600);
+    assert.equal(statSync(stateFile).mode & 0o777, 0o600);
+    assert.equal(statSync(dirname(dir)).mode & 0o777, 0o755);
+    assert.equal(statSync(ancestor).mode & 0o777, 0o751);
+  } finally { process.umask(mask); }
+});
+
+test("every state mutation upgrades existing0755 and0644 storage and preserves0600 feedback", async (t) => {
+  for (const initial of [0o644, 0o600]) for (const operation of ["snapshot", "reevaluate", "handled", "ci-result", "spend", "extend", "resume"]) await t.test(`${operation} from ${initial.toString(8)}`, (t) => {
+    const { h, stateFile } = babysat(t, { comments: [comment("C1", "PRIVATE-REVIEW-SENTINEL")] });
+    const first = snapshot({ file: stateFile, gh: h.gh, now: NOW });
+    chmodSync(dirname(stateFile), 0o755);
+    chmodSync(stateFile, initial);
+    const mask = process.umask(0o022);
+    try {
+      if (operation === "snapshot") snapshot({ file: stateFile, gh: h.gh, now: NOW + 1000 });
+      if (operation === "reevaluate") reevaluate({ file: stateFile, now: NOW + 1000 });
+      if (operation === "handled") handled(stateFile, { id: "C1", fingerprint: first.feedback[0].fingerprint, disposition: "no-action", now: NOW });
+      if (operation === "ci-result") ciResult(stateFile, { key: "check-run:1", outcome: "repaired", now: NOW });
+      if (operation === "spend") spend(stateFile, "repair", { now: NOW });
+      if (operation === "extend") extend(stateFile, "1h", { now: NOW });
+      if (operation === "resume") open(base(dirname(stateFile), h.gh));
+      assert.equal(statSync(stateFile).mode & 0o777, 0o600, "private state survives atomic replacement");
+      assert.equal(statSync(dirname(stateFile)).mode & 0o777, 0o700, "upgrade only the dedicated directory");
+      assert.match(readFileSync(stateFile, "utf8"), /PRIVATE-REVIEW-SENTINEL/);
+    } finally { process.umask(mask); }
+  });
+});
+
+test("state replacement exposes only a0600 temporary inside the dedicated0700 directory", (t) => {
+  const { stateFile, h } = babysat(t, { comments: [comment("C1", "PRIVATE-REVIEW-SENTINEL")] });
+  snapshot({ file: stateFile, gh: h.gh, now: NOW });
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import assert from "node:assert/strict";
+    import fs from "node:fs";
+    import { syncBuiltinESMExports } from "node:module";
+    import { dirname } from "node:path";
+    const file = process.argv[1];
+    const rename = fs.renameSync;
+    let inspected = false;
+    fs.renameSync = (temp, target) => {
+      assert.equal(target, file);
+      assert.equal(fs.statSync(temp).mode & 0o777, 0o600);
+      assert.equal(fs.statSync(dirname(temp)).mode & 0o777, 0o700);
+      assert.match(fs.readFileSync(temp, "utf8"), /PRIVATE-REVIEW-SENTINEL/);
+      inspected = true;
+      return rename(temp, target);
+    };
+    syncBuiltinESMExports();
+    process.umask(0o022);
+    const { extend } = await import(process.argv[2]);
+    extend(file, "1h");
+    assert.equal(inspected, true, "inspect the actual published temporary");
+  `, stateFile, new URL("../skills/babysit-pr/scripts/babysit-state.mjs", import.meta.url).href], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(statSync(stateFile).mode & 0o777, 0o600);
+});
+
+test("a state write refuses a preexisting temporary without deleting or changing it", (t) => {
+  const { stateFile } = babysat(t);
+  const before = readFileSync(stateFile, "utf8");
+  const temp = `${stateFile}.${process.pid}.tmp`;
+  writeFileSync(temp, "PREEXISTING-TEMP-SENTINEL\n", { mode: 0o640 });
+  chmodSync(temp, 0o640);
+  assert.throws(() => extend(stateFile, "1h", { now: NOW }), { code: "EEXIST" });
+  assert.equal(existsSync(temp), true, "a refused exclusive create does not own the existing temporary");
+  assert.equal(readFileSync(temp, "utf8"), "PREEXISTING-TEMP-SENTINEL\n");
+  assert.equal(statSync(temp).mode & 0o777, 0o640);
+  assert.equal(readFileSync(stateFile, "utf8"), before);
+});
+
 // gh reports a refused read on stderr; the quota endpoint, which no limit counts, names the reset.
 function refusing(h, quota) {
   return (args) => {
@@ -142,6 +229,97 @@ test("a fallback snapshot batches rich feedback into one GraphQL read and makes 
   assert.deepEqual(report.checks.missing, ["build"]);
   assert.equal(h.calls.length, 1, "one request for an ordinary fallback snapshot");
   assert.equal(h.calls[0][1], "graphql");
+});
+
+test("fallback gives ruleset-only lint its full missing-check grace without REST", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [], mergeStateStatus: "BLOCKED", graphqlRules: [
+    { type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters", requiredStatusChecks: [{ context: "lint" }] } },
+  ] });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.deepEqual(report.checks.required, ["lint"]);
+  assert.deepEqual(report.checks.missing, ["lint"]);
+  assert.equal(report.outcome, null);
+  assert.equal(report.wait_seconds, 600);
+  assert.equal(report.wait_action, "reevaluate");
+  assert.equal(h.calls.length, 1);
+  assert.ok(h.calls.every((args) => args[1] === "graphql"));
+  const due = reevaluate({ file: stateFile, now: NOW + 600_000 });
+  assert.equal(due.outcome, "blocked");
+  assert.deepEqual(due.blockers, ["required check missing: lint"]);
+  assert.equal(h.calls.length, 1, "the grace deadline reads retained data only");
+});
+
+test("fallback reads every rules page before evaluating required checks", (t) => {
+  const graphqlRules = [
+    ...Array.from({ length: 200 }, () => ({ type: "DELETION", parameters: null })),
+    { type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters", requiredStatusChecks: [{ context: "lint" }, { context: "build" }] } },
+  ];
+  const { live, h, stateFile } = babysat(t, { required: ["build"], checks: [], graphqlRules });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.deepEqual(report.checks.required, ["build", "lint"]);
+  assert.deepEqual(report.checks.missing, ["build", "lint"]);
+  assert.equal(report.wait_seconds, 600);
+  assert.equal(h.calls.length, 3, "one batched first page plus two rules overflow pages");
+  assert.ok(h.calls.every((args) => args[1] === "graphql"));
+  assert.ok(h.calls[1].includes("cursor=100"));
+  assert.ok(h.calls[2].includes("cursor=200"));
+  live.checks = [checkRun("build", "SUCCESS", 1), checkRun("lint", "SUCCESS", 2)];
+  assert.deepEqual(snapshot({ file: stateFile, gh: h.gh, now: NOW + 601_000, fallback: true }).checks.missing, []);
+  assert.equal(snapshot({ file: stateFile, gh: h.gh, now: NOW + 901_000, fallback: true }).outcome, "ready");
+});
+
+test("fallback refuses incomplete applicable rules instead of retaining a successful observation", async (t) => {
+  const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+  const malformed = [
+    ["missing connection", undefined],
+    ["null connection", null],
+    ["missing pagination flag", { nodes: [], pageInfo: {} }],
+    ["nonboolean pagination flag", { nodes: [], pageInfo: { hasNextPage: 0 } }],
+    ["missing nodes", { pageInfo: { hasNextPage: false } }],
+    ["null node", { ...empty, nodes: [null] }],
+    ["missing rule type", { ...empty, nodes: [{ parameters: null }] }],
+    ["missing parameters", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS" }] }],
+    ["null required parameters", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: null }] }],
+    ["wrong required parameter type", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "PullRequestParameters" } }] }],
+    ["missing required contexts", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters" } }] }],
+    ["missing context name", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters", requiredStatusChecks: [{}] } }] }],
+    ["empty context name", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters", requiredStatusChecks: [{ context: "" }] } }] }],
+    ["missing overflow cursor", { nodes: [], pageInfo: { hasNextPage: true, endCursor: null } }],
+  ];
+  for (const [name, rules] of malformed) await t.test(name, (t) => {
+    const { h, stateFile } = babysat(t, { checks: [] });
+    const before = readFileSync(stateFile, "utf8");
+    const gh = (args) => {
+      const response = JSON.parse(h.gh(args));
+      response.data.repository.pullRequest.baseRef.rules = args.some((arg) => arg.includes("commits(last:")) ? rules : empty;
+      return JSON.stringify(response);
+    };
+    assert.throws(() => snapshot({ file: stateFile, gh, now: NOW, fallback: true }), /incomplete applicable rules/);
+    assert.equal(readFileSync(stateFile, "utf8"), before);
+  });
+});
+
+test("fallback fails closed on partial or invalid overflow rule pages", async (t) => {
+  for (const kind of ["graphql-error", "missing-rules", "repeated-cursor"]) await t.test(kind, (t) => {
+    const { h, stateFile } = babysat(t, { graphqlRules: Array.from({ length: 101 }, () => ({ type: "DELETION", parameters: null })) });
+    const before = readFileSync(stateFile, "utf8");
+    let reads = 0;
+    const gh = (args) => {
+      reads++;
+      const response = JSON.parse(h.gh(args));
+      if (reads > 1) {
+        if (kind === "graphql-error") response.errors = [{ message: "rules permission denied" }];
+        if (kind === "missing-rules") delete response.data.repository.pullRequest.baseRef.rules;
+        if (kind === "repeated-cursor") response.data.repository.pullRequest.baseRef.rules = { nodes: [], pageInfo: { hasNextPage: true, endCursor: "100" } };
+      }
+      return JSON.stringify(response);
+    };
+    assert.throws(() => snapshot({ file: stateFile, gh, now: NOW, fallback: true }), /rules permission denied|incomplete applicable rules/);
+    assert.equal(reads, 2, "stop on the invalid overflow page, without retry or REST");
+    assert.equal(readFileSync(stateFile, "utf8"), before);
+  });
 });
 
 test("fallback keeps every same-name Actions failure without guessing rerun attempts", (t) => {
@@ -252,7 +430,7 @@ test("CLI fallback reads one batched GraphQL response and reevaluate makes no Gi
   writeFileSync(join(bin, "gh"), `#!/bin/sh
 echo call >> "${log}"
 case "$1 $2" in
-  "api graphql") echo '{"data":{"viewer":{"login":"me"},"repository":{"pullRequest":{"number":4,"state":"OPEN","headRefOid":"aaa","baseRefName":"main","baseRef":{"target":{"oid":"bbb"},"refUpdateRule":{"requiredStatusCheckContexts":["build"]}},"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}]},"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}},"reviews":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}' ;;
+  "api graphql") echo '{"data":{"viewer":{"login":"me"},"repository":{"pullRequest":{"number":4,"state":"OPEN","headRefOid":"aaa","baseRefName":"main","baseRef":{"target":{"oid":"bbb"},"rules":{"nodes":[],"pageInfo":{"hasNextPage":false}},"refUpdateRule":{"requiredStatusCheckContexts":["build"]}},"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}]},"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}},"reviews":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}' ;;
   *) echo "unexpected gh $*" >&2; exit 1 ;;
 esac
 `, { mode: 0o755 });

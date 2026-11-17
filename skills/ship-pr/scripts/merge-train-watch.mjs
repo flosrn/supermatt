@@ -208,8 +208,8 @@ function holder(options, deps) {
 }
 
 // Returns a release function, or the pid of the live reader that already holds the lock.
-function lock(options, deps) {
-  const dir = join(options.state, "watch.lock");
+function lock(options, deps, lockName = "watch.lock") {
+  const dir = join(options.state, lockName);
   const name = `${process.pid}-${randomUUID()}.json`;
   for (;;) {
     const staging = join(options.state, `.watch-${name}`);
@@ -309,22 +309,34 @@ function registered(options) {
   return names.map((name) => /^([1-9][0-9]*)\.json$/.exec(name)).filter(Boolean).map((match) => Number(match[1])).sort((a, b) => a - b);
 }
 
-function register(options, deps) {
+async function register(options, deps) {
   stateRepo(options, true);
-  const record = options["observe-only"] ? registration(options, options.pr) ?? { version: 1, repo: options.repo, pr: options.pr } : { version: 1, repo: options.repo, pr: options.pr, ...(BLOCK.test(deps.env.TERN_PANE || "") ? { origin: deps.env.TERN_PANE } : {}) };
-  record.registeredAt = iso(deps.now());
-  let listed;
-  let named;
-  for (const role of ["owner", "coordinator"]) {
-    if (options["observe-only"] || !options[role]) continue;
-    const target = pin(options[role], options[`${role}-agent`], listed ??= sessions(deps));
-    if (!target) throw new Error(`cannot register ${role}: no live local session identity in block ${options[role]}`);
-    if (target.agent && !matchingAgent(target, named ??= agents(deps))) throw new Error(`cannot register ${role}: agent alias does not match the live block, pid and session file`);
-    record[role] = target;
+  let taken;
+  for (let attempts = 0; ; attempts++) {
+    taken = lock(options, deps, `registration-${options.pr}.lock`);
+    if (taken.release) break;
+    if (attempts >= 1200) throw new Error(`registration for PR ${options.pr} is busy with pid ${taken.pid}`);
+    await deps.sleep(50);
   }
-  mkdirSync(join(options.state, "registrations"), { recursive: true, mode: 0o700 });
-  atomicJson(registrationPath(options, record.pr), record);
-  return { event: "registered", ...record };
+  try {
+    assertCredential(readObserver(options), deps);
+    const record = options["observe-only"] ? registration(options, options.pr) ?? { version: 1, repo: options.repo, pr: options.pr } : { version: 1, repo: options.repo, pr: options.pr, ...(BLOCK.test(deps.env.TERN_PANE || "") ? { origin: deps.env.TERN_PANE } : {}) };
+    record.registeredAt = iso(deps.now());
+    let listed;
+    let named;
+    for (const role of ["owner", "coordinator"]) {
+      if (options["observe-only"] || !options[role]) continue;
+      const target = pin(options[role], options[`${role}-agent`], listed ??= sessions(deps));
+      if (!target) throw new Error(`cannot register ${role}: no live local session identity in block ${options[role]}`);
+      if (target.agent && !matchingAgent(target, named ??= agents(deps))) throw new Error(`cannot register ${role}: agent alias does not match the live block, pid and session file`);
+      record[role] = target;
+    }
+    mkdirSync(join(options.state, "registrations"), { recursive: true, mode: 0o700 });
+    atomicJson(registrationPath(options, record.pr), record);
+    return { event: "registered", ...record };
+  } finally {
+    taken.release();
+  }
 }
 
 // Every recurring read goes through here: one GraphQL request, its rate-limit headers honored.
@@ -345,7 +357,7 @@ function graphql(deps, schedule, query, variables, subject) {
   const text = errors.map((error) => error?.message).filter(Boolean).join("; ") || response?.body?.message || `HTTP ${response?.status}`;
   const failed = response?.status !== 200 || errors.length > 0;
   // A secondary limit can answer 200 with an untyped error; Retry-After or the wording still names it.
-  if (failed && (response?.status === 429 || errors.some((error) => error?.type === "RATE_LIMITED") || retryAfter || exhausted || /rate limit/i.test(text))) {
+  if (failed && (response?.status === 429 || errors.some((error) => error?.type === "RATE_LIMITED") || header !== undefined || exhausted || /rate limit/i.test(text))) {
     // Both restrictions hold: a short Retry-After does not lift an exhausted allowance before its reset.
     throw new RateLimited(`GitHub rate limit refused ${subject}: ${text}`, Math.max(retryAfter, exhausted, now + MINIMUM_BACKOFF_MS));
   }
@@ -924,7 +936,7 @@ async function serve(options, deps) {
 export async function runCli(argv, overrides = {}) {
   const deps = dependencies(overrides);
   const options = parse(argv, deps.env);
-  if (options.command === "register") { deps.out(register(options, deps)); return; }
+  if (options.command === "register") { deps.out(await register(options, deps)); return; }
   if (options.command === "status") {
     stateRepo(options, false);
     deps.out({ event: "status", repo: options.repo, state: options.state, ...view(options, deps, options.pr) });

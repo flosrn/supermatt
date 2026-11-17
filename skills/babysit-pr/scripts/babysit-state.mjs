@@ -3,7 +3,7 @@
 // the CI recovery counters, handled feedback, and evidence tied to the current head.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,10 +30,21 @@ function load(file) {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
+// `dir` is dedicated babysitter storage, never its git directory or another ancestor.
+function privateDirectory(dir) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+}
+
 function save(file, state) {
+  privateDirectory(dirname(file));
   const temp = `${file}.${process.pid}.tmp`;
-  writeFileSync(temp, JSON.stringify(state, null, 2) + "\n");
-  renameSync(temp, file);
+  writeFileSync(temp, JSON.stringify(state, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+  try {
+    renameSync(temp, file);
+  } finally {
+    rmSync(temp, { force: true });
+  }
 }
 
 // Two sessions on one PR must not lose each other's writes: every read-modify-write,
@@ -233,7 +244,7 @@ export function open({ dir, gh = realGh, repo, branch, pr = null, duration = DEF
     if (requested && requested.origin !== new URL(selected.url).origin) throw new Error(`PR URL host does not match selected repository ${repo}: ${requested.href}`);
     branch = selected.headRefName;
   }
-  mkdirSync(dir, { recursive: true });
+  privateDirectory(dir);
   const discovery = branchFile(dir, repo, branch);
   return locked(discovery, () => {
     const found = existsSync(discovery) ? load(discovery) : null;
@@ -311,8 +322,10 @@ const CONNECTIONS = {
   comments: `comments(first: 100, after: $cursor) { ${COMMENT_PAGE} }`,
   reviews: "reviews(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id author { login } body url state } }",
 };
+const RULES = "rules(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { type parameters { __typename ... on RequiredStatusChecksParameters { requiredStatusChecks { context } } } } }";
 const FALLBACK = CORE.replace("$number: Int!", "$number: Int!, $cursor: String")
-  .replace("number url state", `${Object.values(CONNECTIONS).join("\n")} number url state`);
+  .replace("number url state", `${Object.values(CONNECTIONS).join("\n")} number url state`)
+  .replace("baseRef {", `baseRef { ${RULES}`);
 const THREAD_COMMENTS = `query($id: ID!, $cursor: String) { node(id: $id) { ... on PullRequestReviewThread { comments(first: 100, after: $cursor) { ${COMMENT_PAGE} } } } }`;
 
 
@@ -451,6 +464,29 @@ function branchRules(gh, repo, branch) {
   }
 }
 
+function fallbackRules(gh, repo, number, first) {
+  const [owner, name] = repo.split("/");
+  const query = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { baseRef { ${RULES} } } } }`;
+  const rules = [];
+  const cursors = new Set();
+  for (let page = first;;) {
+    if (!Array.isArray(page?.nodes) || typeof page.pageInfo?.hasNextPage !== "boolean") throw new Error("GitHub GraphQL: incomplete applicable rules");
+    for (const rule of page.nodes) {
+      if (!rule || typeof rule.type !== "string" || !rule.type) throw new Error("GitHub GraphQL: incomplete applicable rules");
+      if (rule.type !== "REQUIRED_STATUS_CHECKS") continue;
+      const parameters = rule.parameters;
+      if (parameters?.__typename !== "RequiredStatusChecksParameters" || !Array.isArray(parameters.requiredStatusChecks)
+        || parameters.requiredStatusChecks.some((check) => typeof check?.context !== "string" || !check.context.trim())) throw new Error("GitHub GraphQL: incomplete applicable rules");
+      rules.push({ type: "required_status_checks", parameters: { required_status_checks: parameters.requiredStatusChecks } });
+    }
+    if (!page.pageInfo.hasNextPage) return rules;
+    const cursor = page.pageInfo.endCursor;
+    if (typeof cursor !== "string" || !cursor || cursors.has(cursor)) throw new Error("GitHub GraphQL: incomplete applicable rules pagination");
+    cursors.add(cursor);
+    page = pullRequestOf(graphql(gh, query, { owner, name, number, cursor })).baseRef?.rules;
+  }
+}
+
 // One read of the PR as the babysitter sees it: head, base, merge state, checks on the
 // head (latest run per producer), required check names, and the feedback still on the PR.
 export function observe(gh, repo, number, { fallback = false } = {}) {
@@ -471,7 +507,7 @@ export function observe(gh, repo, number, { fallback = false } = {}) {
   const actions = reported.filter((x) => x.actions);
   const checks = [...latest.values(), ...(fallback ? actions.map((c) => ({ ...c, attempt: null })) : actionsJobs(gh, repo, actions))]
     .map(({ identity, order, actions, execution, ...c }) => c);
-  const rules = fallback ? [] : branchRules(gh, repo, pr.baseRefName);
+  const rules = fallback ? fallbackRules(gh, repo, number, pr.baseRef?.rules) : branchRules(gh, repo, pr.baseRefName);
   const required = new Set(pr.baseRef?.refUpdateRule?.requiredStatusCheckContexts ?? []);
   for (const rule of rules) if (rule.type === "required_status_checks") for (const c of rule.parameters.required_status_checks) required.add(c.context);
 

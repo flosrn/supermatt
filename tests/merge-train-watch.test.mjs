@@ -157,6 +157,66 @@ test("joining observation preserves the shipping recipients", async (t) => {
   assert.deepEqual(f.world.messages.map((item) => item.block), ["10", "20"]);
 });
 
+test("observation-only joins refuse a foreign credential before reading or renewing recipients", async (t) => {
+  const f = fixture(t);
+  await f.register();
+  f.world.comments[7] = [[]];
+  await f.watch();
+  const path = join(f.state, "registrations", "7.json");
+  const before = readFileSync(path, "utf8");
+  f.world.token = "token-b";
+  await assert.rejects(f.call("register", ["--pr", "7", "--observe-only"]), /read with other GitHub credentials/);
+  assert.equal(f.world.outputs.length, 0);
+  assert.equal(readFileSync(path, "utf8"), before);
+});
+
+test("all registration writers enforce host and credential isolation and release refused locks", async (t) => {
+  for (const mode of [["--observe-only"], ["--owner", "10"]]) for (const identity of ["host", "missing"]) {
+    const f = fixture(t);
+    await f.register();
+    f.world.comments[7] = [[]];
+    await f.watch();
+    const before = readFileSync(join(f.state, "registrations", "7.json"), "utf8");
+    const overrides = identity === "host" ? { env: { ...f.env, GH_HOST: "ghe.example.test" } } : { run(command, args) { if (command === "gh") throw new Error("no local credential"); return f.run(command, args); } };
+    await assert.rejects(f.call("register", ["--pr", "7", ...mode], overrides), /read with other GitHub credentials/);
+    assert.equal(f.world.outputs.length, 0);
+    assert.equal(readFileSync(join(f.state, "registrations", "7.json"), "utf8"), before);
+    assert.equal(existsSync(join(f.state, "registration-7.lock")), false);
+  }
+});
+
+test("a concurrent shipping replacement wins after an observation join reads the old recipients", async (t) => {
+  const f = fixture(t);
+  await f.register();
+  f.world.sessions.push(session("30", 303), session("40", 404));
+  let replacement;
+  const now = () => {
+    replacement ??= f.call("register", ["--pr", "7", "--owner", "30", "--coordinator", "40"]);
+    return Date.parse("2026-01-01T00:00:01Z");
+  };
+  await f.call("register", ["--pr", "7", "--observe-only"], { now });
+  await replacement;
+  const final = JSON.parse(readFileSync(join(f.state, "registrations", "7.json"), "utf8"));
+  assert.deepEqual([final.owner.block, final.coordinator.block], ["30", "40"]);
+  await f.watch();
+  assert.deepEqual(f.world.messages.map((item) => item.block), ["30", "40"]);
+});
+
+test("registration recovers a dead writer and releases its own lock after an invalid recipient", async (t) => {
+  const f = fixture(t);
+  await f.register();
+  mkdirSync(join(f.state, "registration-7.lock"));
+  writeFileSync(join(f.state, "registration-7.lock", "999-aaaa.json"), JSON.stringify({ pid: 999 }));
+  const renewed = await f.call("register", ["--pr", "7", "--observe-only"], { alive: () => false });
+  assert.equal(renewed.owner.block, "10");
+  assert.equal(existsSync(join(f.state, "registration-7.lock")), false);
+  await assert.rejects(f.call("register", ["--pr", "7", "--owner", "99"]), /cannot register owner/);
+  assert.equal(existsSync(join(f.state, "registration-7.lock")), false);
+  await f.call("register", ["--pr", "7", "--observe-only"]);
+  await f.watch();
+  assert.deepEqual(f.world.messages.map((item) => item.block), ["10", "20"]);
+});
+
 test("observation-only registration starts without recipients and renews a retired registration", async (t) => {
   const f = fixture(t);
   const c = clock(f);
@@ -540,6 +600,16 @@ test("both an exhausted reset and a shorter Retry-After are honored, as is Retry
     assert.ok(f.world.requests.slice(1).every((request) => request.at >= permitted), kind);
     assert.ok(f.world.requests.length > 1, kind);
   }
+});
+
+test("an epoch Retry-After still classifies a forbidden response as a quota refusal", async (t) => {
+  const f = fixture(t);
+  const c = clock(f);
+  f.world.github = () => ({ status: 403, headers: { "retry-after": "Thu, 01 Jan 1970 00:00:00 GMT" }, body: { message: "Forbidden" } });
+  const refused = await f.call("watch", ["--once"], c.overrides).catch((error) => error);
+  assert.equal(refused.retryAt, c.timeline.now + 60_000);
+  await assert.rejects(f.call("watch", ["--once"], c.overrides), /no request sent/);
+  assert.equal(f.world.requests.length, 1);
 });
 
 test("a malformed recorded pause is invalid state, never the absence of a pause", async (t) => {
