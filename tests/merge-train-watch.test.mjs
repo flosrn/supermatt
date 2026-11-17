@@ -440,13 +440,14 @@ test("a spent allowance stops the rest of the observation until its reset", asyn
 });
 
 test("both an exhausted reset and a shorter Retry-After are honored, as is Retry-After on an untyped secondary limit", async (t) => {
-  for (const kind of ["both", "secondary"]) {
+  for (const kind of ["both", "secondary", "date"]) {
     const f = fixture(t);
     const c = clock(f, { naps: 4 });
     const start = c.timeline.now;
     const permitted = kind === "both" ? start + 1_800_000 : start + 900_000;
     f.world.github = () => {
       if (c.timeline.now >= permitted) return undefined;
+      if (kind === "date") return refusal(429, { "retry-after": new Date(permitted).toUTCString() });
       return kind === "both" ? refusal(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(permitted / 1000), "retry-after": "300" })
         : { status: 200, headers: { ...RATE, "retry-after": "900" }, body: { errors: [{ message: "You have exceeded a secondary rate limit." }] } };
     };
@@ -454,6 +455,18 @@ test("both an exhausted reset and a shorter Retry-After are honored, as is Retry
     assert.ok(f.world.requests.slice(1).every((request) => request.at >= permitted), kind);
     assert.ok(f.world.requests.length > 1, kind);
   }
+});
+
+test("a malformed recorded pause is invalid state, never the absence of a pause", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  await f.watch();
+  const path = join(f.state, "observer.json");
+  writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), pauseUntil: "soon" }));
+  f.reset();
+  await assert.rejects(f.watch(), /invalid observer state/);
+  assert.equal(f.world.requests.length, 0);
+  await assert.rejects(f.call("status", ["--pr", "7"]), /invalid observer state/);
 });
 
 test("a wait that times out sends no read past its deadline", async (t) => {

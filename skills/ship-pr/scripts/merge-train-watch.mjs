@@ -342,8 +342,9 @@ function graphql(deps, schedule, query, variables, subject) {
   const headers = response?.headers ?? {};
   const remaining = headers["x-ratelimit-remaining"];
   const reset = Number(headers["x-ratelimit-reset"]) * 1000;
-  const after = Number(headers["retry-after"]);
-  const retryAfter = headers["retry-after"] !== undefined && Number.isFinite(after) ? now + after * 1000 : 0;
+  // Retry-After is delay seconds or an HTTP date (RFC 9110).
+  const header = headers["retry-after"]?.trim();
+  const retryAfter = header === undefined ? 0 : /^[0-9]+$/.test(header) ? now + Number(header) * 1000 : Date.parse(header) || now + MINIMUM_BACKOFF_MS;
   const exhausted = remaining === "0" && Number.isFinite(reset) ? reset : 0;
   const errors = Array.isArray(response?.body?.errors) ? response.body.errors : [];
   const text = errors.map((error) => error?.message).filter(Boolean).join("; ") || response?.body?.message || `HTTP ${response?.status}`;
@@ -544,7 +545,8 @@ function snapshotOf(options, value, previous, now) {
 
 function readObserver(options) {
   const record = readJson(observerPath(options), undefined);
-  if (record !== undefined && (record?.version !== 1 || record.repo !== options.repo || typeof record.attempt?.outcome !== "string")) throw new Error("invalid observer state");
+  // A pause that cannot be read is invalid state, never the absence of a pause.
+  if (record !== undefined && (record?.version !== 1 || record.repo !== options.repo || typeof record.attempt?.outcome !== "string" || (record.pauseUntil != null && Number.isNaN(Date.parse(record.pauseUntil))))) throw new Error("invalid observer state");
   return record;
 }
 
