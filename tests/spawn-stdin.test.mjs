@@ -38,8 +38,8 @@ function closing(text, open) {
   return text.length;
 }
 
-// Splits a call's argument list at its top-level commas.
-function args(text) {
+// Splits a call's argument list at its top-level commas, or an expression at another top-level separator.
+function args(text, separator = ",") {
   const parts = [];
   let start = 0;
   for (let i = 0; i < text.length; i++) {
@@ -47,7 +47,7 @@ function args(text) {
     if ("([{".includes(c)) i = closing(text, i) - 1;
     else if ("'\"`".includes(c)) {
       for (i++; i < text.length && text[i] !== c; i++) if (text[i] === "\\") i++;
-    } else if (c === ",") {
+    } else if (c === separator) {
       parts.push(text.slice(start, i).trim());
       start = i + 1;
     }
@@ -136,24 +136,36 @@ const detaches = (value) => {
   return ["ignore", "inherit"].includes(stringLiteral(first));
 };
 
-// A string or template literal, or a variable, property or call result: what a caller passes as data. Anything
-// else (null, undefined, void, parentheses, operators) may evaluate to nothing, so it proves no input.
-const feeds = (value) =>
-  stringLiteral(value) !== null ||
-  (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(|$)/.test(value) &&
-    !/^(?:null|undefined|void)\b/.test(value) &&
-    (!value.includes("(") || closing(value, value.indexOf("(")) === value.length));
+// What a caller passes as data: a string or template literal, a constructed buffer, a concatenation with a string
+// literal, or a variable, property or call result. A keyword value (null, undefined, false, void ...) and any other
+// operator may evaluate to nothing, so it proves no input.
+function feeds(value) {
+  while (value.startsWith("(") && closing(value, 0) === value.length) value = value.slice(1, -1).trim();
+  if (stringLiteral(value) !== null) return true;
+  const operands = args(value, "+");
+  if (operands.length > 1) return operands.some((operand) => stringLiteral(operand) !== null);
+  const [reference] = /^(?:new\s+)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/.exec(value) ?? [""];
+  if (!reference || /^(?:null|undefined|void|false|true|NaN|Infinity|typeof|delete|await)\b/.test(value)) return false;
+  const rest = value.slice(reference.length).trim();
+  return rest === "" || (rest.startsWith("(") && closing(rest, 0) === rest.length);
+}
+
+// An accessor or method property's key: `get input() {}`, `async report() {}`.
+const methodKey = /^(?:(?:get|set|async)\s+)?\*?\s*(?:([A-Za-z_$][\w$]*)|(["'])([^"']*)\2)\s*\(/;
 
 // Whether an options literal's own top-level properties ignore or inherit stdin, or feed it an input. Only plain
-// `key: value` and shorthand properties are read: a spread, computed key, accessor or method may redefine stdio or
-// input, so it leaves both unproven until a later plain property settles them.
+// `key: value` and shorthand properties settle stdio or input: an accessor or method named stdio or input unproves
+// that one, and a spread or computed key may redefine either, so it unproves both until a later plain property.
 function stdinIsSafe(literal) {
   let detached = false;
   let fed = false;
   for (const part of args(literal.slice(1, -1))) {
     const property = /^(?:([A-Za-z_$][\w$]*)|(["'])([^"']*)\2)\s*(?::\s*([\s\S]*))?$/.exec(part);
     if (!property) {
-      detached = fed = false;
+      const method = methodKey.exec(part);
+      const key = method && (method[1] ?? method[3]);
+      if (!method || key === "stdio") detached = false;
+      if (!method || key === "input") fed = false;
       continue;
     }
     const key = property[1] ?? property[3];
@@ -264,7 +276,14 @@ test("only a plain literal stdio or a present input value proves stdin, whatever
     'execFileSync("cat", [], { input: render(x) });',
     'execFileSync("cat", [], { input: `a${b}` });',
     'execFileSync("git", [], { stdio: `inherit` });',
+    'execFileSync("git", [], { input: false });',
+    'execFileSync("git", [], { stdio: "ignore", set stdio(value) {} });',
+    'execFileSync("cat", [], { input: ("hello") });',
+    'execFileSync("cat", [], { input: "a" + b });',
+    'execFileSync("cat", [], { input: new Uint8Array([104, 105]) });',
+    'execFileSync("cat", [], { input: "hello", get note() { return 1; } });',
+    'execFileSync("git", [], { stdio: "ignore", async report() {} });',
   ].join("\n"));
   const at = (line) => `${relative(repo, file)}:${line}: execFileSync`;
-  assert.deepEqual(pipedStdinSpawns([root]), [1, 2, 3, 4, 5, 6, 7, 8].map(at));
+  assert.deepEqual(pipedStdinSpawns([root]), [1, 2, 3, 4, 5, 6, 7, 8, 13, 14].map(at));
 });
