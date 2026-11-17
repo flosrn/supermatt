@@ -309,6 +309,8 @@ function prepare(repositoryArgument, scratchArgument) {
   if (!stats.isDirectory()) throw new Error("scratch root is not a directory");
   const root = realpathSync(scratchPath);
   if (!outside(repository, root)) throw new Error("scratch directory must be outside the repository");
+  if (!outside(root, repository)) throw new Error("scratch directory must not contain the repository");
+  if (existing(join(root, ".git"))) throw new Error("scratch root contains .git; pass the repository first and scratch second");
 
   const environments = virtualenvs(root);
   if (!environments.length) {

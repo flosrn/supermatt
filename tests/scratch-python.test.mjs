@@ -306,6 +306,39 @@ test("the helper refuses a scratch inside the repository, a linked or missing sc
   assert.deepEqual(snapshot(root), before);
 });
 
+function repositoryWithVirtualenv(t) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "scratch-python-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = join(root, "parent/repository");
+  const venv = join(repository, ".venv");
+  const runtimeBin = join(root, "runtime/bin");
+  mkdirSync(runtimeBin, { recursive: true });
+  // Report sys.prefix without requiring an installed or copyable Python runtime.
+  writeFileSync(join(runtimeBin, "python3"), "#!/bin/sh\ncd \"$(dirname \"$0\")/..\" && pwd -P\n", { mode: 0o755 });
+  mkdirSync(join(venv, "bin"), { recursive: true });
+  writeFileSync(join(venv, "pyvenv.cfg"), `home = ${runtimeBin}\n`);
+  symlinkSync(join(runtimeBin, "python3"), join(venv, "bin/python"));
+  return { root, repository };
+}
+
+test("the helper refuses a scratch ancestor without changing the repository", (t) => {
+  const { root, repository } = repositoryWithVirtualenv(t);
+  const before = snapshot(repository);
+  const result = prepare(repository, join(root, "parent"));
+  assert.deepEqual({ status: result.status, fingerprint: snapshot(repository) }, { status: 1, fingerprint: before }, result.stderr || result.stdout);
+  assert.match(result.stderr, /^Scratch Python preparation failed: scratch directory must not contain the repository/);
+});
+
+test("the helper refuses swapped arguments without changing the repository", (t) => {
+  const { root, repository } = repositoryWithVirtualenv(t);
+  mkdirSync(join(repository, ".git"));
+  const scratch = copy(repository, join(root, "scratch"));
+  const before = snapshot(repository);
+  const result = prepare(scratch, repository);
+  assert.deepEqual({ status: result.status, fingerprint: snapshot(repository) }, { status: 1, fingerprint: before }, result.stderr || result.stdout);
+  assert.match(result.stderr, /^Scratch Python preparation failed: scratch root contains \.git/);
+});
+
 test("the helper fails when a virtualenv's interpreter is missing, dangling, does not start, or runs another environment", (t) => {
   const root = mkdtempSync(join(tmpdir(), "scratch-python-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
