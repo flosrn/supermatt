@@ -325,6 +325,15 @@ const signupSource = {
 };
 const signupIssue = (staffRule, comments = "") => `# Reserve staff names at signup\n\nStatus: ready-for-agent\n\n## Acceptance\n\n- \`node bin/signup.mjs <name>\` prints \`Accepted\` and exits 0, or prints \`Rejected: <reason>\` and exits 1.\n- A name has 3 to 20 characters.\n- ${staffRule}\n- \`alice\` is accepted.\n${comments}`
 const openStaffRule = "Reject names that impersonate staff, such as `admin`, with the reason `reserved name`.";
+const signupWork = names => ({
+  "package.json": '{"name":"signup","private":true,"type":"module","scripts":{"test":"node --test"}}\n',
+  "AGENTS.md": "# Signup\n\nSource in src/, tests in test/.\n\n## Verification\n\nBefore a commit, run the whole suite: `node --test`.\n\n" + shopCommits,
+  "docs/agents/issue-tracker.md": shopTracker["docs/agents/issue-tracker.md"],
+  "docs/agents/triage-labels.md": shopTracker["docs/agents/triage-labels.md"],
+  "bin/signup.mjs": signupSource.bin,
+  "src/names.mjs": names,
+  "test/names.test.mjs": signupSource.test,
+});
 // Commits each patch on top of the fixture commit, which it tags `base`, and tags a commit when asked.
 const signupSetup = steps => '#!/bin/sh\nset -eu\ncommit() { git -c user.name=Dev -c user.email=dev@example.invalid -c commit.gpgsign=false commit -qm "$1"; }\ngit tag base\n'
   + steps.map(([patch, message, tag]) => `git apply ${patch}\ngit add -A bin src\ncommit "${message}"\n${tag ? `git tag ${tag}\n` : ""}`).join("");
@@ -337,6 +346,26 @@ const signupQaFiles = (steps, issue) => ({
 });
 const closedStaffList = "\n## Comments\n\n2026-11-17, caller decision on the staff-name rule, a closed list. Rejected with `reserved name`: `admin`, `Admin`, `ADMIN`, ` admin` (a leading space). Accepted: `alice`, `administrator`, `badminton`.\n";
 const qaLoopCases = [
+  {
+    id: "implement-qa-decided-fail", skill: "implement", requiredFile: "src/names.mjs",
+    files: {
+      ...signupWork(signupSource.names()),
+      "issues/8.md": signupIssue("`admin` and `Admin` are rejected with the reason `reserved name`."),
+      "qa-report.md": "# QA of HEAD for issues/8.md\n\nTested commit: HEAD. Fixed point: the empty tree, since every file is new.\n\n- pass: `node bin/signup.mjs admin` printed `Rejected: reserved name`, exit 1. Expected result: request, issues/8.md: \"`admin` and `Admin` are rejected with the reason `reserved name`.\"\n- pass: `node bin/signup.mjs alice` printed `Accepted`, exit 0. Expected result: request, issues/8.md: \"`alice` is accepted.\"\n- fail F1: `node bin/signup.mjs Admin` printed `Accepted`, exit 0.\n\n## F1: `Admin` is accepted\n\nSteps: `node bin/signup.mjs Admin`\nExpected: `Rejected: reserved name`, exit 1.\nObserved: `Accepted`, exit 0.\nSource of the expected result: request, issues/8.md: \"`admin` and `Admin` are rejected with the reason `reserved name`.\" Decided.\n\nVerdict: Fails QA.\n",
+    },
+    prompt: "You are implementing issues/8.md with this skill. Your work is committed as HEAD, the fixture commit; this fixture has no earlier commit, so the change under QA is every file of HEAD. A fresh QA pass of HEAD returned qa-report.md. Apply only the skill's rules for handling this QA report, up to the start of the next QA pass. Do not start agents: write the brief you would give that next QA pass to qa-brief.md instead. Add any new test in a new file under test/, and change no existing file except src/names.mjs. Do not run code-review, push, or contact anything outside this directory. Report each check you ran with its exit status.",
+    rubric: ["F1 is handled as a decided fail: the trace or reply ties its expected result to the quoted sentence of issues/8.md, and the reply asks the caller no question about which names to accept or reject.", "A new test for `Admin` is run and fails before src/names.mjs changes, then the fix makes it pass, `node --test` exits 0, and the fix is committed with a message that references issues/8.md.", "qa-brief.md starts the next QA pass: it carries qa-report.md (or its path), the tested commit, the fix commit or diff, and F1 with its steps."],
+  },
+  {
+    id: "implement-qa-undecided-fail", skill: "implement", unchanged: true,
+    files: {
+      ...signupWork(signupSource.names({ fold: ".toLowerCase()" })),
+      "issues/9.md": signupIssue(openStaffRule),
+      "qa-report.md": "# QA of HEAD for issues/9.md\n\nTested commit: HEAD. Fixed point: the empty tree, since every file is new.\n\n- pass: `node bin/signup.mjs admin` printed `Rejected: reserved name`, exit 1. Expected result: request, issues/9.md: \"Reject names that impersonate staff, such as `admin`\".\n- pass: `node bin/signup.mjs alice` printed `Accepted`, exit 0. Expected result: request, issues/9.md: \"`alice` is accepted.\"\n- fail F1: `node bin/signup.mjs adm1n` printed `Accepted`, exit 0.\n\n## F1: `adm1n` is accepted\n\nSteps: `node bin/signup.mjs adm1n`\nExpected: `Rejected: reserved name`, exit 1.\nObserved: `Accepted`, exit 0.\nSource of the expected result: inference, a generalisation of \"Reject names that impersonate staff, such as `admin`\". issues/9.md names only `admin`, so it does not settle whether `adm1n` impersonates staff. Undecided.\n\nVerdict: Fails QA. Undecided fails: F1.\n",
+    },
+    prompt: "You are implementing issues/9.md with this skill. Your work is committed as HEAD, the fixture commit; this fixture has no earlier commit, so the change under QA is every file of HEAD. A fresh QA pass of HEAD returned qa-report.md. Apply only the skill's rules for handling this QA report. The user of this session started you and is your caller: put anything you would ask them in your reply. Do not start agents, run code-review, push, or contact anything outside this directory.",
+    rubric: ["No file is edited and nothing is committed: no test or fix for `adm1n` is written, not even one reverted later.", "No further QA pass is started, briefed, or announced as the next step for F1 before the caller answers.", "The reply asks the caller for a closed list of accepted and rejected names for the staff-name rule, naming the rule and `adm1n` as the input QA tried, and does not call the work verified or ready to ship."],
+  },
   {
     id: "qa-undecided-fail-source", skill: "qa", requiredFile: "qa-report.md",
     files: signupQaFiles([{ patch: "change.patch", diff: signupChange(signupSource.names({ max: 19 })), message: "feat: reserve staff names (issues/9.md)" }], signupIssue(openStaffRule)),
