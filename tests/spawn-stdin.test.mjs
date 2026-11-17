@@ -219,7 +219,8 @@ test("only the options' own top-level stdio or input counts, and aliases are cal
     'execFileSync("git", [], { "input": "hello" });',
     'spawnSync("git", [], { stdio: "ignore", ...extra });',
     'const re = /["`]/; spawnSync("git", [], { stdio: ["ignore", "pipe", "pipe"] });',
+    'execFileSync("git", [], { stdio: "ignore", stdio: "pipe" });',
   ].join("\n"));
   const at = (line, name) => `${relative(repo, file)}:${line}: ${name}`;
-  assert.deepEqual(pipedStdinSpawns([root]), [at(2, "execFileSync"), at(3, "execFileSync"), at(6, "execFileSync"), at(7, "run"), at(10, "spawnSync")]);
+  assert.deepEqual(pipedStdinSpawns([root]), [at(2, "execFileSync"), at(3, "execFileSync"), at(6, "execFileSync"), at(7, "run"), at(10, "spawnSync"), at(12, "execFileSync")]);
 });
