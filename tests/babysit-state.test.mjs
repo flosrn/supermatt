@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
@@ -143,6 +143,35 @@ test("a refusal that names no exhausted allowance waits at least a minute", (t) 
   assert.throws(() => snapshot({ file: stateFile, gh: refusing(h, { core: { remaining: 10, reset: NOW / 1000 }, graphql: { remaining: 10, reset: NOW / 1000 } }), now: NOW }), (error) => error.retryAt === NOW + 60_000);
   assert.throws(() => look(NOW + 59_000), RateLimited);
   assert.equal(look(NOW + 60_000).pr.number, 4);
+});
+
+test("a refusal named only by Retry-After, or carried in a GraphQL error answer, pauses for it", (t) => {
+  for (const kind of ["forbidden", "graphql-error"]) {
+    const { h, stateFile } = babysat(t);
+    const gh = (args) => {
+      if (args[0] === "api" && args[1] === "rate_limit") return JSON.stringify({ resources: { core: { remaining: 10, reset: NOW / 1000 }, graphql: { remaining: 10, reset: NOW / 1000 } } });
+      if (args[0] === "api" && args[1] === "graphql") {
+        h.calls.push(args);
+        if (kind === "forbidden") throw Object.assign(new Error("Command failed: gh api graphql"), { stdout: "HTTP/2.0 403 Forbidden\r\nRetry-After: 900\r\n\r\n{\"message\":\"Forbidden\"}", stderr: "gh: Forbidden (HTTP 403)\n" });
+        return "HTTP/2.0 200 OK\r\nRetry-After: 900\r\n\r\n{\"errors\":[{\"message\":\"You have exceeded a secondary rate limit.\"}]}";
+      }
+      return h.gh(args);
+    };
+    assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), (error) => error instanceof RateLimited && error.retryAt === NOW + 900_000, kind);
+    const calls = h.calls.length;
+    assert.throws(() => snapshot({ file: stateFile, gh, now: NOW + 60_000 }), /no request sent/, kind);
+    assert.equal(h.calls.length, calls, kind);
+  }
+});
+
+test("a pause of the repository's shared observer holds snapshots without a request", (t) => {
+  const { h, stateFile } = babysat(t);
+  const root = stateDir(t);
+  mkdirSync(join(root, "acme", "app"), { recursive: true });
+  writeFileSync(join(root, "acme", "app", "observer.json"), JSON.stringify({ version: 1, repo: "acme/app", pauseUntil: new Date(NOW + 1_800_000).toISOString(), attempt: { at: new Date(NOW).toISOString(), outcome: "rate-limited" } }));
+  assert.throws(() => snapshot({ file: stateFile, gh: h.gh, now: NOW, observers: root }), (error) => error instanceof RateLimited && error.retryAt === NOW + 1_800_000);
+  assert.equal(h.calls.filter((args) => args[1] === "graphql").length, 0);
+  assert.equal(snapshot({ file: stateFile, gh: h.gh, now: NOW + 1_800_000, observers: root }).pr.number, 4);
 });
 
 test("a secondary limit's Retry-After is honored, and answers that carry their HTTP headers still parse", (t) => {

@@ -4,6 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -324,6 +325,14 @@ function http(text) {
   return { headers, body: blank ? text.slice(blank.index + blank[0].length) : "" };
 }
 
+// A refusal that names Retry-After is a rate limit whatever its wording, on a failed exit
+// or on a GraphQL error answer; the error carries how long GitHub asked to wait.
+function retryAfter(headers, error) {
+  const after = Number(headers["retry-after"]);
+  if (headers["retry-after"] !== undefined && Number.isFinite(after)) error.retryAfterSeconds = after;
+  return error;
+}
+
 function graphql(gh, query, variables) {
   const args = ["api", "graphql", "-f", `query=${query}`];
   for (const [key, value] of Object.entries(variables)) {
@@ -332,13 +341,11 @@ function graphql(gh, query, variables) {
   args.push("--include");
   let text;
   try { text = gh(args); } catch (error) {
-    const { headers } = http(typeof error?.stdout === "string" ? error.stdout : "");
-    const after = Number(headers["retry-after"]);
-    if (headers["retry-after"] !== undefined && Number.isFinite(after)) error.retryAfterSeconds = after;
-    throw error;
+    throw retryAfter(http(typeof error?.stdout === "string" ? error.stdout : "").headers, error);
   }
-  const response = JSON.parse(http(text).body);
-  if (response.errors?.length) throw new Error(`GitHub GraphQL: ${response.errors.map((e) => e.message).join("; ")}`);
+  const { headers, body } = http(text);
+  const response = JSON.parse(body);
+  if (response.errors?.length) throw retryAfter(headers, new Error(`GitHub GraphQL: ${response.errors.map((e) => e.message).join("; ")}`));
   if (!response.data) throw new Error("GitHub GraphQL: empty response");
   return response.data;
 }
@@ -603,17 +610,33 @@ function retryAfterRefusal(gh, now) {
   return Math.max(now + 60_000, ...resets);
 }
 
+// The pause ship-pr's shared observer recorded for this repository, if it runs here. The
+// GitHub account's allowance is shared, so no snapshot reads before the observer may.
+function observerPause(observers, repo) {
+  if (!observers) return 0;
+  let record;
+  try { record = JSON.parse(readFileSync(join(observers, ...repo.toLowerCase().split("/"), "observer.json"), "utf8")); } catch (error) {
+    if (error.code === "ENOENT") return 0;
+    throw error;
+  }
+  if (record?.version !== 1 || record.repo !== repo.toLowerCase()) throw new Error(`invalid shared observer state for ${repo}`);
+  const until = Date.parse(record.pauseUntil ?? "");
+  return Number.isFinite(until) ? until : 0;
+}
+
 // The GitHub read happens inside the state transaction: an observation is never applied to
 // state another session advanced after it was taken. A refused read is no observation: it
 // records when GitHub permits the next request, and no snapshot asks before then.
-export function snapshot({ file, gh = realGh, now = Date.now() }) {
+export function snapshot({ file, gh = realGh, now = Date.now(), observers }) {
   const result = update(file, (state) => {
     if (state.pr == null) throw new Error("no PR bound yet: create it, then run bind");
     const paused = Date.parse(state.github_pause?.until ?? "");
     if (paused > now) return { refused: new RateLimited(`GitHub rate limit pause until ${state.github_pause.until}; no request sent`, paused) };
+    const shared = observerPause(observers, state.repo);
+    if (shared > now) return { refused: new RateLimited(`the shared GitHub observer is paused for a rate limit until ${new Date(shared).toISOString()}; no request sent`, shared) };
     let seen;
     try { seen = observe(gh, state.repo, state.pr); } catch (error) {
-      if (!RATE_LIMIT.test(`${error?.stderr ?? ""} ${error?.message ?? ""}`)) throw error;
+      if (error?.retryAfterSeconds == null && !RATE_LIMIT.test(`${error?.stderr ?? ""} ${error?.message ?? ""}`)) throw error;
       const until = Math.max(retryAfterRefusal(gh, now), error.retryAfterSeconds != null ? now + error.retryAfterSeconds * 1000 : 0);
       state.github_pause = { until: new Date(until).toISOString(), at: new Date(now).toISOString() };
       return { refused: new RateLimited(`GitHub rate limit refused the snapshot; the next permitted request is at ${state.github_pause.until}`, until) };
@@ -682,7 +705,8 @@ function main(argv) {
       return open({ dir, repo, branch, pr, duration: values.duration });
     }
     case "bind": return { bound: pr, stateFile: bind(values.state, pr) };
-    case "snapshot": return snapshot({ file: values.state });
+    // ship-pr's shared observer keeps its state under this default root, one directory per repository.
+    case "snapshot": return snapshot({ file: values.state, observers: join(process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state"), "supermatt", "merge-train") });
     case "handled": handled(values.state, values); return { handled: values.id };
     case "ci-result": ciResult(values.state, values); return { recorded: values.key };
     case "spend": return spend(values.state, positionals[0], { note: values.note });
