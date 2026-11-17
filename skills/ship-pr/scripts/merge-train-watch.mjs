@@ -22,7 +22,9 @@ const RED = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "ST
 const PASS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 const PENDING_STATUS = new Set(["PENDING", "EXPECTED"]);
 const PENDING_DEPLOYMENT = new Set(["PENDING", "QUEUED", "IN_PROGRESS", "WAITING"]);
-const FAILED_DEPLOYMENT = new Set(["ERROR", "FAILURE"]);
+// ABANDONED is a pending deployment nothing updated for 30 minutes: it never deployed.
+const FAILED_DEPLOYMENT = new Set(["ERROR", "FAILURE", "ABANDONED"]);
+const DEPLOYED = new Set(["ACTIVE", "INACTIVE", "DESTROYED"]);
 // An attached process reads only local files, so it can look often without touching GitHub.
 const FOLLOW_MS = 15_000;
 // GitHub asks for at least a minute after a refusal that names no reset or Retry-After.
@@ -32,6 +34,7 @@ const STALL_INTERVALS = 3;
 // A head without checks, or a merge without post-merge runs, settles only after GitHub had time to register them.
 const SETTLE_MS = 120_000;
 // A merged PR stays observed until its post-merge runs and deployments settle, for at least this long.
+// Runs still pending a day after the merge stop being read and read as unknown, never as settled.
 const QUIET_AFTER_MERGE_MS = 30 * 60_000;
 const TRACK_AFTER_MERGE_MS = 24 * 60 * 60_000;
 const WAIT_FOR = ["checks", "merge", "post-merge", "change"];
@@ -44,11 +47,14 @@ const PULL = `number state merged mergedAt updatedAt headRefOid labels(first: 10
 const MERGE = `mergeCommit { oid statusCheckRollup { ${CONTEXTS} }
   checkSuites(first: 100) { pageInfo { hasNextPage } nodes { status conclusion workflowRun { databaseId url workflow { name } } } }
   deployments(first: 100) { pageInfo { hasNextPage } nodes { id environment state } } }`;
-// One observation: the open merge-labelled PRs with their comments and head checks, then each other registered PR.
-const LIST = `query ObserveList($owner: String!, $name: String!, $cursor: String) { viewer { login } repository(owner: $owner, name: $name) {
-  pullRequests(states: OPEN, labels: ["merge"], first: 20, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { ${PULL} comments(last: 100) { ${COMMENTS} } } } } }`;
-const ONE = `query ObservePull($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) {
-  pullRequest(number: $number) { ${PULL} ${MERGE} } } }`;
+// One observation is one request: the open merge-labelled PRs with their comments and head checks,
+// and every other registered PR as an alias of the first page. Later pages carry no alias.
+function listQuery(numbers) {
+  const registered = numbers.map((number) => `pr${number}: pullRequest(number: ${number}) { ${PULL} ${MERGE} }`).join("\n  ");
+  return `query ObserveList($owner: String!, $name: String!, $cursor: String) { viewer { login } repository(owner: $owner, name: $name) {
+  pullRequests(states: OPEN, labels: ["merge"], first: 20, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { ${PULL} comments(last: 100) { ${COMMENTS} } } }
+  ${registered} } }`;
+}
 const EARLIER = `query EarlierComments($owner: String!, $name: String!, $number: Int!, $before: String!) { repository(owner: $owner, name: $name) {
   pullRequest(number: $number) { comments(last: 100, before: $before) { ${COMMENTS} } } } }`;
 // The immediate read that authorizes a delivery: the exact head, state and labels right now.
@@ -161,7 +167,7 @@ function parse(argv, env) {
   options.repo = options.repo.toLowerCase();
   options.state = resolve(options.state ?? defaultState(env, options.repo));
   if (options.pr !== undefined || command === "register" || command === "wait") {
-    if (!/^[1-9][0-9]*$/.test(options.pr || "")) throw new Error("--pr must be a positive integer");
+    if (!/^[1-9][0-9]*$/.test(options.pr || "") || !Number.isSafeInteger(Number(options.pr))) throw new Error("--pr must be a positive integer");
     options.pr = Number(options.pr);
   }
   if (command === "register") options.owner ??= env.TERN_PANE;
@@ -327,24 +333,27 @@ function register(options, deps) {
 }
 
 // Every recurring read goes through here: one GraphQL request, its rate-limit headers honored.
-// A refusal is unknown state with the next permitted time, never an empty answer.
+// A refusal is unknown state with the next permitted time, never an empty answer. A request
+// that spent the allowance stops the rest of this observation, not only the next one.
 function graphql(deps, schedule, query, variables, subject) {
+  if ((schedule.pauseUntil ?? 0) > deps.now()) throw new RateLimited(`GitHub allowance spent; no request for ${subject} before ${iso(schedule.pauseUntil)}`, schedule.pauseUntil);
   const response = deps.github(query, variables);
   const now = deps.now();
   const headers = response?.headers ?? {};
   const remaining = headers["x-ratelimit-remaining"];
   const reset = Number(headers["x-ratelimit-reset"]) * 1000;
+  const after = Number(headers["retry-after"]);
+  const retryAfter = headers["retry-after"] !== undefined && Number.isFinite(after) ? now + after * 1000 : 0;
+  const exhausted = remaining === "0" && Number.isFinite(reset) ? reset : 0;
   const errors = Array.isArray(response?.body?.errors) ? response.body.errors : [];
   const text = errors.map((error) => error?.message).filter(Boolean).join("; ") || response?.body?.message || `HTTP ${response?.status}`;
-  const limited = response?.status === 429 || errors.some((error) => error?.type === "RATE_LIMITED")
-    || (response?.status === 403 && (remaining === "0" || headers["retry-after"] !== undefined || /rate limit/i.test(text)));
-  if (limited) {
-    const after = Number(headers["retry-after"]);
-    const permitted = headers["retry-after"] !== undefined && Number.isFinite(after) ? now + after * 1000 : remaining === "0" && Number.isFinite(reset) ? reset : 0;
-    throw new RateLimited(`GitHub rate limit refused ${subject}: ${text}`, Math.max(permitted, now + MINIMUM_BACKOFF_MS));
+  const failed = response?.status !== 200 || errors.length > 0;
+  // A secondary limit can answer 200 with an untyped error; Retry-After or the wording still names it.
+  if (failed && (response?.status === 429 || errors.some((error) => error?.type === "RATE_LIMITED") || retryAfter || exhausted || /rate limit/i.test(text))) {
+    // Both restrictions hold: a short Retry-After does not lift an exhausted allowance before its reset.
+    throw new RateLimited(`GitHub rate limit refused ${subject}: ${text}`, Math.max(retryAfter, exhausted, now + MINIMUM_BACKOFF_MS));
   }
-  // A successful answer that spent the last request still forbids the next one before reset.
-  if (remaining === "0" && Number.isFinite(reset) && reset > now) schedule.pauseUntil = Math.max(schedule.pauseUntil ?? 0, reset);
+  if (exhausted > now) schedule.pauseUntil = Math.max(schedule.pauseUntil ?? 0, exhausted);
   if (response?.status !== 200) throw new Error(`GitHub GraphQL HTTP ${response?.status} for ${subject}: ${text}`);
   if (errors.length) throw new Error(`GitHub GraphQL failed for ${subject}: ${text}`);
   if (!response.body?.data || typeof response.body.data !== "object") throw new Error(`invalid GitHub GraphQL response for ${subject}`);
@@ -357,9 +366,12 @@ function labelsOf(labels, subject) {
   return labels.nodes.map((label) => label.name);
 }
 
-function contextsOf(rollup, subject) {
-  const contexts = rollup?.contexts ?? { pageInfo: { hasNextPage: false }, nodes: [] };
-  if (!Array.isArray(contexts.nodes) || typeof contexts.pageInfo?.hasNextPage !== "boolean") throw new Error(`invalid check rollup for ${subject}`);
+// GitHub answers a null rollup for a commit without checks; a missing field is an incomplete answer.
+function contextsOf(commit, subject) {
+  if (!Object.hasOwn(commit, "statusCheckRollup")) throw new Error(`invalid check rollup for ${subject}`);
+  if (commit.statusCheckRollup === null) return [];
+  const contexts = commit.statusCheckRollup?.contexts;
+  if (!Array.isArray(contexts?.nodes) || typeof contexts.pageInfo?.hasNextPage !== "boolean") throw new Error(`invalid check rollup for ${subject}`);
   if (contexts.pageInfo.hasNextPage) throw new Error(`more than 100 checks on ${subject}; the watcher cannot prove none failed`);
   return contexts.nodes.map((node) => {
     const isRun = node?.__typename === "CheckRun";
@@ -384,7 +396,7 @@ function checksOf(sha, contexts) {
 
 function postMergeOf(commit, subject) {
   if (!SHA.test(commit?.oid || "")) throw new Error(`merged ${subject} has no readable merge commit`);
-  const checks = checksOf(commit.oid, contextsOf(commit.statusCheckRollup, `the merge commit of ${subject}`));
+  const checks = checksOf(commit.oid, contextsOf(commit, `the merge commit of ${subject}`));
   const suites = commit.checkSuites;
   const deployments = commit.deployments;
   if (!Array.isArray(suites?.nodes) || typeof suites.pageInfo?.hasNextPage !== "boolean" || !Array.isArray(deployments?.nodes) || typeof deployments.pageInfo?.hasNextPage !== "boolean") throw new Error(`invalid merge commit for ${subject}`);
@@ -397,7 +409,9 @@ function postMergeOf(commit, subject) {
   });
   const deployed = deployments.nodes.map((deployment) => {
     if (typeof deployment?.state !== "string") throw new Error(`invalid merge commit for ${subject}`);
-    return { environment: deployment.environment ?? null, state: deployment.state, result: PENDING_DEPLOYMENT.has(deployment.state) ? "pending" : FAILED_DEPLOYMENT.has(deployment.state) ? "fail" : "pass" };
+    const result = PENDING_DEPLOYMENT.has(deployment.state) ? "pending" : FAILED_DEPLOYMENT.has(deployment.state) ? "fail" : DEPLOYED.has(deployment.state) ? "pass" : undefined;
+    if (!result) throw new Error(`unknown deployment state ${quoted(deployment.state)} on the merge commit of ${subject}`);
+    return { environment: deployment.environment ?? null, state: deployment.state, result };
   });
   const results = new Set([checks.state === "failure" ? "fail" : checks.state === "pending" ? "pending" : "pass", ...workflows.map((item) => item.result), ...deployed.map((item) => item.result)]);
   const any = checks.state !== "none" || workflows.length || deployed.length;
@@ -410,10 +424,10 @@ function pullOf(node, expected) {
   if (!["OPEN", "CLOSED", "MERGED"].includes(node.state) || !SHA.test(node.headRefOid || "") || typeof node.updatedAt !== "string") throw new Error(`invalid pull request response for ${subject}`);
   const commit = node.commits?.nodes?.[0]?.commit;
   if (!SHA.test(commit?.oid || "")) throw new Error(`invalid check rollup for ${subject}`);
-  const value = { number: node.number, state: node.state, head: node.headRefOid, updatedAt: node.updatedAt, labels: labelsOf(node.labels, subject), checks: checksOf(commit.oid, contextsOf(commit.statusCheckRollup, subject)) };
+  const value = { number: node.number, state: node.state, head: node.headRefOid, updatedAt: node.updatedAt, labels: labelsOf(node.labels, subject), checks: checksOf(commit.oid, contextsOf(commit, subject)) };
   if (node.state === "MERGED") {
     if (Number.isNaN(Date.parse(node.mergedAt))) throw new Error(`invalid pull request response for ${subject}`);
-    // Only the per-PR read carries the merge commit; a merged PR always has one.
+    // Only the aliased read of a registered PR carries the merge commit; a merged PR always has one.
     value.postMerge = postMergeOf(node.mergeCommit, subject);
     value.merge = { sha: value.postMerge.sha, at: node.mergedAt };
   }
@@ -471,11 +485,19 @@ function observe(options, deps, schedule, observer) {
     if (observer?.viewer && observer.viewer !== login) throw new Error(`this state holds observations for GitHub identity ${observer.viewer}, but gh is authenticated as ${login}; use a separate --state rather than switching accounts`);
     viewer = login;
   };
+  // A settled PR stays retired until someone registers it again.
+  const wanted = registered(options).filter((number) => {
+    const record = registration(options, number);
+    const previous = readJson(snapshotPath(options, number), undefined);
+    return !(previous?.final && Date.parse(record.registeredAt) <= Date.parse(previous.observedAt));
+  });
   const tracked = new Map();
   const comments = new Map();
+  let aliased;
   for (let cursor = null; ;) {
-    const data = graphql(deps, schedule, LIST, { owner, name, cursor }, "the merge-labelled pull request list");
+    const data = graphql(deps, schedule, listQuery(cursor === null ? wanted : []), { owner, name, cursor }, "the merge-labelled pull request list");
     identify(data);
+    aliased ??= data.repository;
     const page = data.repository?.pullRequests;
     if (!Array.isArray(page?.nodes) || typeof page.pageInfo?.hasNextPage !== "boolean") throw new Error("invalid pull request listing");
     for (const node of page.nodes) {
@@ -488,19 +510,17 @@ function observe(options, deps, schedule, observer) {
     if (typeof page.pageInfo.endCursor !== "string" || !page.pageInfo.endCursor || page.pageInfo.endCursor === cursor) throw new Error("invalid pull request listing");
     cursor = page.pageInfo.endCursor;
   }
-  const queue = [...tracked.values()].filter(eligible).map((value) => value.number);
+  for (const number of wanted) if (!tracked.has(number)) tracked.set(number, pullOf(aliased[`pr${number}`], number));
+  const queue = [...tracked.values()].filter((value) => comments.has(value.number) && eligible(value)).map((value) => value.number);
   for (const number of queue) tracked.get(number).comments = commentsOf(deps, schedule, options, number, comments.get(number));
-  for (const number of registered(options)) {
-    if (tracked.has(number)) continue;
-    const record = registration(options, number);
-    const previous = readJson(snapshotPath(options, number), undefined);
-    // A settled PR stays retired until someone registers it again.
-    if (previous?.final && Date.parse(record.registeredAt) <= Date.parse(previous.observedAt)) continue;
-    const data = graphql(deps, schedule, ONE, { owner, name, number }, `PR ${number}`);
-    identify(data);
-    tracked.set(number, pullOf(data.repository?.pullRequest, number));
-  }
   return { viewer, tracked, queue };
+}
+
+// A short digest of the local gh credential: consumers compare theirs with the reader's without
+// any network request, so one principal's observations are never served to another.
+function credentialOf(deps) {
+  try { return createHash("sha256").update(deps.exec("gh", ["auth", "token"]).trim()).digest("hex").slice(0, 16); }
+  catch { return null; }
 }
 
 function digest(value) {
@@ -540,17 +560,17 @@ function publish(options, deps, observation, observer, schedule, now) {
   }
   const until = schedule.pauseUntil ?? 0;
   atomicJson(observerPath(options), {
-    version: 1, repo: options.repo, viewer: observation.viewer, interval: options.interval, observedAt: iso(now),
+    version: 1, repo: options.repo, viewer: observation.viewer, credential: observation.credential, interval: options.interval, observedAt: iso(now),
     attempt: { at: iso(now), outcome: "ok" }, queue: { observedAt: iso(now), prs: observation.queue }, pauseUntil: until > now ? iso(until) : null,
   });
 }
 
 // A failed read keeps the last observation and its queue, visibly stale, and records why and when to retry.
-function recordFailure(options, deps, error, schedule, observer) {
+function recordFailure(options, deps, error, schedule, observer, credential) {
   const now = deps.now();
   const until = Math.max(error.retryAt ?? 0, schedule.pauseUntil ?? 0, Date.parse(observer?.pauseUntil ?? "") || 0);
   atomicJson(observerPath(options), {
-    version: 1, repo: options.repo, viewer: observer?.viewer ?? null, interval: options.interval, observedAt: observer?.observedAt ?? null,
+    version: 1, repo: options.repo, viewer: observer?.viewer ?? null, credential: observer?.credential ?? credential, interval: options.interval, observedAt: observer?.observedAt ?? null,
     attempt: { at: iso(now), outcome: error instanceof RateLimited ? "rate-limited" : "unknown", error: error.message, ...(until > now ? { retryAt: iso(until) } : {}) },
     queue: observer?.queue ?? null, pauseUntil: until > now ? iso(until) : null,
   });
@@ -646,18 +666,23 @@ function tick(options, deps, globalCoordinator) {
   const schedule = {};
   const now = deps.now();
   let observation;
+  const credential = credentialOf(deps);
+  // The state holds one principal's reads; another credential gets its own state, not a mix.
+  if (observer?.credential && credential !== observer.credential) throw new Error("these observations were read with other GitHub credentials; use a separate --state for this identity rather than switching accounts");
   try { observation = observe(options, deps, schedule, observer); }
   catch (error) {
-    if (!dry) recordFailure(options, deps, error, schedule, observer);
+    if (!dry) recordFailure(options, deps, error, schedule, observer, credential);
     throw error;
   }
+  observation.credential = credential;
   if (!dry) publish(options, deps, observation, observer, schedule, now);
-  const pending = eventsOf(options, observation).filter((event) => !Object.hasOwn(ledger.events, key(event)));
+  // A recipient whose delivery failed stays pending until it receives the event.
+  const pending = eventsOf(options, observation).filter((event) => !Object.hasOwn(ledger.events, key(event)) || ledger.events[key(event)].retry?.length);
   const results = [];
   try {
     if (pending.length) deliverAll(options, deps, globalCoordinator, ledger, pending, results, schedule);
   } catch (error) {
-    if (!dry) recordFailure(options, deps, error, schedule, readObserver(options));
+    if (!dry) recordFailure(options, deps, error, schedule, readObserver(options), credential);
     throw error;
   }
   if (!dry && schedule.pauseUntil > pausedUntil(options)) atomicJson(observerPath(options), { ...readObserver(options), pauseUntil: iso(schedule.pauseUntil) });
@@ -686,10 +711,12 @@ function deliverAll(options, deps, globalCoordinator, ledger, pending, results, 
   for (const [index, event] of pending.entries()) {
     if (!holds(event)) continue;
     const record = records[index];
+    const entry = ledger.events[key(event)];
     const candidates = routes(options, record, globalCoordinator, listed, named, authorized, deps);
     if (options["dry-run"]) { results.push({ ...event, outcome: "planned", routes: candidates.map(({ target, ...route }) => route), errors }); continue; }
     const failures = [...errors];
     const receipts = [];
+    const retry = [];
     let moved = false;
     const attempt = (route) => {
       if (!holds(event)) { moved = true; return false; }
@@ -699,31 +726,47 @@ function deliverAll(options, deps, globalCoordinator, ledger, pending, results, 
         return true;
       } catch (error) { failures.push(`${route.kind} ${route.block}: ${error.message}`); return false; }
     };
-    for (const role of ["owner", "coordinator"]) {
-      for (const route of candidates.filter((item) => item.role === role)) if (moved || attempt(route)) break;
+    for (const role of entry ? entry.retry : ["owner", "coordinator"]) {
+      const available = candidates.filter((item) => item.role === role);
+      let delivered = false;
+      for (const route of available) if (moved || (delivered = attempt(route))) break;
       if (moved) break;
+      // Only a recipient with a route that failed is retried; one with no live route is not.
+      if (available.length && !delivered) retry.push(role);
     }
-    if (!receipts.length && !moved) for (const route of candidates.filter((item) => item.kind === "notification")) if (moved || attempt(route)) break;
-    if (receipts.length) {
-      const [first, ...copies] = receipts;
-      ledger.events[key(event)] = { ...first, ...(copies.length ? { copies } : {}), event: { type: event.type, pr: event.pr, head: event.head } };
+    if (!entry && !receipts.length && !moved) for (const route of candidates.filter((item) => item.kind === "notification")) if (moved || attempt(route)) break;
+    const pendingRoles = moved ? [] : retry;
+    if (entry) {
+      const copies = [...(entry.copies ?? []), ...receipts];
+      const { retry: _, ...rest } = entry;
+      ledger.events[key(event)] = { ...rest, ...(copies.length ? { copies } : {}), ...(pendingRoles.length ? { retry: pendingRoles } : {}) };
       atomicJson(join(options.state, "delivered.json"), ledger);
-      results.push({ ...event, ...first, ...(copies.length ? { copies } : {}), errors: failures });
+      if (receipts.length) results.push({ ...event, ...receipts[0], errors: failures });
+    } else if (receipts.length) {
+      const [first, ...copies] = receipts;
+      ledger.events[key(event)] = { ...first, ...(copies.length ? { copies } : {}), ...(pendingRoles.length ? { retry: pendingRoles } : {}), event: { type: event.type, pr: event.pr, head: event.head } };
+      atomicJson(join(options.state, "delivered.json"), ledger);
+      results.push({ ...event, ...first, ...(copies.length ? { copies } : {}), ...(pendingRoles.length ? { retry: pendingRoles } : {}), errors: failures });
     } else if (!moved) results.push({ ...event, outcome: "pending", errors: failures.length ? failures : ["no reachable session or notification pane"] });
   }
 }
 
 // What a consumer may rely on: the PR's last observation, and every reason it may be out of date.
+// Observations read with other GitHub credentials are refused outright, never served.
 function view(options, deps, number) {
   const now = deps.now();
   const observer = readObserver(options);
+  if (observer && (!observer.credential || observer.credential !== (deps.credential ??= credentialOf(deps)))) throw new Error("these observations were read with other GitHub credentials; use a separate --state for this identity rather than switching accounts");
   const snapshot = number === undefined ? undefined : readJson(snapshotPath(options, number), null);
+  const record = number === undefined ? undefined : registration(options, number);
   const pid = holder(options, deps);
   const until = Date.parse(observer?.pauseUntil ?? "");
   const paused = Number.isFinite(until) && until > now;
   const reasons = [];
-  // A final observation records a settled PR; it no longer needs a live reader to stay true.
-  if (!snapshot?.final) {
+  // A settled observation no longer needs a live reader, until the PR is registered again.
+  const settled = snapshot?.final && !(record && Date.parse(record.registeredAt) > Date.parse(snapshot.observedAt));
+  if (settled && snapshot.postMerge?.state === "pending") reasons.push(`observation stopped ${iso(Date.parse(snapshot.merge.at) + TRACK_AFTER_MERGE_MS)} with post-merge runs still pending; register PR ${number} again to resume it`);
+  if (!settled) {
     if (!pid) reasons.push("no observer is running");
     if (!observer) reasons.push("nothing has been observed yet");
     else if (observer.attempt.outcome !== "ok") reasons.push(`the last GitHub read was ${observer.attempt.outcome}: ${observer.attempt.error}`);
@@ -739,19 +782,17 @@ function view(options, deps, number) {
 }
 
 // The result a waiting consumer gets once the observation settles what it waits for, or undefined.
+// A PR whose head is not the one waited for never satisfies the wait, merged or not.
 function decide(options, snapshot, now) {
-  const moved = options.head && snapshot.head !== options.head;
   if (options.for === "change") return snapshot.digest !== options.after ? "changed" : undefined;
+  if (options.head && snapshot.head !== options.head) return "head-moved";
   if (snapshot.state === "CLOSED") return "closed";
-  if (options.for === "merge") return snapshot.state === "MERGED" ? "merged" : moved ? "head-moved" : undefined;
+  if (options.for === "merge") return snapshot.state === "MERGED" ? "merged" : undefined;
   if (options.for === "post-merge") {
-    if (snapshot.state !== "MERGED") return moved ? "head-moved" : undefined;
-    if (!snapshot.postMerge || snapshot.postMerge.state === "pending" || Date.parse(snapshot.observedAt) - Date.parse(snapshot.merge.at) < SETTLE_MS) return undefined;
+    if (snapshot.state !== "MERGED" || !snapshot.postMerge || snapshot.postMerge.state === "pending" || Date.parse(snapshot.observedAt) - Date.parse(snapshot.merge.at) < SETTLE_MS) return undefined;
     return snapshot.postMerge.state;
   }
   if (snapshot.state === "MERGED") return "merged";
-  // A green check of another commit never proves this head.
-  if (moved) return "head-moved";
   const checks = snapshot.checks;
   if (checks.sha !== snapshot.head || checks.state === "pending") return undefined;
   if (checks.state === "none" && now - Date.parse(snapshot.headSince) < SETTLE_MS) return undefined;
@@ -809,7 +850,8 @@ async function serve(options, deps) {
       let next = FOLLOW_MS;
       claim();
       if (!release && !dry && attached !== holderPid) { attached = holderPid; deps.out({ event: "attached", pid: holderPid }); }
-      if (release || dry) {
+      // A wait past its deadline only reports; it sends no further read.
+      if ((release || dry) && deps.now() < deadline) {
         const until = pausedUntil(options);
         if (until > deps.now()) {
           if (options.once) throw Object.assign(new Error(`GitHub rate limit pause until ${iso(until)}; no request sent`), { retryAt: until });

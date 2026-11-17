@@ -36,7 +36,7 @@ function graphComment(item) {
 }
 
 // Translates the REST-shaped world into the GraphQL answers the observer requests.
-function answer(world, operation, variables) {
+function answer(world, operation, variables, query = "") {
   const read = (number) => { const value = world.pulls[number]; return typeof value === "function" ? value() : value; };
   const labels = (value) => (Array.isArray(value?.labels) ? { pageInfo: { hasNextPage: false }, nodes: value.labels.map((label) => ({ name: label.name })) } : value?.labels);
   const state = (value) => (value?.state === "open" ? "OPEN" : value?.merged ? "MERGED" : value?.state === "closed" ? "CLOSED" : value?.state);
@@ -62,9 +62,10 @@ function answer(world, operation, variables) {
     if (!Array.isArray(world.issues)) return { data: { viewer: { login: world.viewer }, repository: { pullRequests: world.issues } } };
     const index = variables.cursor ? Number(variables.cursor) : 0;
     const nodes = world.issues[index].filter((item) => item.pull_request).map((item) => node(item.number));
-    return { data: { viewer: { login: world.viewer }, repository: { pullRequests: { pageInfo: { hasNextPage: index < world.issues.length - 1, endCursor: String(index + 1) }, nodes } } } };
+    // Registered PRs ride in the same request as aliases.
+    const aliased = Object.fromEntries([...query.matchAll(/\bpr(\d+): pullRequest\(number: (\d+)\)/g)].map((match) => [`pr${match[1]}`, node(Number(match[2]))]));
+    return { data: { viewer: { login: world.viewer }, repository: { pullRequests: { pageInfo: { hasNextPage: index < world.issues.length - 1, endCursor: String(index + 1) }, nodes }, ...aliased } } };
   }
-  if (operation === "ObservePull") return { data: { viewer: { login: world.viewer }, repository: { pullRequest: node(variables.number) } } };
   if (operation === "EarlierComments") return { data: { repository: { pullRequest: { comments: commentPage(variables.number, Number(variables.before) - 1) } } } };
   if (operation === "CurrentPull") {
     const value = read(variables.number);
@@ -82,21 +83,23 @@ function fixture(t) {
   const world = {
     issues: [[issue()]], pulls: { 7: pr() }, comments: { 7: [[comment()]] }, rollups: {}, viewer: "acme-operator",
     sessions: [session("10", 101), session("20", 202)], agents: [agent()],
-    calls: [], requests: [], messages: [], notifications: [], prompts: [], outputs: [],
+    calls: [], requests: [], messages: [], notifications: [], prompts: [], outputs: [], token: "token-a",
     sendFailures: new Set(), notifyFails: false, promptFails: false,
   };
   const env = { HOME: dir, TERN_PANE: "90", TERN_SESSIONS_CONFIG: config };
   // The instrumented GitHub transport: every observer read is one GraphQL request recorded here.
   function github(query, variables) {
     const operation = /^query (\w+)/.exec(query)?.[1];
-    world.requests.push({ operation, variables: { ...variables } });
+    world.requests.push({ operation, variables: { ...variables }, aliases: [...query.matchAll(/\bpr(\d+): pullRequest/g)].map((match) => Number(match[1])) });
     if (world.ghFails) throw new Error("GitHub read unavailable");
     const override = world.github?.(operation, variables);
     if (override) return override;
-    return { status: 200, headers: RATE, body: answer(world, operation, variables) };
+    return { status: 200, headers: RATE, body: answer(world, operation, variables, query) };
   }
   function run(command, args) {
     world.calls.push({ command, args: [...args] });
+    // A local credential read: no network request.
+    if (command === "gh" && args.join(" ") === "auth token") return `${world.token}\n`;
     if (command === "tern-sessions") {
       if (args[0] === "list") {
         if (world.listFails) throw new Error("session list unavailable");
@@ -146,15 +149,29 @@ function fixture(t) {
 test("the recurring observation makes no REST call and at most one GraphQL request per tracked PR", async (t) => {
   const f = fixture(t);
   f.world.issues = [[issue(7), issue(8)], [issue(9)]];
-  for (const number of [8, 9]) { f.world.pulls[number] = pr(number); f.world.comments[number] = [[]]; }
+  for (const number of [8, 9, 10]) { f.world.pulls[number] = pr(number, number === 10 ? { labels: [] } : {}); f.world.comments[number] = [[]]; }
   f.world.comments[7] = [[]];
   await f.register();
+  await f.call("register", ["--pr", "10", "--owner", "10"]);
   f.reset();
   const result = await f.watch();
   assert.equal(result.open, 3);
-  assert.equal(f.world.calls.some((call) => call.command === "gh"), false, "no REST read in the loop");
-  assert.deepEqual(f.world.requests.map((request) => request.operation), ["ObserveList", "ObserveList"]);
-  assert.ok(f.world.requests.length <= 3);
+  assert.deepEqual(f.world.calls.filter((call) => call.command === "gh").map((call) => call.args.join(" ")), ["auth token"], "no REST read in the loop");
+  assert.deepEqual(f.world.requests.map((request) => [request.operation, request.aliases]), [["ObserveList", [7, 10]], ["ObserveList", []]]);
+});
+
+test("one registered PR without the merge label costs one request", async (t) => {
+  const f = fixture(t);
+  f.world.issues = [[]];
+  f.world.pulls[7] = pr(7, { labels: [] });
+  await f.register();
+  await f.watch();
+  assert.equal(f.world.requests.length, 1);
+});
+
+test("a PR number beyond exact integer range is refused rather than rounded", async (t) => {
+  const f = fixture(t);
+  await assert.rejects(f.call("register", ["--pr", "9007199254740993", "--owner", "10"]), /--pr must be a positive integer/);
 });
 
 test("a conflict marker from the train's bot account is trusted, and a user with the same bare login is not", async (t) => {
@@ -322,11 +339,37 @@ test("a closed registered PR is read once and retired until someone registers it
   await f.register();
   await f.watch();
   await f.watch();
-  assert.deepEqual(f.world.requests.map((request) => request.operation), ["ObserveList", "ObservePull", "ObserveList"]);
+  assert.deepEqual(f.world.requests.map((request) => request.aliases), [[7], []]);
   const c = clock(f, { start: Date.now() + 60_000 });
   await f.call("register", ["--pr", "7", "--owner", "10"], c.overrides);
   await f.call("watch", ["--once"], c.overrides);
-  assert.equal(f.world.requests.at(-1).operation, "ObservePull");
+  assert.deepEqual(f.world.requests.at(-1).aliases, [7]);
+});
+
+test("a re-registered settled PR is current again: a failed read makes it unknown instead of its old settled state", async (t) => {
+  const f = fixture(t);
+  f.world.issues = [[]];
+  f.world.pulls[7] = pr(7, { state: "closed", labels: [] });
+  await f.register();
+  await f.watch();
+  const c = clock(f, { start: Date.now() + 60_000 });
+  await f.call("register", ["--pr", "7", "--owner", "10"], c.overrides);
+  f.world.github = () => ({ status: 401, headers: RATE, body: { message: "Bad credentials" } });
+  await assert.rejects(f.call("watch", ["--once"], c.overrides), /HTTP 401/);
+  const status = await f.call("status", ["--pr", "7"], c.overrides);
+  assert.equal(status.outcome, "unknown");
+  await assert.rejects(f.call("wait", ["--pr", "7", "--for", "merge", "--timeout", "120"], c.overrides), /timed out/);
+});
+
+test("a merge from another head never satisfies a wait for the checked head", async (t) => {
+  const f = fixture(t);
+  f.world.issues = [[]];
+  f.world.pulls[7] = pr(7, { head: { sha: NEXT }, state: "closed", merged: true, merged_at: "2026-01-01T00:00:00Z", labels: [], merge_commit: { oid: CANDIDATE, statusCheckRollup: null, checkSuites: { pageInfo: { hasNextPage: false }, nodes: [] }, deployments: { pageInfo: { hasNextPage: false }, nodes: [] } } });
+  await f.register();
+  for (const kind of ["checks", "merge", "post-merge"]) {
+    const result = await f.call("wait", ["--pr", "7", "--for", kind, "--head", HEAD], clock(f).overrides);
+    assert.deepEqual([result.result, result.head], ["head-moved", NEXT], kind);
+  }
 });
 
 test("a merged registered PR reports its merge SHA, then its post-merge workflows and deployments at that SHA", async (t) => {
@@ -349,7 +392,88 @@ test("a merged registered PR reports its merge SHA, then its post-merge workflow
   assert.deepEqual(settled.snapshot.postMerge.workflows.map((item) => [item.name, item.result]), [["Deploy", "pass"]]);
   assert.deepEqual(settled.snapshot.postMerge.deployments, [{ environment: "production", state: "ACTIVE", result: "pass" }]);
   assert.ok(Date.parse(settled.observedAt) - Date.parse("2026-01-01T00:00:00Z") >= 120_000, "post-merge runs had time to register");
-  assert.ok(f.world.requests.every((request) => ["ObserveList", "ObservePull"].includes(request.operation)));
+  assert.ok(f.world.requests.every((request) => request.operation === "ObserveList"));
+});
+
+test("an abandoned deployment fails post-merge verification, and an unknown deployment state is unreadable", async (t) => {
+  for (const [state, expected] of [["ABANDONED", "failure"], ["NOT_A_STATE", /unknown deployment state "NOT_A_STATE"/]]) {
+    const f = fixture(t);
+    f.world.issues = [[]];
+    f.world.pulls[7] = pr(7, { state: "closed", merged: true, merged_at: "2026-01-01T00:00:00Z", labels: [], merge_commit: { oid: CANDIDATE, statusCheckRollup: null, checkSuites: { pageInfo: { hasNextPage: false }, nodes: [] }, deployments: { pageInfo: { hasNextPage: false }, nodes: [{ id: "D_1", environment: "production", state }] } } });
+    await f.register();
+    if (typeof expected === "string") assert.equal((await f.call("wait", ["--pr", "7", "--for", "post-merge"], clock(f).overrides)).result, expected, state);
+    else await assert.rejects(f.watch(), expected, state);
+  }
+});
+
+test("post-merge runs still pending a day after the merge stop being read and read as unknown, never settled", async (t) => {
+  const f = fixture(t);
+  f.world.issues = [[]];
+  f.world.pulls[7] = pr(7, { state: "closed", merged: true, merged_at: "2026-01-01T00:00:00Z", labels: [], merge_commit: { oid: CANDIDATE, statusCheckRollup: null, checkSuites: { pageInfo: { hasNextPage: false }, nodes: [{ status: "WAITING", conclusion: null, workflowRun: { databaseId: 9, url: null, workflow: { name: "Deploy" } } }] }, deployments: { pageInfo: { hasNextPage: false }, nodes: [] } } });
+  const c = clock(f, { start: Date.parse("2026-01-02T01:00:00Z") });
+  await f.call("register", ["--pr", "7", "--owner", "10"], c.overrides);
+  await f.call("watch", ["--once"], c.overrides);
+  const status = await f.call("status", ["--pr", "7"], c.overrides);
+  assert.equal(status.outcome, "unknown");
+  assert.match(status.reasons.join(" "), /still pending/);
+  await f.call("watch", ["--once"], c.overrides);
+  assert.deepEqual(f.world.requests.map((request) => request.aliases), [[7], []], "no longer read");
+});
+
+test("a head commit or rollup missing its check fields is unreadable, not a head without checks", async (t) => {
+  for (const [kind, commit] of [["no rollup field", { oid: HEAD }], ["no contexts", { oid: HEAD, statusCheckRollup: {} }]]) {
+    const f = fixture(t);
+    f.world.rollups[7] = commit;
+    await assert.rejects(f.watch(), /invalid check rollup/, kind);
+  }
+});
+
+test("a spent allowance stops the rest of the observation until its reset", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[comment("held", CANDIDATE, 2)], [comment()]];
+  const c = clock(f, { naps: 3 });
+  const reset = c.timeline.now + 1_800_000;
+  f.world.github = (operation) => (f.world.requests.length === 1 ? { status: 200, headers: { ...RATE, "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset / 1000) }, body: answer(f.world, operation, { owner: "acme", name: "app" }) } : undefined);
+  await assert.rejects(f.call("watch", ["--coordinator", "20"], c.overrides), Stop);
+  assert.ok(f.world.requests.slice(1).every((request) => request.at >= reset), "no EarlierComments before the reset");
+  assert.equal(f.world.requests[1].operation, "ObserveList");
+});
+
+test("both an exhausted reset and a shorter Retry-After are honored, as is Retry-After on an untyped secondary limit", async (t) => {
+  for (const kind of ["both", "secondary"]) {
+    const f = fixture(t);
+    const c = clock(f, { naps: 4 });
+    const start = c.timeline.now;
+    const permitted = kind === "both" ? start + 1_800_000 : start + 900_000;
+    f.world.github = () => {
+      if (c.timeline.now >= permitted) return undefined;
+      return kind === "both" ? refusal(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(permitted / 1000), "retry-after": "300" })
+        : { status: 200, headers: { ...RATE, "retry-after": "900" }, body: { errors: [{ message: "You have exceeded a secondary rate limit." }] } };
+    };
+    await assert.rejects(f.call("watch", [], c.overrides), Stop);
+    assert.ok(f.world.requests.slice(1).every((request) => request.at >= permitted), kind);
+    assert.ok(f.world.requests.length > 1, kind);
+  }
+});
+
+test("a wait that times out sends no read past its deadline", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  await f.register();
+  await assert.rejects(f.call("wait", ["--pr", "7", "--for", "merge", "--timeout", "1"], clock(f).overrides), /timed out/);
+  assert.equal(f.world.requests.length, 1);
+});
+
+test("observations read with other GitHub credentials are refused to a consumer, never served", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  await f.register();
+  await f.watch();
+  assert.equal((await f.call("status", ["--pr", "7"])).pr.head, HEAD);
+  f.world.token = "token-b";
+  await assert.rejects(f.call("status", ["--pr", "7"]), /read with other GitHub credentials/);
+  assert.equal(f.world.outputs.length, 0);
+  await assert.rejects(f.call("wait", ["--pr", "7", "--for", "change", "--after", "0000000000000000"], clock(f).overrides), /read with other GitHub credentials/);
 });
 
 test("a missing observation never satisfies a wait: it reports unknown state and times out instead of succeeding", async (t) => {
@@ -531,6 +655,20 @@ test("failed transports remain pending and a later successful tick retries them"
   await f.watch();
   assert.deepEqual(f.world.messages.map((item) => item.block), ["10", "20"]);
   assert.equal(Object.keys(f.ledger().events).length, 1);
+});
+
+test("a recipient whose delivery failed is retried until it receives the event, without repeating the others", async (t) => {
+  const f = fixture(t);
+  await f.register();
+  f.world.sendFailures.add("20");
+  const first = await f.watch();
+  assert.deepEqual(first.results[0].retry, ["coordinator"]);
+  assert.deepEqual(f.world.messages.map((item) => item.block), ["10"]);
+  f.world.sendFailures.clear();
+  const second = await f.watch();
+  assert.deepEqual(second.results.map((item) => [item.role, item.block, item.outcome]), [["coordinator", "20", "queued"]]);
+  assert.deepEqual((await f.watch()).results, []);
+  assert.deepEqual(f.world.messages.map((item) => item.block), ["10", "20"]);
 });
 
 test("an event reaches both the registered owner and coordinator, and a coordinator of no PR hears nothing", async (t) => {
@@ -787,7 +925,8 @@ const command = require("node:path").basename(process.argv[1]);
 const w = JSON.parse(fs.readFileSync(process.env.WATCH_WORLD, "utf8"));
 w.calls.push({command, args:a});
 const out = value => { fs.writeFileSync(process.env.WATCH_WORLD, JSON.stringify(w)); console.log(JSON.stringify(value)); };
-if (command === "gh") {
+if (command === "gh" && a.join(" ") === "auth token") console.log("token-a");
+else if (command === "gh") {
   if (a[0] !== "api" || a[1] !== "-i" || a[2] !== "graphql") { console.error("unexpected argv"); process.exit(1); }
   const v = {};
   for (let i = 3; i < a.length; i += 2) { const at = a[i + 1].indexOf("="); v[a[i + 1].slice(0, at)] = a[i + 1].slice(at + 1); }
@@ -800,7 +939,7 @@ if (command === "gh") {
   const comments = { pageInfo: { hasPreviousPage: false, startCursor: "c" }, nodes: w.comments.flat().map((c) => ({ databaseId: c.id, createdAt: c.created_at, body: c.body, author: author(c.user.login) })) };
   const node = { number: p.number, state, merged: false, mergedAt: null, updatedAt: "2026-01-01T00:00:00Z", headRefOid: p.head.sha, labels, comments, commits: { nodes: [{ commit: { oid: p.head.sha, statusCheckRollup: null } }] } };
   let data;
-  if (op === "ObserveList") data = { viewer: { login: "acme-operator" }, repository: { pullRequests: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: w.issues.flat().filter((i) => i.pull_request).map(() => node) } } };
+  if (op === "ObserveList") data = { viewer: { login: "acme-operator" }, repository: { pullRequests: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: w.issues.flat().filter((i) => i.pull_request).map(() => node) }, ...Object.fromEntries([...v.query.matchAll(/\\bpr(\\d+): pullRequest/g)].map((m) => ["pr" + m[1], node])) } };
   else if (op === "CurrentPull") data = { repository: { pullRequest: { number: p.number, state, headRefOid: p.head.sha, labels } } };
   else { console.error("unexpected query " + op); process.exit(1); }
   fs.writeFileSync(process.env.WATCH_WORLD, JSON.stringify(w));
