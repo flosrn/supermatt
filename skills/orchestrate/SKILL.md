@@ -18,7 +18,7 @@ You are the orchestrator. You do not write code. You pick issues, drive workers 
 
 Repeat until a stop condition is met. During the unattended loop, answer workers' questions and dialogs as below rather than asking the user. The coordinator's final cleanup offer in **On stop** is the only exception and requires the operator's own answer.
 
-Before dispatching, read the [orchestrator dispatch contract](../../references/harnesses.md#orchestrator-dispatch). This explicit invocation delegates only its listed worker commands within this run. Use [Send the prompt](WORKER.md#dispatch-preamble) for every instruction prompt: it attaches the assigned issue, worktree, phase, approval scope, relevant prior evidence, and the round's evidence directory at dispatch. Keep the called skills' invocation policies unchanged; park when a required human approval is outside the delegated scope.
+Before dispatching, read the [orchestrator dispatch contract](../../references/harnesses.md#orchestrator-dispatch). This explicit invocation delegates only its listed worker commands within this run. Use [Send the prompt](WORKER.md#dispatch-preamble) for every instruction prompt: it attaches the assigned issue, worktree, phase, approval scope, relevant prior evidence, and the round's evidence directory at dispatch, and names you as the worker's only recipient. You alone talk to the operator: strip the operator's session identifiers from every text you pass to a worker, as that section says. Keep the called skills' invocation policies unchanged; park when a required human approval is outside the delegated scope.
 
 ## Setup
 
@@ -260,7 +260,7 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
   - No lane is parked: title `PROJECT done`, body `<count> issues merged, <count> filed`.
   - A lane is parked, or Setup failed: title `PROJECT needs you`, body the reason, or each parked lane with its issue and reason.
 
-  Send it with `RUN <this skill's directory>/scripts/tern-notify.mjs "TITLE" "BODY"`: it shows as a toast and an inbox entry of your own pane. Pass the text as arguments, so quotes in a reason cannot break it.
+  Send it with `RUN <this skill's directory>/scripts/tern-notify.mjs "TITLE" "BODY"`: it shows as a toast and an inbox entry of your own pane. Pass the text as arguments, so quotes in a reason cannot break it. Only you alert the operator, and only through a Tern notification, or the Grok bot where the operator has set one up; never raise a macOS notification from a script (`osascript`). Workers and their sub-agents never alert or message the operator.
 
   Before any finish readiness or cleanup offer, on both natural completion and `needs you`, stop and await all coordinator-owned jobs. Use **Coordinator job ownership** and the saved handles: conflict watcher, merge-progress deadline, required-check watches, and background Herdr prompt/wait commands. Record termination evidence and preserve their logs and registrations. Leave parked workers and their descendants running; stopping the coordinator's wait is not permission to stop its target. If a handle, ownership, or terminal state is unknown, report `cleanup blocked: coordinator job exit unproven` with the job evidence gap. Do not call `ready` or present either finish or legacy cleanup until this barrier is satisfied. A notification or idle coordinator turn does not prove job exit.
 
