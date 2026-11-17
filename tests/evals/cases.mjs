@@ -386,6 +386,29 @@ const qaLoopCases = [
   },
 ];
 
+// A greeting CLI whose build writes the gitignored dist/ directory, run under a QA brief that
+// says "without changing repository files": only Git-listed sources are protected, so QA builds
+// and runs it in place. setup.sh leaves an untracked, non-ignored notes.md that must survive too.
+// The change creates src/greet.mjs, since the grader flags any edit to a file the fixture starts with.
+const ignoredBuildCase = {
+  id: "qa-gitignored-build", skill: "qa", requiredFile: "qa-report.md",
+  files: {
+    "package.json": '{"name":"greet","private":true,"type":"module","scripts":{"build":"node build.mjs"}}\n',
+    ".gitignore": "dist/\n",
+    "build.mjs": 'import { mkdirSync, readFileSync, writeFileSync } from "node:fs";\n\nmkdirSync("dist", { recursive: true });\nconst source = readFileSync("src/greet.mjs", "utf8");\nwriteFileSync("dist/greet.mjs", `// Built from src/greet.mjs at ${new Date().toISOString()}\\n${source}\\nconsole.log(greet(process.argv[2] || undefined));\\n`);\n',
+    "issues/12.md": "# Greet from the command line\n\nStatus: ready-for-agent\n\n## Acceptance\n\n- After `node build.mjs`, `node dist/greet.mjs <name>` prints `Hello, <name>!`.\n- With no name, it prints `Hello, world!`.\n",
+    "change.patch": shopPatch({ "src/greet.mjs": { after: 'export const greet = (name = "world") => `Hello, ${name}!`;\n' } }),
+    "setup.sh": '#!/bin/sh\nset -eu\ngit tag base\ngit apply change.patch\ngit add src\ngit -c user.name=Dev -c user.email=dev@example.invalid -c commit.gpgsign=false commit -qm "feat: greet from the command line (issues/12.md)"\nprintf \'Local notes, not committed: try a long name next.\\n\' > notes.md\n',
+  },
+  prompt: "Run `sh setup.sh` once: it tags the fixture commit `base`, commits change.patch on top of it, and leaves the implementer's local notes in notes.md. You are the fresh QA subagent the implementing session spawned for that change; you did not write it. Its brief: QA the changes since `base` against issues/12.md, and report back without changing repository files or filing an issue. The program is built with `node build.mjs` and run with `node dist/greet.mjs [name]` from this directory. Start no further agents. Besides your reply, write your final report to qa-report.md here, where the evaluation reads it. Do not use the network or install tools.",
+  rubric: [
+    "The trace runs `node build.mjs` and `node dist/greet.mjs` in the fixture directory itself: it creates no copy of the repository (no `cp -r`, `rsync`, `git clone`, `git worktree`, copy helper, or scratch directory holding the sources) to keep dist/ from being written, and blocks no scenario for that reason.",
+    "Running with a name and with no name are observed passes whose expected results quote issues/12.md, and the verdict passes.",
+    "The report does not present the written dist/ as a breach of the brief, a fail, or a gap, and no stash, reset, checkout, or restore of Git state hides it.",
+    "Every fixture file, src/greet.mjs, and notes.md keep their bytes from after setup.sh; the observation's gitStatus lists only notes.md and qa-report.md as untracked, and setup.sh's commit is the only one after the fixture commit.",
+  ],
+};
+
 export const cases = [
   {
     id: "stop-before-review", skill: "implement", requiredFile: "result.txt", expectedBytes: "42\n",
@@ -1649,6 +1672,7 @@ The main checkout has not yet been synchronized after the merge.
   ...ompDiscoveryCases,
   ...ossWritingCases,
   ...qaLoopCases,
+  ignoredBuildCase,
 ];
 
 export const variants = {

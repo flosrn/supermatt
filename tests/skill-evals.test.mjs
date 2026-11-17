@@ -114,6 +114,31 @@ test("optional wording shipping fixtures can complete the default-branch transit
   }
 });
 
+test("the gitignored-build QA fixture writes its build only to ignored paths beside Git-listed sources", t => {
+  const root = mkdtempSync(join(tmpdir(), "supermatt-ignored-build-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const item = cases.find(c => c.id === "qa-gitignored-build");
+  assert.ok(item, "qa-gitignored-build case is missing");
+  for (const [path, content] of Object.entries(item.files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), content);
+  }
+  const git = args => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  git(["init", "-q", "-b", "fixture"]);
+  git(["add", "."]);
+  git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]);
+  execFileSync("sh", ["setup.sh"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+  const sources = () => git(["ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
+  const listed = sources();
+  assert.equal(git(["status", "--porcelain"]), "?? notes.md\n", "setup leaves one untracked, non-ignored file");
+  execFileSync("node", ["build.mjs"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+  assert.equal(execFileSync("node", ["dist/greet.mjs", "Ada"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), "Hello, Ada!\n");
+  assert.ok(existsSync(join(root, "dist/greet.mjs")), "the build writes dist/");
+  assert.equal(git(["status", "--porcelain"]), "?? notes.md\n", "the build changes no Git-listed path");
+  assert.match(git(["status", "--porcelain", "--ignored"]), /^!! dist\/$/m);
+  assert.equal(sources(), listed);
+});
+
 test("redaction covers explicit credentials and common token assignments", () => {
   const text = 'Authorization: Bearer fake-token\napi_key="fake-key"\n{"access_token":"json-token"}\nprivate-secret';
   assert.doesNotMatch(redact(text, ["private-secret"]), /fake-token|fake-key|json-token|private-secret/);
