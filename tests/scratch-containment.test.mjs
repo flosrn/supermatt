@@ -409,6 +409,8 @@ test("scratch containment permits an archive install record outside scratch but 
     { archive_info: {}, dir_info: false },
     { archive_info: {}, vcs_info: { vcs: "git" } },
     { archive_info: null },
+    { archive_info: [] },
+    { archive_info: [1] },
   ]) {
     writeFileSync(metadata, JSON.stringify({ ...record, url: directory }));
     result = run(scratch);

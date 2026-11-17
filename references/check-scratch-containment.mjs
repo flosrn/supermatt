@@ -148,7 +148,7 @@ if (!directory || extra.length) {
           // An archive install (a wheel or sdist) copied its files into site-packages, so its URL is provenance
           // only. Any other record, such as a directory install, editable or not, keeps its URL checked, and a
           // record that names dir_info or vcs_info at all is not treated as an archive.
-          const archive = typeof record.archive_info === "object" && record.archive_info !== null;
+          const archive = typeof record.archive_info === "object" && record.archive_info !== null && !Array.isArray(record.archive_info);
           if (archive && !("dir_info" in record) && !("vcs_info" in record)) continue;
           const { url } = record;
           if (typeof url === "string" && url.startsWith("file:")) {
