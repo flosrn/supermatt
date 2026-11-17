@@ -260,7 +260,7 @@ Other lanes may have merged since this branch started. Wait for the ship slot (s
   - No lane is parked: title `PROJECT done`, body `<count> issues merged, <count> filed`.
   - A lane is parked, or Setup failed: title `PROJECT needs you`, body the reason, or each parked lane with its issue and reason.
 
-  Send it with `RUN <this skill's directory>/scripts/tern-notify.mjs "TITLE" "BODY"`: it shows as a toast and an inbox entry of your own pane. Pass the text as arguments, so quotes in a reason cannot break it.
+  Send it with `RUN <this skill's directory>/scripts/tern-notify.mjs "TITLE" "BODY"`: it shows as a toast and an inbox entry of your own pane. Pass the text as arguments, so quotes in a reason cannot break it. Only you alert the operator, and only through a Tern notification, or the Grok bot where the operator has set one up; never raise a macOS notification from a script (`osascript`). Workers and their sub-agents never alert or message the operator.
 
   Before any finish readiness or cleanup offer, on both natural completion and `needs you`, stop and await all coordinator-owned jobs. Use **Coordinator job ownership** and the saved handles: conflict watcher, merge-progress deadline, required-check watches, and background Herdr prompt/wait commands. Record termination evidence and preserve their logs and registrations. Leave parked workers and their descendants running; stopping the coordinator's wait is not permission to stop its target. If a handle, ownership, or terminal state is unknown, report `cleanup blocked: coordinator job exit unproven` with the job evidence gap. Do not call `ready` or present either finish or legacy cleanup until this barrier is satisfied. A notification or idle coordinator turn does not prove job exit.
 
