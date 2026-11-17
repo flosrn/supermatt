@@ -1,5 +1,9 @@
 #!/usr/bin/env node
-// A host-side poller, not a model loop. Registrations and delivery receipts have separate writers.
+// The repository's one GitHub observer: a host-side reader, not a model loop. One process per
+// state directory reads GitHub through GraphQL, publishes SHA-stamped observations that workers
+// and coordinators read locally, and delivers merge-train events. Every other `watch` or `wait`
+// attaches to it and takes over only once its owner is gone. Registrations, observations and
+// delivery receipts have separate writers.
 import { spawnSync } from "node:child_process";
 import { linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -12,19 +16,85 @@ const SENDER = "supermatt-merge-train";
 const SHA = /^[0-9a-f]{40}$/;
 const BLOCK = /^[0-9]+$/;
 const ALIAS = /^[a-z][a-z0-9_-]{0,31}$/;
+const DIGEST = /^[0-9a-f]{16}$/;
 // A red check blocks the train without ejecting the PR, so the watcher reports it like a conflict.
 const RED = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"]);
-const ROLLUP = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-  commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) { pageInfo { hasNextPage } nodes { __typename
-  ... on CheckRun { id name conclusion detailsUrl } ... on StatusContext { id context state targetUrl } } } } } } } } } }`;
+const PASS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+const PENDING_STATUS = new Set(["PENDING", "EXPECTED"]);
+const PENDING_DEPLOYMENT = new Set(["PENDING", "QUEUED", "IN_PROGRESS", "WAITING"]);
+const FAILED_DEPLOYMENT = new Set(["ERROR", "FAILURE"]);
+// An attached process reads only local files, so it can look often without touching GitHub.
+const FOLLOW_MS = 15_000;
+// GitHub asks for at least a minute after a refusal that names no reset or Retry-After.
+const MINIMUM_BACKOFF_MS = 60_000;
+// An observation older than this many intervals, outside a rate-limit pause, means the reader stalled.
+const STALL_INTERVALS = 3;
+// A head without checks, or a merge without post-merge runs, settles only after GitHub had time to register them.
+const SETTLE_MS = 120_000;
+// A merged PR stays observed until its post-merge runs and deployments settle, for at least this long.
+const QUIET_AFTER_MERGE_MS = 30 * 60_000;
+const TRACK_AFTER_MERGE_MS = 24 * 60 * 60_000;
+const WAIT_FOR = ["checks", "merge", "post-merge", "change"];
+
+const CONTEXTS = `contexts(first: 100) { pageInfo { hasNextPage } nodes { __typename
+  ... on CheckRun { id name conclusion detailsUrl } ... on StatusContext { id context state targetUrl } } }`;
+const COMMENTS = "pageInfo { hasPreviousPage startCursor } nodes { databaseId createdAt body author { __typename login } }";
+const PULL = `number state merged mergedAt updatedAt headRefOid labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
+  commits(last: 1) { nodes { commit { oid statusCheckRollup { ${CONTEXTS} } } } }`;
+const MERGE = `mergeCommit { oid statusCheckRollup { ${CONTEXTS} }
+  checkSuites(first: 100) { pageInfo { hasNextPage } nodes { status conclusion workflowRun { databaseId url workflow { name } } } }
+  deployments(first: 100) { pageInfo { hasNextPage } nodes { id environment state } } }`;
+// One observation: the open merge-labelled PRs with their comments and head checks, then each other registered PR.
+const LIST = `query ObserveList($owner: String!, $name: String!, $cursor: String) { viewer { login } repository(owner: $owner, name: $name) {
+  pullRequests(states: OPEN, labels: ["merge"], first: 20, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { ${PULL} comments(last: 100) { ${COMMENTS} } } } } }`;
+const ONE = `query ObservePull($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) {
+  pullRequest(number: $number) { ${PULL} ${MERGE} } } }`;
+const EARLIER = `query EarlierComments($owner: String!, $name: String!, $number: Int!, $before: String!) { repository(owner: $owner, name: $name) {
+  pullRequest(number: $number) { comments(last: 100, before: $before) { ${COMMENTS} } } } }`;
+// The immediate read that authorizes a delivery: the exact head, state and labels right now.
+const CURRENT = `query CurrentPull($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
+  pullRequest(number: $number) { number state headRefOid labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }`;
+
 const herdr = fileURLToPath(new URL("../../orchestrate/scripts/tern-herdr.mjs", import.meta.url));
 const notifier = fileURLToPath(new URL("../../orchestrate/scripts/tern-notify.mjs", import.meta.url));
-const usage = "merge-train-watch.mjs register --repo OWNER/REPO --train-login LOGIN --state DIR --pr N [--owner BLOCK] [--coordinator BLOCK] [--owner-agent NAME] [--coordinator-agent NAME]\nmerge-train-watch.mjs watch --repo OWNER/REPO --train-login LOGIN --state DIR [--coordinator BLOCK] [--coordinator-agent NAME] [--interval 60] [--once] [--dry-run] [--until-event]";
+const COMMON = "--repo OWNER/REPO --train-login LOGIN [--state DIR]";
+const usage = [
+  `merge-train-watch.mjs register ${COMMON} --pr N [--owner BLOCK] [--coordinator BLOCK] [--owner-agent NAME] [--coordinator-agent NAME]`,
+  `merge-train-watch.mjs watch ${COMMON} [--coordinator BLOCK] [--coordinator-agent NAME] [--interval 60] [--once] [--dry-run] [--until-event]`,
+  `merge-train-watch.mjs wait ${COMMON} --pr N --for checks|merge|post-merge|change [--head SHA] [--after DIGEST] [--timeout SECONDS] [--coordinator BLOCK] [--interval 60]`,
+  `merge-train-watch.mjs status ${COMMON} [--pr N]`,
+].join("\n");
+
+class RateLimited extends Error {
+  constructor(message, retryAt) { super(message); this.retryAt = retryAt; }
+}
+
+function iso(ms) { return new Date(ms).toISOString(); }
 
 function run(command, args, env) {
   const result = spawnSync(command, args, { env, encoding: "utf8", timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(`${command} failed: ${result.error?.message || result.stderr?.trim() || `exit ${result.status}`}`);
   return result.stdout;
+}
+
+// `gh api -i` prints the status line and headers before the body, on refusals too.
+function request(query, variables, env) {
+  const args = ["api", "-i", "graphql", "-f", `query=${query}`];
+  for (const [key, value] of Object.entries(variables)) if (value != null) args.push(typeof value === "number" ? "-F" : "-f", `${key}=${value}`);
+  const result = spawnSync("gh", args, { env, encoding: "utf8", timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
+  if (result.error) throw new Error(`gh failed: ${result.error.message}`);
+  const text = result.stdout ?? "";
+  const status = /^HTTP\/\S+ (\d{3})/.exec(text);
+  if (!status) throw new Error(`gh failed: ${result.stderr?.trim() || `exit ${result.status}`}`);
+  const blank = /\r?\n\r?\n/.exec(text);
+  const headers = {};
+  for (const line of (blank ? text.slice(0, blank.index) : text).split(/\r?\n/).slice(1)) {
+    const at = line.indexOf(":");
+    if (at > 0) headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim();
+  }
+  let body = null;
+  try { body = JSON.parse(blank ? text.slice(blank.index + blank[0].length) : ""); } catch { body = null; }
+  return { status: Number(status[1]), headers, body };
 }
 
 function json(text, source) {
@@ -57,14 +127,26 @@ function alive(pid) {
 }
 
 function dependencies(overrides) {
-  const deps = { env: process.env, run, alive, sleep, out: (value) => process.stdout.write(`${JSON.stringify(value)}\n`), ...overrides };
+  const deps = { env: process.env, run, alive, sleep, now: () => Date.now(), out: (value) => process.stdout.write(`${JSON.stringify(value)}\n`), ...overrides };
+  deps.github ??= (query, variables) => request(query, variables, deps.env);
   return { ...deps, exec: (command, args) => deps.run(command, args, deps.env), query: (command, args) => json(deps.run(command, args, deps.env), command) };
+}
+
+// The default state is per repository, outside every worktree and run directory, so every caller shares one reader.
+function defaultState(env, repo) {
+  const root = env.XDG_STATE_HOME?.trim() || join(env.HOME || homedir(), ".local", "state");
+  return join(root, "supermatt", "merge-train", ...repo.split("/"));
 }
 
 function parse(argv, env) {
   const [command, ...args] = argv;
-  if (!["register", "watch"].includes(command)) throw new Error(usage);
-  const values = command === "register" ? ["repo", "train-login", "state", "pr", "owner", "coordinator", "owner-agent", "coordinator-agent"] : ["repo", "train-login", "state", "coordinator", "coordinator-agent", "interval"];
+  const values = {
+    register: ["repo", "train-login", "state", "pr", "owner", "coordinator", "owner-agent", "coordinator-agent"],
+    watch: ["repo", "train-login", "state", "coordinator", "coordinator-agent", "interval"],
+    wait: ["repo", "train-login", "state", "pr", "for", "head", "after", "timeout", "coordinator", "coordinator-agent", "interval"],
+    status: ["repo", "train-login", "state", "pr"],
+  }[command];
+  if (!values) throw new Error(usage);
   const flags = command === "watch" ? ["once", "dry-run", "until-event"] : [];
   const options = { command };
   for (let index = 0; index < args.length; index++) {
@@ -74,20 +156,29 @@ function parse(argv, env) {
     else if (values.includes(key) && args[index + 1] && !args[index + 1].startsWith("--")) options[key] = args[++index];
     else throw new Error(`invalid option ${args[index]}\n${usage}`);
   }
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(options.repo || "") || !options.state) throw new Error(usage);
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(options.repo || "")) throw new Error(usage);
   if (!/^[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?$/.test(options["train-login"] || "")) throw new Error("--train-login must explicitly name the trusted merge-train actor");
   options.repo = options.repo.toLowerCase();
-  options.state = resolve(options.state);
-  if (command === "register") {
+  options.state = resolve(options.state ?? defaultState(env, options.repo));
+  if (options.pr !== undefined || command === "register" || command === "wait") {
     if (!/^[1-9][0-9]*$/.test(options.pr || "")) throw new Error("--pr must be a positive integer");
-    options.owner ??= env.TERN_PANE;
+    options.pr = Number(options.pr);
   }
+  if (command === "register") options.owner ??= env.TERN_PANE;
   for (const role of ["owner", "coordinator"]) {
     if (options[role] !== undefined && !BLOCK.test(options[role])) throw new Error(`--${role} must be a local Tern block`);
     if (options[`${role}-agent`] && (!ALIAS.test(options[`${role}-agent`]) || !options[role])) throw new Error(`--${role}-agent requires --${role} and a valid registered agent name`);
   }
   options.interval = Number(options.interval ?? 60);
   if (!Number.isInteger(options.interval) || options.interval < 60) throw new Error("--interval must be an integer of at least 60 seconds");
+  if (command === "wait") {
+    if (!WAIT_FOR.includes(options.for)) throw new Error(`--for must be one of ${WAIT_FOR.join(", ")}`);
+    if (options.head !== undefined && !SHA.test(options.head)) throw new Error("--head must be a full 40-character commit SHA");
+    if (options.for === "checks" && !options.head) throw new Error("--for checks requires --head, the exact head the checks must belong to");
+    if (options.for === "change" && !DIGEST.test(options.after || "")) throw new Error("--for change requires --after, the digest of the observation already seen");
+    if (options.timeout !== undefined && !/^[1-9][0-9]*$/.test(options.timeout)) throw new Error("--timeout must be a positive number of seconds");
+    if (options.timeout !== undefined) options.timeout = Number(options.timeout);
+  }
   options.once = options.once || options["dry-run"];
   return options;
 }
@@ -104,6 +195,19 @@ function stateRepo(options, mutate) {
   if (record !== undefined && (record?.version !== 1 || record.repo !== options.repo || record.trainLogin !== options["train-login"])) throw new Error("--state belongs to a different repository, train login or version");
 }
 
+// The live owner of the reader lock, if any. An attached process reads it without touching the lock.
+function holder(options, deps) {
+  let entries;
+  try { entries = readdirSync(join(options.state, "watch.lock")); } catch (error) {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (entries.length !== 1 || !/^[1-9][0-9]*-[0-9a-f-]+\.json$/.test(entries[0])) return undefined;
+  const owner = readJson(join(options.state, "watch.lock", entries[0]), undefined);
+  return Number.isSafeInteger(owner?.pid) && owner.pid > 0 && deps.alive(owner.pid) ? owner.pid : undefined;
+}
+
+// Returns a release function, or the pid of the live reader that already holds the lock.
 function lock(options, deps) {
   const dir = join(options.state, "watch.lock");
   const name = `${process.pid}-${randomUUID()}.json`;
@@ -113,22 +217,28 @@ function lock(options, deps) {
     writeFileSync(join(staging, name), JSON.stringify({ pid: process.pid }), { flag: "wx", mode: 0o600 });
     try {
       renameSync(staging, dir);
-      return () => {
-        unlinkSync(join(dir, name));
-        try { rmdirSync(dir); } catch (error) { if (error.code !== "ENOTEMPTY" && error.code !== "ENOENT") throw error; }
+      return {
+        release: () => {
+          unlinkSync(join(dir, name));
+          try { rmdirSync(dir); } catch (error) { if (error.code !== "ENOTEMPTY" && error.code !== "ENOENT") throw error; }
+        },
       };
     } catch (error) {
       unlinkSync(join(staging, name));
       rmdirSync(staging);
       if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
     }
-    const entries = readdirSync(dir);
+    let entries;
+    try { entries = readdirSync(dir); } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
     // An incomplete acquisition is ambiguous. Fail closed rather than steal from its creator.
     if (entries.length !== 1 || !/^[1-9][0-9]*-[0-9a-f-]+\.json$/.test(entries[0])) throw new Error("watch lock is incomplete; inspect its owner before removing it");
     const ownerPath = join(dir, entries[0]);
     const owner = readJson(ownerPath);
     if (!Number.isSafeInteger(owner?.pid) || owner.pid < 1) throw new Error("invalid watch lock owner");
-    if (deps.alive(owner.pid)) throw new Error(`watch already running with pid ${owner.pid}`);
+    if (deps.alive(owner.pid)) return { pid: owner.pid };
     // Only the process that deletes this unique dead owner's file may remove its directory.
     // A competing recovery cannot delete a later owner's differently named file.
     try { unlinkSync(ownerPath); } catch (error) {
@@ -176,11 +286,13 @@ function matchingAgent(pin, listed) {
 }
 
 function registrationPath(options, pr) { return join(options.state, "registrations", `${pr}.json`); }
+function snapshotPath(options, pr) { return join(options.state, "observations", `${pr}.json`); }
+function observerPath(options) { return join(options.state, "observer.json"); }
 
 function registration(options, pr) {
   const record = readJson(registrationPath(options, pr), undefined);
   if (record === undefined) return undefined;
-  if (record?.version !== 1 || record.repo !== options.repo || record.pr !== pr) throw new Error(`invalid registration for PR ${pr}`);
+  if (record?.version !== 1 || record.repo !== options.repo || record.pr !== pr || Number.isNaN(Date.parse(record.registeredAt))) throw new Error(`invalid registration for PR ${pr}`);
   for (const role of ["owner", "coordinator"]) {
     const target = record[role];
     if (target && (!BLOCK.test(target.block) || !Number.isSafeInteger(target.pid) || target.pid < 1 || typeof target.sessionFile !== "string" || !target.sessionFile || (target.agent && !ALIAS.test(target.agent)))) throw new Error(`invalid ${role} registration for PR ${pr}`);
@@ -188,13 +300,22 @@ function registration(options, pr) {
   return record;
 }
 
+function registered(options) {
+  let names;
+  try { names = readdirSync(join(options.state, "registrations")); } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  return names.map((name) => /^([1-9][0-9]*)\.json$/.exec(name)).filter(Boolean).map((match) => Number(match[1])).sort((a, b) => a - b);
+}
+
 function register(options, deps) {
-  const listed = sessions(deps);
-  const record = { version: 1, repo: options.repo, pr: Number(options.pr), registeredAt: new Date().toISOString(), ...(BLOCK.test(deps.env.TERN_PANE || "") ? { origin: deps.env.TERN_PANE } : {}) };
+  const record = { version: 1, repo: options.repo, pr: options.pr, registeredAt: iso(deps.now()), ...(BLOCK.test(deps.env.TERN_PANE || "") ? { origin: deps.env.TERN_PANE } : {}) };
+  let listed;
   let named;
   for (const role of ["owner", "coordinator"]) {
     if (!options[role]) continue;
-    const target = pin(options[role], options[`${role}-agent`], listed);
+    const target = pin(options[role], options[`${role}-agent`], listed ??= sessions(deps));
     if (!target) throw new Error(`cannot register ${role}: no live local session identity in block ${options[role]}`);
     if (target.agent && !matchingAgent(target, named ??= agents(deps))) throw new Error(`cannot register ${role}: agent alias does not match the live block, pid and session file`);
     record[role] = target;
@@ -205,26 +326,130 @@ function register(options, deps) {
   return { event: "registered", ...record };
 }
 
-function pages(deps, endpoint) {
-  const result = deps.query("gh", ["api", endpoint, "--paginate", "--slurp"]);
-  if (!Array.isArray(result) || !result.every(Array.isArray)) throw new Error(`invalid paginated response from ${endpoint}`);
-  return result.flat();
+// Every recurring read goes through here: one GraphQL request, its rate-limit headers honored.
+// A refusal is unknown state with the next permitted time, never an empty answer.
+function graphql(deps, schedule, query, variables, subject) {
+  const response = deps.github(query, variables);
+  const now = deps.now();
+  const headers = response?.headers ?? {};
+  const remaining = headers["x-ratelimit-remaining"];
+  const reset = Number(headers["x-ratelimit-reset"]) * 1000;
+  const errors = Array.isArray(response?.body?.errors) ? response.body.errors : [];
+  const text = errors.map((error) => error?.message).filter(Boolean).join("; ") || response?.body?.message || `HTTP ${response?.status}`;
+  const limited = response?.status === 429 || errors.some((error) => error?.type === "RATE_LIMITED")
+    || (response?.status === 403 && (remaining === "0" || headers["retry-after"] !== undefined || /rate limit/i.test(text)));
+  if (limited) {
+    const after = Number(headers["retry-after"]);
+    const permitted = headers["retry-after"] !== undefined && Number.isFinite(after) ? now + after * 1000 : remaining === "0" && Number.isFinite(reset) ? reset : 0;
+    throw new RateLimited(`GitHub rate limit refused ${subject}: ${text}`, Math.max(permitted, now + MINIMUM_BACKOFF_MS));
+  }
+  // A successful answer that spent the last request still forbids the next one before reset.
+  if (remaining === "0" && Number.isFinite(reset) && reset > now) schedule.pauseUntil = Math.max(schedule.pauseUntil ?? 0, reset);
+  if (response?.status !== 200) throw new Error(`GitHub GraphQL HTTP ${response?.status} for ${subject}: ${text}`);
+  if (errors.length) throw new Error(`GitHub GraphQL failed for ${subject}: ${text}`);
+  if (!response.body?.data || typeof response.body.data !== "object") throw new Error(`invalid GitHub GraphQL response for ${subject}`);
+  return response.body.data;
 }
 
-function pull(deps, repo, number) {
-  const pr = deps.query("gh", ["api", `repos/${repo}/pulls/${number}`]);
-  if (pr.number !== number || !["open", "closed"].includes(pr.state) || !SHA.test(pr.head?.sha || "") || !Array.isArray(pr.labels) || !pr.labels.every((label) => typeof label.name === "string")) throw new Error(`invalid pull request response for PR ${number}`);
-  return pr;
+function labelsOf(labels, subject) {
+  if (!Array.isArray(labels?.nodes) || typeof labels.pageInfo?.hasNextPage !== "boolean" || !labels.nodes.every((label) => typeof label?.name === "string")) throw new Error(`invalid pull request response for ${subject}`);
+  if (labels.pageInfo.hasNextPage) throw new Error(`more than 100 labels on ${subject}; the watcher cannot prove the merge label`);
+  return labels.nodes.map((label) => label.name);
 }
 
-function eligible(pr) { return pr.state === "open" && pr.labels.some((label) => label.name === "merge"); }
+function contextsOf(rollup, subject) {
+  const contexts = rollup?.contexts ?? { pageInfo: { hasNextPage: false }, nodes: [] };
+  if (!Array.isArray(contexts.nodes) || typeof contexts.pageInfo?.hasNextPage !== "boolean") throw new Error(`invalid check rollup for ${subject}`);
+  if (contexts.pageInfo.hasNextPage) throw new Error(`more than 100 checks on ${subject}; the watcher cannot prove none failed`);
+  return contexts.nodes.map((node) => {
+    const isRun = node?.__typename === "CheckRun";
+    if (!isRun && node?.__typename !== "StatusContext") throw new Error(`invalid check rollup for ${subject}`);
+    const check = { id: node.id, name: isRun ? node.name : node.context, conclusion: isRun ? node.conclusion : node.state, url: isRun ? node.detailsUrl : node.targetUrl };
+    if (typeof check.id !== "string" || !check.id || typeof check.name !== "string" || (check.conclusion !== null && typeof check.conclusion !== "string")) throw new Error(`invalid check rollup for ${subject}`);
+    const result = check.conclusion === null || (!isRun && PENDING_STATUS.has(check.conclusion)) ? "pending" : PASS.has(check.conclusion) ? "pass" : "fail";
+    return { ...check, url: /^https:\/\/[^\s"<>]{1,300}$/.test(check.url || "") ? check.url : null, result };
+  });
+}
+
+// Checks of one commit, stamped with that commit: they never stand for another head.
+function checksOf(sha, contexts) {
+  const results = new Set(contexts.map((check) => check.result));
+  return {
+    sha, state: results.has("fail") ? "failure" : results.has("pending") ? "pending" : contexts.length ? "success" : "none",
+    passed: contexts.filter((check) => check.result === "pass").map((check) => check.name),
+    pending: contexts.filter((check) => check.result === "pending").map((check) => check.name),
+    failed: contexts.filter((check) => check.result === "fail").map(({ id, name, conclusion, url }) => ({ id, name, conclusion, url })),
+  };
+}
+
+function postMergeOf(commit, subject) {
+  if (!SHA.test(commit?.oid || "")) throw new Error(`merged ${subject} has no readable merge commit`);
+  const checks = checksOf(commit.oid, contextsOf(commit.statusCheckRollup, `the merge commit of ${subject}`));
+  const suites = commit.checkSuites;
+  const deployments = commit.deployments;
+  if (!Array.isArray(suites?.nodes) || typeof suites.pageInfo?.hasNextPage !== "boolean" || !Array.isArray(deployments?.nodes) || typeof deployments.pageInfo?.hasNextPage !== "boolean") throw new Error(`invalid merge commit for ${subject}`);
+  if (suites.pageInfo.hasNextPage || deployments.pageInfo.hasNextPage) throw new Error(`more than 100 check suites or deployments on the merge commit of ${subject}; the watcher cannot prove they settled`);
+  // Apps that never run leave a queued suite with no workflow run; only workflow runs are post-merge work.
+  const workflows = suites.nodes.filter((suite) => suite?.workflowRun).map((suite) => {
+    if (typeof suite.status !== "string" || !Number.isSafeInteger(suite.workflowRun.databaseId)) throw new Error(`invalid merge commit for ${subject}`);
+    return { name: suite.workflowRun.workflow?.name ?? null, run: suite.workflowRun.databaseId, url: suite.workflowRun.url ?? null, status: suite.status, conclusion: suite.conclusion ?? null,
+      result: suite.status !== "COMPLETED" ? "pending" : PASS.has(suite.conclusion) ? "pass" : "fail" };
+  });
+  const deployed = deployments.nodes.map((deployment) => {
+    if (typeof deployment?.state !== "string") throw new Error(`invalid merge commit for ${subject}`);
+    return { environment: deployment.environment ?? null, state: deployment.state, result: PENDING_DEPLOYMENT.has(deployment.state) ? "pending" : FAILED_DEPLOYMENT.has(deployment.state) ? "fail" : "pass" };
+  });
+  const results = new Set([checks.state === "failure" ? "fail" : checks.state === "pending" ? "pending" : "pass", ...workflows.map((item) => item.result), ...deployed.map((item) => item.result)]);
+  const any = checks.state !== "none" || workflows.length || deployed.length;
+  return { sha: commit.oid, state: results.has("fail") ? "failure" : results.has("pending") ? "pending" : any ? "success" : "none", workflows, checks, deployments: deployed };
+}
+
+function pullOf(node, expected) {
+  const subject = `PR ${expected ?? node?.number}`;
+  if (!Number.isSafeInteger(node?.number) || node.number < 1 || (expected !== undefined && node.number !== expected)) throw new Error(`invalid pull request response for ${subject}`);
+  if (!["OPEN", "CLOSED", "MERGED"].includes(node.state) || !SHA.test(node.headRefOid || "") || typeof node.updatedAt !== "string") throw new Error(`invalid pull request response for ${subject}`);
+  const commit = node.commits?.nodes?.[0]?.commit;
+  if (!SHA.test(commit?.oid || "")) throw new Error(`invalid check rollup for ${subject}`);
+  const value = { number: node.number, state: node.state, head: node.headRefOid, updatedAt: node.updatedAt, labels: labelsOf(node.labels, subject), checks: checksOf(commit.oid, contextsOf(commit.statusCheckRollup, subject)) };
+  if (node.state === "MERGED") {
+    if (Number.isNaN(Date.parse(node.mergedAt))) throw new Error(`invalid pull request response for ${subject}`);
+    // Only the per-PR read carries the merge commit; a merged PR always has one.
+    value.postMerge = postMergeOf(node.mergeCommit, subject);
+    value.merge = { sha: value.postMerge.sha, at: node.mergedAt };
+  }
+  return value;
+}
+
+function commentPage(page, number) {
+  if (!Array.isArray(page?.nodes) || typeof page.pageInfo?.hasPreviousPage !== "boolean") throw new Error(`invalid comments for PR ${number}`);
+  return page;
+}
+
+// Every comment of the PR, oldest page first: a hold can sit far above the latest hundred.
+function commentsOf(deps, schedule, options, number, last) {
+  const [owner, name] = options.repo.split("/");
+  const pages = [commentPage(last, number)];
+  while (pages[0].pageInfo.hasPreviousPage) {
+    const before = pages[0].pageInfo.startCursor;
+    if (typeof before !== "string" || !before) throw new Error(`invalid comments for PR ${number}`);
+    pages.unshift(commentPage(graphql(deps, schedule, EARLIER, { owner, name, number, before }, `the comments of PR ${number}`).repository?.pullRequest?.comments, number));
+  }
+  return pages.flatMap((page) => page.nodes).map((item) => {
+    if (!Number.isSafeInteger(item?.databaseId) || typeof item.createdAt !== "string" || typeof item.body !== "string" || (item.author !== null && typeof item.author?.login !== "string")) throw new Error(`invalid comments for PR ${number}`);
+    // GraphQL names a bot without the `[bot]` suffix that the train login and REST carry.
+    const login = item.author === null ? null : item.author.__typename === "Bot" ? `${item.author.login}[bot]` : item.author.login;
+    return { id: item.databaseId, createdAt: item.createdAt, body: item.body, login };
+  });
+}
+
+function eligible(pr) { return pr.state === "OPEN" && pr.labels.includes("merge"); }
 
 function conflict(comments, head, trainLogin) {
   let held;
   let found = false;
-  const ordered = [...comments].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id - b.id);
+  const ordered = [...comments].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id - b.id);
   for (const comment of ordered) {
-    if (comment.user?.login !== trainLogin) continue;
+    if (comment.login !== trainLogin) continue;
     for (const marker of comment.body.matchAll(/<!-- merge-train:(conflict|held|approved) ([0-9a-f]{40}) -->/g)) {
       if (marker[1] === "held") held = marker[2];
       if (marker[1] === "approved" && held === marker[2]) held = undefined;
@@ -234,28 +459,101 @@ function conflict(comments, head, trainLogin) {
   return found && !held;
 }
 
-// Check names and URLs come from repository content, so they travel as bounded, quoted data.
-function quoted(text) { return JSON.stringify(text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 100)); }
+// One observation of every tracked PR. Any failed, refused, malformed or partial read throws:
+// the caller records unknown state and never publishes what this read could not prove.
+function observe(options, deps, schedule, observer) {
+  const [owner, name] = options.repo.split("/");
+  let viewer;
+  const identify = (data) => {
+    const login = data.viewer?.login;
+    if (typeof login !== "string" || !login) throw new Error("invalid GitHub viewer in response");
+    // One identity's cache never answers for another: a different account gets its own state.
+    if (observer?.viewer && observer.viewer !== login) throw new Error(`this state holds observations for GitHub identity ${observer.viewer}, but gh is authenticated as ${login}; use a separate --state rather than switching accounts`);
+    viewer = login;
+  };
+  const tracked = new Map();
+  const comments = new Map();
+  for (let cursor = null; ;) {
+    const data = graphql(deps, schedule, LIST, { owner, name, cursor }, "the merge-labelled pull request list");
+    identify(data);
+    const page = data.repository?.pullRequests;
+    if (!Array.isArray(page?.nodes) || typeof page.pageInfo?.hasNextPage !== "boolean") throw new Error("invalid pull request listing");
+    for (const node of page.nodes) {
+      const value = pullOf(node);
+      if (tracked.has(value.number)) continue;
+      tracked.set(value.number, value);
+      comments.set(value.number, node.comments);
+    }
+    if (!page.pageInfo.hasNextPage) break;
+    if (typeof page.pageInfo.endCursor !== "string" || !page.pageInfo.endCursor || page.pageInfo.endCursor === cursor) throw new Error("invalid pull request listing");
+    cursor = page.pageInfo.endCursor;
+  }
+  const queue = [...tracked.values()].filter(eligible).map((value) => value.number);
+  for (const number of queue) tracked.get(number).comments = commentsOf(deps, schedule, options, number, comments.get(number));
+  for (const number of registered(options)) {
+    if (tracked.has(number)) continue;
+    const record = registration(options, number);
+    const previous = readJson(snapshotPath(options, number), undefined);
+    // A settled PR stays retired until someone registers it again.
+    if (previous?.final && Date.parse(record.registeredAt) <= Date.parse(previous.observedAt)) continue;
+    const data = graphql(deps, schedule, ONE, { owner, name, number }, `PR ${number}`);
+    identify(data);
+    tracked.set(number, pullOf(data.repository?.pullRequest, number));
+  }
+  return { viewer, tracked, queue };
+}
 
-function failedChecks(deps, repo, number, head) {
-  const [owner, name] = repo.split("/");
-  const response = deps.query("gh", ["api", "graphql", "-f", `query=${ROLLUP}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`]);
-  if (response?.errors?.length) throw new Error(`GitHub GraphQL failed for PR ${number}: ${response.errors.map((error) => error.message).join("; ")}`);
-  const commit = response?.data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit;
-  if (!SHA.test(commit?.oid || "")) throw new Error(`invalid check rollup for PR ${number}`);
-  // A moved head is not this head's failure; the next poll reads the new head.
-  if (commit.oid !== head) return [];
-  const contexts = commit.statusCheckRollup?.contexts ?? { pageInfo: { hasNextPage: false }, nodes: [] };
-  if (!Array.isArray(contexts.nodes) || typeof contexts.pageInfo?.hasNextPage !== "boolean") throw new Error(`invalid check rollup for PR ${number}`);
-  if (contexts.pageInfo.hasNextPage) throw new Error(`more than 100 checks on PR ${number}; the watcher cannot prove none failed`);
-  const checks = contexts.nodes.map((node) => {
-    const isRun = node?.__typename === "CheckRun";
-    if (!isRun && node?.__typename !== "StatusContext") throw new Error(`invalid check rollup for PR ${number}`);
-    const check = { id: node.id, name: isRun ? node.name : node.context, conclusion: isRun ? node.conclusion : node.state, url: isRun ? node.detailsUrl : node.targetUrl };
-    if (typeof check.id !== "string" || !check.id || typeof check.name !== "string" || (check.conclusion !== null && typeof check.conclusion !== "string")) throw new Error(`invalid check rollup for PR ${number}`);
-    return { ...check, url: /^https:\/\/[^\s"<>]{1,300}$/.test(check.url || "") ? check.url : null };
+function digest(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+}
+
+function snapshotOf(options, value, previous, now) {
+  const observedAt = iso(now);
+  const snapshot = {
+    version: 1, repo: options.repo, pr: value.number, observedAt, state: value.state, head: value.head,
+    headSince: previous?.head === value.head ? previous.headSince : observedAt, updatedAt: value.updatedAt, labels: value.labels,
+    checks: value.checks, merge: value.merge ?? null, postMerge: value.postMerge ?? null,
+  };
+  const age = snapshot.merge ? now - Date.parse(snapshot.merge.at) : 0;
+  snapshot.final = snapshot.state === "CLOSED" || (snapshot.state === "MERGED" && (age >= TRACK_AFTER_MERGE_MS || (age >= QUIET_AFTER_MERGE_MS && snapshot.postMerge?.state !== "pending")));
+  snapshot.digest = digest([snapshot.state, snapshot.head, snapshot.updatedAt, snapshot.labels, snapshot.checks, snapshot.merge, snapshot.postMerge]);
+  return snapshot;
+}
+
+function readObserver(options) {
+  const record = readJson(observerPath(options), undefined);
+  if (record !== undefined && (record?.version !== 1 || record.repo !== options.repo || typeof record.attempt?.outcome !== "string")) throw new Error("invalid observer state");
+  return record;
+}
+
+function pausedUntil(options) {
+  const until = Date.parse(readObserver(options)?.pauseUntil ?? "");
+  return Number.isFinite(until) ? until : 0;
+}
+
+// The leader is the only writer of observations, so a read-modify-write here cannot race.
+function publish(options, deps, observation, observer, schedule, now) {
+  mkdirSync(join(options.state, "observations"), { recursive: true, mode: 0o700 });
+  for (const value of observation.tracked.values()) {
+    const previous = readJson(snapshotPath(options, value.number), undefined);
+    atomicJson(snapshotPath(options, value.number), snapshotOf(options, value, previous, now));
+  }
+  const until = schedule.pauseUntil ?? 0;
+  atomicJson(observerPath(options), {
+    version: 1, repo: options.repo, viewer: observation.viewer, interval: options.interval, observedAt: iso(now),
+    attempt: { at: iso(now), outcome: "ok" }, queue: { observedAt: iso(now), prs: observation.queue }, pauseUntil: until > now ? iso(until) : null,
   });
-  return checks.filter((check) => RED.has(check.conclusion));
+}
+
+// A failed read keeps the last observation and its queue, visibly stale, and records why and when to retry.
+function recordFailure(options, deps, error, schedule, observer) {
+  const now = deps.now();
+  const until = Math.max(error.retryAt ?? 0, schedule.pauseUntil ?? 0, Date.parse(observer?.pauseUntil ?? "") || 0);
+  atomicJson(observerPath(options), {
+    version: 1, repo: options.repo, viewer: observer?.viewer ?? null, interval: options.interval, observedAt: observer?.observedAt ?? null,
+    attempt: { at: iso(now), outcome: error instanceof RateLimited ? "rate-limited" : "unknown", error: error.message, ...(until > now ? { retryAt: iso(until) } : {}) },
+    queue: observer?.queue ?? null, pauseUntil: until > now ? iso(until) : null,
+  });
 }
 
 // Conflict keys predate typed events, so existing ledgers keep deduplicating them.
@@ -266,28 +564,22 @@ function key(event) {
   return `${event.pr}:${event.head}:checks:${createHash("sha256").update(ids).digest("hex").slice(0, 16)}`;
 }
 
-function scan(options, deps) {
-  const issues = pages(deps, `repos/${options.repo}/issues?state=open&labels=merge&per_page=100`);
+function eventsOf(options, observation) {
   const events = [];
-  const seen = new Set();
-  for (const issue of issues) {
-    if (!Number.isSafeInteger(issue.number) || issue.number < 1) throw new Error("invalid issue listing");
-    if (!issue.pull_request || seen.has(issue.number)) continue;
-    seen.add(issue.number);
-    const pr = pull(deps, options.repo, issue.number);
-    if (!eligible(pr)) continue;
-    const comments = pages(deps, `repos/${options.repo}/issues/${issue.number}/comments?per_page=100`);
-    if (!comments.every((item) => Number.isSafeInteger(item.id) && typeof item.created_at === "string" && typeof item.body === "string" && typeof item.user?.login === "string")) throw new Error(`invalid comments for PR ${issue.number}`);
-    if (conflict(comments, pr.head.sha, options["train-login"])) {
-      const current = pull(deps, options.repo, issue.number);
-      if (eligible(current) && current.head.sha === pr.head.sha) events.push({ type: "conflict", pr: issue.number, head: pr.head.sha, url: `https://github.com/${options.repo}/pull/${issue.number}` });
-    }
+  for (const number of observation.queue) {
+    const value = observation.tracked.get(number);
+    const url = `https://github.com/${options.repo}/pull/${number}`;
+    if (conflict(value.comments, value.head, options["train-login"])) events.push({ type: "conflict", pr: number, head: value.head, url });
     // Holds gate train approval, not CI: a red check is reported even on a held PR.
-    const failed = failedChecks(deps, options.repo, issue.number, pr.head.sha);
-    if (failed.length) events.push({ type: "check-failure", pr: issue.number, head: pr.head.sha, url: `https://github.com/${options.repo}/pull/${issue.number}`, checks: failed });
+    // A rollup of another commit is not this head's failure; the next poll reads the new head.
+    const red = value.checks.sha === value.head ? value.checks.failed.filter((check) => RED.has(check.conclusion)) : [];
+    if (red.length) events.push({ type: "check-failure", pr: number, head: value.head, url, checks: red });
   }
-  return { events, open: seen.size };
+  return events;
 }
+
+// Check names and URLs come from repository content, so they travel as bounded, quoted data.
+function quoted(text) { return JSON.stringify(text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 100)); }
 
 function trusted(deps) {
   const path = deps.env.TERN_SESSIONS_CONFIG?.trim() || join(deps.env.HOME || homedir(), ".config", "tern-sessions", "config.json");
@@ -341,14 +633,46 @@ function deliver(route, event, text, deps) {
   return "accepted";
 }
 
-function tick(options, deps, globalCoordinator) {
-  const ledgerPath = join(options.state, "delivered.json");
-  const ledger = readJson(ledgerPath, { version: 1, repo: options.repo, events: {} });
+function readLedger(options) {
+  const ledger = readJson(join(options.state, "delivered.json"), { version: 1, repo: options.repo, events: {} });
   if (ledger.version !== 1 || ledger.repo !== options.repo || !ledger.events || typeof ledger.events !== "object" || Array.isArray(ledger.events)) throw new Error("invalid delivery ledger");
-  const snapshot = scan(options, deps);
-  const pending = snapshot.events.filter((event) => !Object.hasOwn(ledger.events, key(event)));
+  return ledger;
+}
+
+function tick(options, deps, globalCoordinator) {
+  const dry = options["dry-run"];
+  const ledger = readLedger(options);
+  const observer = readObserver(options);
+  const schedule = {};
+  const now = deps.now();
+  let observation;
+  try { observation = observe(options, deps, schedule, observer); }
+  catch (error) {
+    if (!dry) recordFailure(options, deps, error, schedule, observer);
+    throw error;
+  }
+  if (!dry) publish(options, deps, observation, observer, schedule, now);
+  const pending = eventsOf(options, observation).filter((event) => !Object.hasOwn(ledger.events, key(event)));
   const results = [];
-  if (!pending.length) return { event: "tick", open: snapshot.open, results };
+  try {
+    if (pending.length) deliverAll(options, deps, globalCoordinator, ledger, pending, results, schedule);
+  } catch (error) {
+    if (!dry) recordFailure(options, deps, error, schedule, readObserver(options));
+    throw error;
+  }
+  if (!dry && schedule.pauseUntil > pausedUntil(options)) atomicJson(observerPath(options), { ...readObserver(options), pauseUntil: iso(schedule.pauseUntil) });
+  return { event: "tick", open: observation.queue.length, results };
+}
+
+// Each event reaches the PR's registered owner and its coordinator; the operator hears only when neither can.
+function deliverAll(options, deps, globalCoordinator, ledger, pending, results, schedule) {
+  const [owner, name] = options.repo.split("/");
+  // The immediate read before an effect: the event still holds on the exact current head.
+  const holds = (event) => {
+    const node = graphql(deps, schedule, CURRENT, { owner, name, number: event.pr }, `PR ${event.pr}`).repository?.pullRequest;
+    if (node?.number !== event.pr || !["OPEN", "CLOSED", "MERGED"].includes(node.state) || !SHA.test(node.headRefOid || "")) throw new Error(`invalid pull request response for PR ${event.pr}`);
+    return node.state === "OPEN" && labelsOf(node.labels, `PR ${event.pr}`).includes("merge") && node.headRefOid === event.head;
+  };
   let listed = [];
   const errors = [];
   try { listed = sessions(deps); } catch (error) { errors.push(error.message); }
@@ -359,72 +683,199 @@ function tick(options, deps, globalCoordinator) {
   if ([globalCoordinator, ...records.flatMap((record) => [record?.owner, record?.coordinator])].some((target) => target?.agent)) {
     try { named = agents(deps); } catch (error) { errors.push(error.message); }
   }
-  events: for (const [index, event] of pending.entries()) {
-    const current = pull(deps, options.repo, event.pr);
-    if (!eligible(current) || current.head.sha !== event.head) continue;
+  for (const [index, event] of pending.entries()) {
+    if (!holds(event)) continue;
     const record = records[index];
     const candidates = routes(options, record, globalCoordinator, listed, named, authorized, deps);
-    const plan = candidates.map(({ target, ...route }) => route);
-    if (options["dry-run"]) { results.push({ ...event, outcome: "planned", routes: plan, errors }); continue; }
+    if (options["dry-run"]) { results.push({ ...event, outcome: "planned", routes: candidates.map(({ target, ...route }) => route), errors }); continue; }
     const failures = [...errors];
-    let receipt;
-    for (const route of candidates) {
-      const current = pull(deps, options.repo, event.pr);
-      if (!eligible(current) || current.head.sha !== event.head) continue events;
+    const receipts = [];
+    let moved = false;
+    const attempt = (route) => {
+      if (!holds(event)) { moved = true; return false; }
       try {
         const outcome = deliver(route, event, message(event, record), deps);
-        receipt = { kind: route.kind, ...(route.role ? { role: route.role } : {}), block: route.block, outcome, at: new Date().toISOString() };
-        break;
-      } catch (error) { failures.push(`${route.kind} ${route.block}: ${error.message}`); }
+        receipts.push({ kind: route.kind, ...(route.role ? { role: route.role } : {}), block: route.block, outcome, at: iso(deps.now()) });
+        return true;
+      } catch (error) { failures.push(`${route.kind} ${route.block}: ${error.message}`); return false; }
+    };
+    for (const role of ["owner", "coordinator"]) {
+      for (const route of candidates.filter((item) => item.role === role)) if (moved || attempt(route)) break;
+      if (moved) break;
     }
-    if (receipt) {
-      ledger.events[key(event)] = receipt;
-      atomicJson(ledgerPath, ledger);
-      results.push({ ...event, ...receipt, errors: failures });
-    } else results.push({ ...event, outcome: "pending", errors: failures.length ? failures : ["no reachable session or notification pane"] });
+    if (!receipts.length && !moved) for (const route of candidates.filter((item) => item.kind === "notification")) if (moved || attempt(route)) break;
+    if (receipts.length) {
+      const [first, ...copies] = receipts;
+      ledger.events[key(event)] = { ...first, ...(copies.length ? { copies } : {}), event: { type: event.type, pr: event.pr, head: event.head } };
+      atomicJson(join(options.state, "delivered.json"), ledger);
+      results.push({ ...event, ...first, ...(copies.length ? { copies } : {}), errors: failures });
+    } else if (!moved) results.push({ ...event, outcome: "pending", errors: failures.length ? failures : ["no reachable session or notification pane"] });
   }
-  return { event: "tick", open: snapshot.open, results };
 }
 
-// Tests inject only host transports/output. Routing, CLI parsing, files and locking stay real.
-export async function runCli(argv, overrides = {}) {
-  const deps = dependencies(overrides);
-  const options = parse(argv, deps.env);
-  if (options.command === "register") { deps.out(register(options, deps)); return; }
-  stateRepo(options, !options["dry-run"]);
-  const release = options["dry-run"] ? () => {} : lock(options, deps);
+// What a consumer may rely on: the PR's last observation, and every reason it may be out of date.
+function view(options, deps, number) {
+  const now = deps.now();
+  const observer = readObserver(options);
+  const snapshot = number === undefined ? undefined : readJson(snapshotPath(options, number), null);
+  const pid = holder(options, deps);
+  const until = Date.parse(observer?.pauseUntil ?? "");
+  const paused = Number.isFinite(until) && until > now;
+  const reasons = [];
+  // A final observation records a settled PR; it no longer needs a live reader to stay true.
+  if (!snapshot?.final) {
+    if (!pid) reasons.push("no observer is running");
+    if (!observer) reasons.push("nothing has been observed yet");
+    else if (observer.attempt.outcome !== "ok") reasons.push(`the last GitHub read was ${observer.attempt.outcome}: ${observer.attempt.error}`);
+    else if (!paused && now - Date.parse(observer.attempt.at) > STALL_INTERVALS * observer.interval * 1000) reasons.push(`no observation since ${observer.attempt.at}`);
+    if (number !== undefined && !snapshot) reasons.push(`PR ${number} has not been observed`);
+    else if (number !== undefined && observer?.attempt.outcome === "ok" && snapshot.observedAt !== observer.observedAt) reasons.push(`PR ${number} was not in the latest observation`);
+  }
+  return {
+    outcome: reasons.length ? "unknown" : "ok", reasons, ...(paused ? { retryAt: observer.pauseUntil } : {}),
+    observer: observer ? { pid: pid ?? null, viewer: observer.viewer, observedAt: observer.observedAt, attempt: observer.attempt, queue: observer.queue, pauseUntil: observer.pauseUntil } : null,
+    ...(number !== undefined ? { pr: snapshot, ...(reasons.length && snapshot ? { stale: true } : {}) } : {}),
+  };
+}
+
+// The result a waiting consumer gets once the observation settles what it waits for, or undefined.
+function decide(options, snapshot, now) {
+  const moved = options.head && snapshot.head !== options.head;
+  if (options.for === "change") return snapshot.digest !== options.after ? "changed" : undefined;
+  if (snapshot.state === "CLOSED") return "closed";
+  if (options.for === "merge") return snapshot.state === "MERGED" ? "merged" : moved ? "head-moved" : undefined;
+  if (options.for === "post-merge") {
+    if (snapshot.state !== "MERGED") return moved ? "head-moved" : undefined;
+    if (!snapshot.postMerge || snapshot.postMerge.state === "pending" || Date.parse(snapshot.observedAt) - Date.parse(snapshot.merge.at) < SETTLE_MS) return undefined;
+    return snapshot.postMerge.state;
+  }
+  if (snapshot.state === "MERGED") return "merged";
+  // A green check of another commit never proves this head.
+  if (moved) return "head-moved";
+  const checks = snapshot.checks;
+  if (checks.sha !== snapshot.head || checks.state === "pending") return undefined;
+  if (checks.state === "none" && now - Date.parse(snapshot.headSince) < SETTLE_MS) return undefined;
+  return checks.state;
+}
+
+// Events the reader delivered since this process attached that concern this coordinator: those
+// it received, and those about a PR registered to it, since its inbox may have refused them.
+function followed(options, seen) {
+  if (!options.coordinator) return [];
+  const results = [];
+  for (const [id, receipt] of Object.entries(readLedger(options).events)) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (!receipt.event) continue;
+    const blocks = [receipt, ...(receipt.copies ?? [])].map((item) => item.block);
+    if (blocks.includes(options.coordinator) || registration(options, receipt.event.pr)?.coordinator?.block === options.coordinator) results.push({ ...receipt.event, ...receipt });
+  }
+  return results;
+}
+
+async function serve(options, deps) {
+  const dry = options["dry-run"];
   const controller = new AbortController();
   const stop = () => controller.abort();
   if (!options.once) { process.once("SIGINT", stop); process.once("SIGTERM", stop); }
+  const nap = async (ms) => {
+    try { await deps.sleep(Math.max(0, ms), undefined, { signal: controller.signal }); }
+    catch (error) { if (error.name !== "AbortError") throw error; }
+  };
+  const deadline = options.timeout ? deps.now() + options.timeout * 1000 : Infinity;
+  const seen = new Set(Object.keys(readLedger(options).events));
+  let release;
+  let attached;
+  let reported;
+  let announced;
   try {
     let coordinator;
     if (options.coordinator) {
       try { coordinator = pin(options.coordinator, options["coordinator-agent"], sessions(deps)); }
       catch (error) { deps.out({ event: "warning", error: error.message }); }
     }
-    if (!options.once) deps.out({ event: "ready", repo: options.repo, state: options.state, pid: process.pid, interval: options.interval, ...(options.coordinator ? { coordinator: options.coordinator } : {}) });
-    do {
-      try {
-        const result = tick(options, deps, coordinator);
-        if (!options["until-event"] || result.results.length) deps.out(result);
-        if ((options.once || options["until-event"]) && result.results.some((event) => event.outcome === "pending")) throw new Error("event delivery remains pending");
-        if (options["until-event"] && result.results.length) break;
-      } catch (error) {
-        if (options.once || options["until-event"]) throw error;
-        deps.out({ event: "error", error: error.message });
+    // Lead when no live reader holds the lock; otherwise attach to it and take over once it is gone.
+    let holderPid;
+    const claim = () => {
+      if (release || dry) return;
+      const taken = lock(options, deps);
+      if (taken.release) release = taken.release;
+      else if (options.once) throw new Error(`watch already running with pid ${taken.pid}; attach with watch or wait instead of starting a second reader`);
+      else holderPid = taken.pid;
+    };
+    claim();
+    if (options.command === "watch" && !options.once) deps.out({ event: "ready", repo: options.repo, state: options.state, pid: process.pid, interval: options.interval, ...(options.coordinator ? { coordinator: options.coordinator } : {}) });
+    while (!controller.signal.aborted) {
+      let next = FOLLOW_MS;
+      claim();
+      if (!release && !dry && attached !== holderPid) { attached = holderPid; deps.out({ event: "attached", pid: holderPid }); }
+      if (release || dry) {
+        const until = pausedUntil(options);
+        if (until > deps.now()) {
+          if (options.once) throw Object.assign(new Error(`GitHub rate limit pause until ${iso(until)}; no request sent`), { retryAt: until });
+          if (announced !== until) { announced = until; deps.out({ event: "paused", until: iso(until) }); }
+          next = until - deps.now();
+        } else {
+          next = options.interval * 1000;
+          try {
+            const result = tick(options, deps, coordinator);
+            if (options.command === "watch") {
+              if (!options["until-event"] || result.results.length) deps.out(result);
+              if ((options.once || options["until-event"]) && result.results.some((event) => event.outcome === "pending")) throw new Error("event delivery remains pending");
+              if (options.once || (options["until-event"] && result.results.length)) return;
+            }
+          } catch (error) {
+            if (options.command === "watch" && (options.once || options["until-event"])) throw error;
+            deps.out({ event: "error", error: error.message, ...(error.retryAt ? { retryAt: iso(error.retryAt) } : {}) });
+          }
+        }
+      } else if (options["until-event"]) {
+        const results = followed(options, seen);
+        if (results.length) { deps.out({ event: "tick", attached: attached ?? null, results }); return; }
       }
-      if (options.once || controller.signal.aborted) break;
-      try { await deps.sleep(options.interval * 1000, undefined, { signal: controller.signal }); }
-      catch (error) { if (error.name !== "AbortError") throw error; }
-    } while (!controller.signal.aborted);
+      if (options.command === "wait") {
+        const current = view(options, deps, options.pr);
+        const result = current.outcome === "ok" && current.pr ? decide(options, current.pr, deps.now()) : undefined;
+        if (result) {
+          const { pr } = current;
+          deps.out({ event: "observed", for: options.for, result, pr: pr.pr, head: pr.head, ...(pr.merge ? { merge: pr.merge.sha } : {}), observedAt: pr.observedAt, digest: pr.digest, snapshot: pr });
+          return;
+        }
+        const why = JSON.stringify(current.reasons);
+        if (current.outcome !== "ok" && why !== reported) { reported = why; deps.out({ event: "unknown", reasons: current.reasons, ...(current.retryAt ? { retryAt: current.retryAt } : {}), stale: current.pr ?? null }); }
+        if (deps.now() >= deadline) {
+          deps.out({ event: "timeout", ...current });
+          throw new Error(`timed out waiting for ${options.for} on PR ${options.pr}`);
+        }
+      }
+      await nap(Math.min(next, deadline - deps.now()));
+    }
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
-    release();
+    release?.();
   }
+}
+
+// Tests inject only host transports, the clock and output. Routing, CLI parsing, files and locking stay real.
+export async function runCli(argv, overrides = {}) {
+  const deps = dependencies(overrides);
+  const options = parse(argv, deps.env);
+  if (options.command === "register") { deps.out(register(options, deps)); return; }
+  if (options.command === "status") {
+    stateRepo(options, false);
+    deps.out({ event: "status", repo: options.repo, state: options.state, ...view(options, deps, options.pr) });
+    return;
+  }
+  stateRepo(options, !options["dry-run"]);
+  if (options.command === "wait" && !registration(options, options.pr)) throw new Error(`PR ${options.pr} is not registered; register it so the observer reads it`);
+  await serve(options, deps);
 }
 
 // ~/.agents/skills links to the clone, so compare real paths, not the invoked one.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runCli(process.argv.slice(2)).catch((error) => { console.error(JSON.stringify({ event: "error", error: error.message })); process.exitCode = 1; });
+  runCli(process.argv.slice(2)).catch((error) => {
+    console.error(JSON.stringify({ event: "error", error: error.message, ...(error.retryAt ? { retryAt: iso(error.retryAt) } : {}) }));
+    process.exitCode = 1;
+  });
 }
