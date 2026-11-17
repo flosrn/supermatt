@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { manifest, verifyDiscovery, project, run } from "../scripts/lib/skill-evidence.mjs";
@@ -58,12 +58,13 @@ test("packaging rejects metadata drift and escaping resources", t => {
 
 test("release projection omits only dev directories and survives source removal", t => {
   const { root, file } = fixture(t);
-  file("scripts/dev.mjs", "dev"); file("tests/test.mjs", "test"); file(".github/workflows/ci.yml", "ci");
+  file("scripts/dev.mjs", "dev"); file("tests/test.mjs", "test"); file(".github/workflows/ci.yml", "ci"); file("lefthook.yml", "hooks");
   const destination = mkdtempSync(join(tmpdir(), "supermatt-projection-"));
   t.after(() => rmSync(destination, { recursive: true, force: true }));
   project(root, destination);
   const expected = manifest(destination);
   assert.ok(!Object.keys(expected.files).some(p => /^(scripts|tests|\.github)\//.test(p)));
+  assert.ok(!existsSync(join(destination, "lefthook.yml")), "the projection keeps lefthook.yml, which the directory branch drops");
   rmSync(root, { recursive: true });
   assert.equal(verifyDiscovery(discovered(destination), expected, destination).skills, 1);
 });
