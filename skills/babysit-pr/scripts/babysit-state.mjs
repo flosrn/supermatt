@@ -326,11 +326,16 @@ function http(text) {
 }
 
 // A refusal that names Retry-After is a rate limit whatever its wording, on a failed exit
-// or on a GraphQL error answer; the error carries how long GitHub asked to wait.
+// or on a GraphQL error answer; the error carries the header GitHub sent.
 function retryAfter(headers, error) {
-  const after = Number(headers["retry-after"]);
-  if (headers["retry-after"] !== undefined && Number.isFinite(after)) error.retryAfterSeconds = after;
+  if (headers["retry-after"] !== undefined) error.retryAfter = headers["retry-after"].trim();
   return error;
+}
+
+// Retry-After is delay seconds or an HTTP date (RFC 9110); an unreadable one waits a minute.
+function retryAt(header, now) {
+  if (/^[0-9]+$/.test(header)) return now + Number(header) * 1000;
+  return Date.parse(header) || now + 60_000;
 }
 
 function graphql(gh, query, variables) {
@@ -610,34 +615,37 @@ function retryAfterRefusal(gh, now) {
   return Math.max(now + 60_000, ...resets);
 }
 
-// The pause ship-pr's shared observer recorded for this repository, if it runs here. The
-// GitHub account's allowance is shared, so no snapshot reads before the observer may.
-function observerPause(observers, repo) {
-  if (!observers) return 0;
+// The pause ship-pr's shared observer recorded for this repository, if it runs here: in its
+// custom state directory when one is given, else under the default root. The GitHub account's
+// allowance is shared, so no snapshot reads before the observer may.
+function observerPause(observers, observerState, repo) {
+  const dir = observerState ?? (observers ? join(observers, ...repo.toLowerCase().split("/")) : undefined);
+  if (!dir) return 0;
   let record;
-  try { record = JSON.parse(readFileSync(join(observers, ...repo.toLowerCase().split("/"), "observer.json"), "utf8")); } catch (error) {
+  try { record = JSON.parse(readFileSync(join(dir, "observer.json"), "utf8")); } catch (error) {
     if (error.code === "ENOENT") return 0;
     throw error;
   }
-  if (record?.version !== 1 || record.repo !== repo.toLowerCase()) throw new Error(`invalid shared observer state for ${repo}`);
-  const until = Date.parse(record.pauseUntil ?? "");
-  return Number.isFinite(until) ? until : 0;
+  // A pause that cannot be read is invalid state, never the absence of a pause.
+  const until = record?.pauseUntil == null ? 0 : Date.parse(record.pauseUntil);
+  if (record?.version !== 1 || record.repo !== repo.toLowerCase() || Number.isNaN(until)) throw new Error(`invalid shared observer state for ${repo}`);
+  return until;
 }
 
 // The GitHub read happens inside the state transaction: an observation is never applied to
 // state another session advanced after it was taken. A refused read is no observation: it
 // records when GitHub permits the next request, and no snapshot asks before then.
-export function snapshot({ file, gh = realGh, now = Date.now(), observers }) {
+export function snapshot({ file, gh = realGh, now = Date.now(), observers, observerState }) {
   const result = update(file, (state) => {
     if (state.pr == null) throw new Error("no PR bound yet: create it, then run bind");
     const paused = Date.parse(state.github_pause?.until ?? "");
     if (paused > now) return { refused: new RateLimited(`GitHub rate limit pause until ${state.github_pause.until}; no request sent`, paused) };
-    const shared = observerPause(observers, state.repo);
+    const shared = observerPause(observers, observerState, state.repo);
     if (shared > now) return { refused: new RateLimited(`the shared GitHub observer is paused for a rate limit until ${new Date(shared).toISOString()}; no request sent`, shared) };
     let seen;
     try { seen = observe(gh, state.repo, state.pr); } catch (error) {
-      if (error?.retryAfterSeconds == null && !RATE_LIMIT.test(`${error?.stderr ?? ""} ${error?.message ?? ""}`)) throw error;
-      const until = Math.max(retryAfterRefusal(gh, now), error.retryAfterSeconds != null ? now + error.retryAfterSeconds * 1000 : 0);
+      if (error?.retryAfter == null && !RATE_LIMIT.test(`${error?.stderr ?? ""} ${error?.message ?? ""}`)) throw error;
+      const until = Math.max(retryAfterRefusal(gh, now), error.retryAfter != null ? retryAt(error.retryAfter, now) : 0);
       state.github_pause = { until: new Date(until).toISOString(), at: new Date(now).toISOString() };
       return { refused: new RateLimited(`GitHub rate limit refused the snapshot; the next permitted request is at ${state.github_pause.until}`, until) };
     }
@@ -679,7 +687,7 @@ export function ciResult(file, { key, outcome, now = Date.now() }) {
 const USAGE = `Usage:
   babysit-state.mjs open [--pr N|URL] [--duration 8h] [--repo OWNER/REPO] [--branch NAME]
   babysit-state.mjs bind --state FILE --pr N
-  babysit-state.mjs snapshot --state FILE
+  babysit-state.mjs snapshot --state FILE [--observer-state DIR]
   babysit-state.mjs handled --state FILE --id ID --fingerprint FP --disposition fixed|answered|declined|no-action|needs-human
   babysit-state.mjs ci-result --state FILE --key KEY --outcome rerun|repaired|stopped|budget-exhausted
   babysit-state.mjs spend --state FILE repair|rerun [--note TEXT]
@@ -690,7 +698,7 @@ function main(argv) {
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
     state: { type: "string" }, pr: { type: "string" }, duration: { type: "string" }, repo: { type: "string" }, branch: { type: "string" },
     id: { type: "string" }, fingerprint: { type: "string" }, disposition: { type: "string" }, key: { type: "string" },
-    outcome: { type: "string" }, note: { type: "string" },
+    outcome: { type: "string" }, note: { type: "string" }, "observer-state": { type: "string" },
   } });
   const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
   const pr = values.pr == null ? null : command === "open" ? values.pr : Number(values.pr);
@@ -706,7 +714,7 @@ function main(argv) {
     }
     case "bind": return { bound: pr, stateFile: bind(values.state, pr) };
     // ship-pr's shared observer keeps its state under this default root, one directory per repository.
-    case "snapshot": return snapshot({ file: values.state, observers: join(process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state"), "supermatt", "merge-train") });
+    case "snapshot": return snapshot({ file: values.state, observers: join(process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state"), "supermatt", "merge-train"), observerState: values["observer-state"] && resolve(values["observer-state"]) });
     case "handled": handled(values.state, values); return { handled: values.id };
     case "ci-result": ciResult(values.state, values); return { recorded: values.key };
     case "spend": return spend(values.state, positionals[0], { note: values.note });
