@@ -23,7 +23,7 @@ const notifier = fileURLToPath(new URL("../../orchestrate/scripts/tern-notify.mj
 const usage = "merge-train-watch.mjs register --repo OWNER/REPO --train-login LOGIN --state DIR --pr N [--owner BLOCK] [--coordinator BLOCK] [--owner-agent NAME] [--coordinator-agent NAME]\nmerge-train-watch.mjs watch --repo OWNER/REPO --train-login LOGIN --state DIR [--coordinator BLOCK] [--coordinator-agent NAME] [--train-check-name NAME] [--interval 60] [--once] [--dry-run] [--until-event]";
 
 function run(command, args, env) {
-  const result = spawnSync(command, args, { env, encoding: "utf8", timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
+  const result = spawnSync(command, args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(`${command} failed: ${result.error?.message || result.stderr?.trim() || `exit ${result.status}`}`);
   return result.stdout;
 }

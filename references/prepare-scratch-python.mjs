@@ -286,7 +286,7 @@ function rewriteSourcePaths(venv, context, rewriter, log) {
 
 function verify(venv) {
   const python = interpreterLink(venv);
-  const result = spawnSync(python, ["-I", "-c", "import sys; print(sys.prefix)"], { cwd: "/", encoding: "utf8" });
+  const result = spawnSync(python, ["-I", "-c", "import sys; print(sys.prefix)"], { cwd: "/", encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (result.status !== 0) {
     throw new Error(`${python} does not start: ${result.error?.message || result.stderr.trim() || `exit status ${result.status}`}`);
   }
@@ -339,7 +339,7 @@ function prepare(repositoryArgument, scratchArgument) {
   const containment = spawnSync(process.execPath, [
     ...(process.versions.bun ? ["--no-env-file"] : []),
     fileURLToPath(new URL("./check-scratch-containment.mjs", import.meta.url)), root,
-  ], { cwd: "/", encoding: "utf8" });
+  ], { cwd: "/", encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (containment.status !== 0) {
     throw new Error(containment.error?.message || containment.stderr.trim() || `containment check exited ${containment.status}`);
   }
