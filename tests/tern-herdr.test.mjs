@@ -30,7 +30,9 @@ const test = (name, fn) => nodeTest(name, { timeout: 30_000 }, fn);
 // before that delayed frame lands. `pasteLost` and `enterLost` make omp ignore
 // them, `noTurn` makes an Enter empty the composer and start nothing,
 // `exitOnEnter` ends omp at the next Enter, and `processFails` fails that many
-// `tern process` calls. A world's `failure` fails `remaining` calls
+// `tern process` calls. `exitAfterInspects` puts the shell back in a pane's
+// foreground, and `otherOmpAfterInspects` another omp (pid 7777), at that
+// many-th inspect. A world's `failure` fails `remaining` calls
 // of its `command` with its `message`, after letting `skip` of them succeed.
 // `failureAfterRun`, `failureAfterPaste` and `failureAfterEnter` arm that same
 // mechanism at the named stage; a failure's `after` arms the next failure
@@ -130,6 +132,7 @@ switch (a[0]) {
       // omp moves on from a prompt only once it has taken it.
       if (ompFg(p) && p.states && p.states.length && landed(p.omp)) { const next = p.states.shift(); if (next !== null) become(p, next); }
       if (p.exitAfterInspects > 0 && --p.exitAfterInspects === 0) p.foreground = p.child;
+      if (p.otherOmpAfterInspects > 0 && --p.otherOmpAfterInspects === 0) p.foreground = { pid: 7777, name: "omp", argv: ["omp"], cwd: p.cwd };
       if (p.missingOnInspect > 0 && --p.missingOnInspect === 0) return [];
       return [{ pane: Number(id), title: p.title, cwd: p.cwd, working: !!p.working, omp_session_file: p.session || null, quiet_ms: 5000 }];
     });
@@ -363,10 +366,69 @@ test("agent start times out when omp never comes up, or never records its surfac
   const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "600");
   assert.equal(r.code, 1);
   assert.equal(r.error.code, "timeout");
+  assert.match(r.error.message, /app-work-1-1 was not kept/);
+  assert.equal(w.run("agent", "get", "app-work-1-1").error?.code, "agent_not_found");
   const silent = lane(t, { launch: { ...ready, noRecord: true } });
   const s = silent.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "600");
   assert.equal(s.error?.code, "timeout");
   assert.match(s.error.message, /surface record/);
+});
+
+test("agent start, prompt and wait --help name --timeout, its bare-number unit and its suffixes", (t) => {
+  const w = world(t, { 13: orchestrator() });
+  for (const command of ["start", "prompt", "wait"]) {
+    const r = w.run("agent", command, "--help");
+    assert.equal(r.code, 0, `${command}: ${r.stderr}`);
+    assert.match(r.stdout, /--timeout/, command);
+    assert.match(r.stdout, /bare number is milliseconds/, command);
+    assert.match(r.stdout, /ms, s or m/, command);
+  }
+});
+
+test("--timeout takes a bare number as milliseconds, or an ms, s or m suffix", (t) => {
+  const w = worker(t, { fakeTime: true });
+  for (const [value, waited] of [["2s", 2000], ["2000ms", 2000], ["2000", 2000]]) {
+    const r = w.run("agent", "wait", "app-work-1-1", "--until", "working", "--timeout", value);
+    assert.equal(r.error?.code, "timeout", `${value}: ${r.stderr}`);
+    assert.equal(w.sleeps().reduce((sum, ms) => sum + ms, 0), waited, value);
+  }
+  for (const args of [
+    ["agent", "wait", "app-work-1-1", "--timeout", "2h"],
+    ["agent", "wait", "app-work-1-1", "--timeout", "abc"],
+    ["agent", "prompt", "app-work-1-1", "go", "--timeout", "2h"],
+    ["agent", "start", "app-work-1-2", "--kind", "omp", "--pane", "50", "--timeout", "1.5s"],
+  ]) {
+    const r = w.run(...args);
+    assert.equal(r.code, 2, args.join(" "));
+    assert.match(r.stderr, /invalid timeout/, args.join(" "));
+  }
+});
+
+test("a worker whose composer is ready only after the start timeout keeps its name, and takes a prompt once ready", (t) => {
+  const w = lane(t, { fakeTime: true, launch: { ...ready, states: [...Array(12).fill(null), "idle"] } });
+  const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "1s");
+  assert.equal(r.code, 1);
+  assert.equal(r.error?.code, "timeout", r.stderr);
+  assert.match(r.error.message, /within 1000ms/);
+  assert.match(r.error.message, /app-work-1-1 was kept/);
+  assert.match(r.error.message, /agent wait app-work-1-1/);
+  assert.ok(w.read().panes[50].states.length > 1, "the start timed out before the composer was ready");
+  const waited = w.run("agent", "wait", "app-work-1-1");
+  assert.equal(waited.json?.result.agent.agent_status, "done", waited.stderr);
+  const p = w.run("agent", "prompt", "app-work-1-1", "go");
+  assert.equal(p.code, 0, p.stderr);
+  assert.deepEqual(sends(w).filter((c) => c[2] === "paste"), [["send", "50", "paste", "go"]]);
+});
+
+test("a start timeout does not keep the name once the pane holds a process other than the omp it launched", (t) => {
+  for (const swap of [{ exitAfterInspects: 2 }, { otherOmpAfterInspects: 2 }]) {
+    const w = lane(t, { fakeTime: true, launch: { ...ready, states: Array(20).fill(null) } });
+    w.edit((x) => { Object.assign(x.panes[50], swap); });
+    const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "1s");
+    assert.equal(r.error?.code, "timeout", r.stderr);
+    assert.match(r.error.message, /app-work-1-1 was not kept/, JSON.stringify(swap));
+    assert.ok(!existsSync(join(w.stateDir, "names", "app-work-1-1.json")), JSON.stringify(swap));
+  }
 });
 
 test("a name is cleared once its omp exits, and its surface record goes with it", (t) => {

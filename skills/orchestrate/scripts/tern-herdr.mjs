@@ -519,12 +519,18 @@ function one(positional, what) {
 function none(positional) {
   if (positional.length) throw new Usage(`unexpected argument ${positional[0]}`);
 }
+// A --timeout: a bare number of milliseconds, or a whole number with an ms, s
+// or m suffix.
+const UNIT_MS = { "": 1, ms: 1, s: 1000, m: 60_000 };
+const TIMEOUT_HELP = "a bare number is milliseconds; or use an ms, s or m suffix (2000, 2000ms, 2s, 1m)";
 const ms = (value) => {
   if (value === undefined) return undefined;
-  const n = Number(value);
-  if (!Number.isInteger(n) || n < 0) throw new Usage(`invalid timeout ${value}`);
-  return n;
+  const m = /^(\d+)(ms|s|m)?$/.exec(value);
+  if (!m) throw new Usage(`invalid timeout ${value}: ${TIMEOUT_HELP}`);
+  return Number(m[1]) * UNIT_MS[m[2] ?? ""];
 };
+
+const isHelp = (args) => args.length === 1 && args[0] === "--help";
 
 const quote = (s) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`);
 
@@ -586,7 +592,7 @@ const commands = {
     return { agent: claim(positional[1], resolve(positional[0])) };
   },
   "agent start"(args) {
-    if (args.length === 1 && args[0] === "--help") return print(`Start a supported interactive agent in an existing pane\n\nUsage: herdr agent start <NAME> --kind <KIND> --pane <ID> [OPTIONS] [-- [AGENT_ARG]...]\n\n${KINDS}\n`);
+    if (isHelp(args)) return print(`Start a supported interactive agent in an existing pane\n\nUsage: herdr agent start <NAME> --kind <KIND> --pane <ID> [OPTIONS] [-- [AGENT_ARG]...]\n\nOptions:\n  --timeout <DURATION>  how long to wait for a composer ready for a prompt (default 30s); ${TIMEOUT_HELP}\n\n${KINDS}\n`);
     const { flags, positional, rest = [] } = parse(args, { kind: "value", pane: "value", timeout: "value" });
     const name = one(positional, "<name>");
     const timeout = ms(flags.timeout) ?? 30_000;
@@ -604,27 +610,51 @@ const commands = {
     // omp that just exited would otherwise run ahead of the launch.
     tern("send", pane, "keys", ...Array(LINE_CLEARS).fill("ctrl+u"));
     tern("run", pane, ["PI_TUI_NATIVE=1", `PI_TUI_TSP_RECORD=${quote(record)}`, "omp", ...rest.map(quote)].join(" "));
+    // The omp this start launched is the first omp Tern shows in the pane's
+    // foreground, which held its shell until the launch. `last` is the latest
+    // read: the agent, or undefined for none; `unread` marks a read that failed
+    // or ran out of time, which confirms nothing.
+    let launched, last, unread;
     let found;
     try {
       found = poll(Date.now() + timeout, () => {
+        unread = true;
         const snap = snapshot();
         try {
-          const a = agentIn(pane, snap, record);
-          return a && (a.agent_status === "idle" || a.agent_status === "blocked") ? a : undefined;
+          last = agentIn(pane, snap, record);
+          unread = false;
         } catch (e) {
           if (!e[PROCESS_QUERY_FAILED]) throw e;
-          return undefined;
+          last = undefined;
         }
+        if (last) launched ??= last.pid;
+        return last && (last.agent_status === "idle" || last.agent_status === "blocked") ? last : undefined;
       });
     } catch (e) {
-      if (e.code === "timeout") throw new Failure("timeout", `omp in pane ${pane} showed no composer ready for a prompt within ${timeout}ms (surface record ${record})`);
-      throw e;
+      if (e.code !== "timeout") throw e;
+      const late = `omp in pane ${pane} showed no composer ready for a prompt within ${timeout}ms (surface record ${record})`;
+      // Why the name stays unclaimed, or undefined once it is claimed.
+      const unclaimed = (() => {
+        if (launched === undefined) return "Tern never showed omp in the pane's foreground";
+        if (unread) return `Tern could not read the pane's foreground to confirm omp pid ${launched} is still there`;
+        if (!last) return `omp pid ${launched} has left the pane's foreground`;
+        if (last.pid !== launched) return `the pane's foreground is pid ${last.pid}, not the omp pid ${launched} this start launched`;
+        try {
+          claim(name, last);
+        } catch (c) {
+          if (c.code !== "agent_name_in_use") throw c;
+          return c.message;
+        }
+      })();
+      if (unclaimed) throw new Failure("timeout", `${late}; the name ${name} was not kept: ${unclaimed}`);
+      throw new Failure("timeout", `${late}; the name ${name} was kept for omp pid ${launched}: run agent wait ${name}, then agent prompt ${name} once the wait returns idle or done`);
     }
     const named = claim(name, found);
     if (found.agent_status === "blocked") throw new Failure("agent_not_ready", `agent ${name} is waiting at a dialog; read it and answer with send-keys`);
     return { agent: named };
   },
   "agent prompt"(args) {
+    if (isHelp(args)) return print(`Send a prompt to an agent\n\nUsage: herdr agent prompt <TARGET> <TEXT> [--wait] [--until <STATUS>]... [--timeout <DURATION>]\n\nOptions:\n  --timeout <DURATION>  when, counted from the call, the wait --wait does once omp has taken the prompt ends (no limit by default); ${TIMEOUT_HELP}\n`);
     const { flags, positional } = parse(args, { wait: "bool", until: "list", timeout: "value" });
     if (positional.length !== 2) throw new Usage("agent prompt <target> <text>");
     const deadline = deadlineOf(flags.timeout);
@@ -683,9 +713,12 @@ const commands = {
     }
   },
   "agent wait"(args) {
+    if (isHelp(args)) return print(`Wait for an agent to reach a status\n\nUsage: herdr agent wait <TARGET> [--until <STATUS>]... [--timeout <DURATION>]\n\nOptions:\n  --timeout <DURATION>  how long to wait (no limit by default); ${TIMEOUT_HELP}\n`);
     const { flags, positional } = parse(args, { until: "list", timeout: "value" });
-    const agent = resolve(one(positional, "<target>"));
-    return { agent: settle(agent, untilOf(flags.until), deadlineOf(flags.timeout), false) };
+    const target = one(positional, "<target>");
+    const until = untilOf(flags.until);
+    const deadline = deadlineOf(flags.timeout);
+    return { agent: settle(resolve(target), until, deadline, false) };
   },
   "agent read"(args) {
     const { flags, positional } = parse(args, { source: "value", lines: "value", format: "value" });
