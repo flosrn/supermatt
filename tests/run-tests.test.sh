@@ -106,6 +106,20 @@ case "$out" in *refs/heads/other*) ;; *) fail "pre-push did not name the ref it 
 echo h > file && git commit -q -am untested-head
 out="$(pre_push)" || fail "pre-push of an untested HEAD exited nonzero"
 case "$out" in *refs/heads/*) fail "pre-push named the ref it tested: $out" ;; esac
+# When the suite runs, every pushed ref that is not the checked-out commit is named, even one already recorded or sharing its tree.
+echo i > file && git commit -q -am untested-again
+twin="$(git commit-tree 'HEAD^{tree}' -p HEAD -m twin)"
+out="$(printf 'refs/heads/main %s refs/heads/main %s\nrefs/heads/prev %s refs/heads/prev %s\nrefs/heads/twin %s refs/heads/twin %s\n' \
+  "$(git rev-parse HEAD)" "$zero" "$(git rev-parse HEAD~1)" "$zero" "$twin" "$zero" | sh "$REPO/scripts/run-tests.sh" --pre-push)" \
+  || fail "pre-push of an untested HEAD with other refs exited nonzero"
+case "$out" in *refs/heads/prev*) ;; *) fail "pre-push did not name a recorded ref it did not test: $out" ;; esac
+case "$out" in *refs/heads/twin*) ;; *) fail "pre-push did not name another commit sharing the tested tree: $out" ;; esac
+case "$out" in *refs/heads/main*) fail "pre-push named the checked-out commit: $out" ;; esac
+# A pushed object with no tree to resolve is named too, and the suite still runs on the worktree.
+before="$(runs)"
+out="$(printf 'refs/heads/ghost %s refs/heads/ghost %s\n' 1111111111111111111111111111111111111111 "$zero" | sh "$REPO/scripts/run-tests.sh" --pre-push 2>&1)" \
+  && [ "$(runs)" = $((before + 1)) ] || fail "pre-push of an unresolvable object did not run the suite: $out"
+case "$out" in *refs/heads/ghost*) ;; *) fail "pre-push did not name an unresolvable ref: $out" ;; esac
 
 # A suite that removes the changes it started with tested them, not the commit's tree.
 echo h2 > file && git commit -q -am dirty-start
