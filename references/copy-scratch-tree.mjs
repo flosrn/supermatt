@@ -69,13 +69,13 @@ if (!source || !target || extra.length) {
     let method = process.platform === "darwin" ? "clonefile" : "cp --reflink=always";
     try {
       const clone = process.platform === "darwin"
-        ? spawnSync("python3", ["-I", "-c", macClone, root, destination], { encoding: "utf8" })
-        : spawnSync("cp", ["-RpP", "--reflink=always", "--", `${root}${sep}.`, destination], { encoding: "utf8" });
+        ? spawnSync("python3", ["-I", "-c", macClone, root, destination], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+        : spawnSync("cp", ["-RpP", "--reflink=always", "--", `${root}${sep}.`, destination], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
       if (clone.error || clone.status !== 0) throw new Error("clone unavailable");
       prune(destination, root);
     } catch {
       try { removeTree(destination); } catch (error) { if (error.code !== "ENOENT") throw error; }
-      const fallback = spawnSync("rsync", ["-a", "--no-specials", "--no-devices", "--exclude", ".git", "--", `${root}${sep}`, `${destination}${sep}`], { encoding: "utf8" });
+      const fallback = spawnSync("rsync", ["-a", "--no-specials", "--no-devices", "--exclude", ".git", "--", `${root}${sep}`, `${destination}${sep}`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
       if (fallback.error || fallback.status !== 0) {
         try { removeTree(destination); } catch (error) { if (error.code !== "ENOENT") throw error; }
         throw new Error(fallback.error?.message || fallback.stderr.trim() || "rsync failed");
