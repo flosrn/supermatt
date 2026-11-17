@@ -18,7 +18,7 @@ You are the orchestrator. You do not write code. You pick issues, drive workers 
 
 Repeat until a stop condition is met. During the unattended loop, answer workers' questions and dialogs as below rather than asking the user. The coordinator's final cleanup offer in **On stop** is the only exception and requires the operator's own answer.
 
-Before dispatching, read the [orchestrator dispatch contract](../../references/harnesses.md#orchestrator-dispatch). This explicit invocation delegates only its listed worker commands within this run. Use [Send the prompt](WORKER.md#dispatch-preamble) for every instruction prompt: it attaches the assigned issue, worktree, phase, approval scope, relevant prior evidence, and the round's evidence directory at dispatch. Keep the called skills' invocation policies unchanged; park when a required human approval is outside the delegated scope.
+Before dispatching, read the [orchestrator dispatch contract](../../references/harnesses.md#orchestrator-dispatch). This explicit invocation delegates only its listed worker commands within this run. Use [Send the prompt](WORKER.md#dispatch-preamble) for every instruction prompt: it attaches the assigned issue, worktree, phase, approval scope, relevant prior evidence, and the round's evidence directory at dispatch, and names you as the worker's only recipient. You alone talk to the operator: strip the operator's session identifiers from every text you pass to a worker, as that section says. Keep the called skills' invocation policies unchanged; park when a required human approval is outside the delegated scope.
 
 ## Setup
 
