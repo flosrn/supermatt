@@ -145,6 +145,27 @@ test("a refusal that names no exhausted allowance waits at least a minute", (t) 
   assert.equal(look(NOW + 60_000).pr.number, 4);
 });
 
+test("a secondary limit's Retry-After is honored, and answers that carry their HTTP headers still parse", (t) => {
+  const { h, stateFile } = babysat(t);
+  let refused = false;
+  // gh --include prints the status line and headers before the body, on refusals too.
+  const gh = (args) => {
+    if (args[0] === "api" && args[1] === "rate_limit") return JSON.stringify({ resources: { core: { remaining: 10, reset: NOW / 1000 }, graphql: { remaining: 10, reset: NOW / 1000 } } });
+    if (args[0] === "api" && args[1] === "graphql" && args.includes("--include")) {
+      h.calls.push(args);
+      if (!refused) {
+        refused = true;
+        throw Object.assign(new Error("Command failed: gh api graphql"), { stdout: "HTTP/2.0 403 Forbidden\r\nRetry-After: 900\r\n\r\n{\"message\":\"You have exceeded a secondary rate limit.\"}", stderr: "gh: You have exceeded a secondary rate limit. (HTTP 403)\n" });
+      }
+      return `HTTP/2.0 200 OK\r\nX-Ratelimit-Remaining: 4999\r\n\r\n${h.gh(args)}`;
+    }
+    return h.gh(args);
+  };
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), (error) => error instanceof RateLimited && error.retryAt === NOW + 900_000);
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW + 899_000 }), /no request sent/);
+  assert.equal(snapshot({ file: stateFile, gh, now: NOW + 900_000 }).pr.number, 4);
+});
+
 test("a branch with no open PR asks for one, and a resume after bind reuses it", async (t) => {
   const dir = stateDir(t);
   const h = host();

@@ -311,12 +311,33 @@ const CONNECTIONS = {
 };
 const THREAD_COMMENTS = `query($id: ID!, $cursor: String) { node(id: $id) { ... on PullRequestReviewThread { comments(first: 100, after: $cursor) { ${COMMENT_PAGE} } } } }`;
 
+// `--include` puts the status line and headers before the body, on refusals too, so a refused
+// read can name its Retry-After. A gh that prints a bare body still parses.
+function http(text) {
+  if (!/^HTTP\/\S+ \d{3}/.test(text ?? "")) return { headers: {}, body: text };
+  const blank = /\r?\n\r?\n/.exec(text);
+  const headers = {};
+  for (const line of (blank ? text.slice(0, blank.index) : text).split(/\r?\n/).slice(1)) {
+    const at = line.indexOf(":");
+    if (at > 0) headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim();
+  }
+  return { headers, body: blank ? text.slice(blank.index + blank[0].length) : "" };
+}
+
 function graphql(gh, query, variables) {
   const args = ["api", "graphql", "-f", `query=${query}`];
   for (const [key, value] of Object.entries(variables)) {
     if (value != null) args.push(typeof value === "number" ? "-F" : "-f", `${key}=${value}`);
   }
-  const response = JSON.parse(gh(args));
+  args.push("--include");
+  let text;
+  try { text = gh(args); } catch (error) {
+    const { headers } = http(typeof error?.stdout === "string" ? error.stdout : "");
+    const after = Number(headers["retry-after"]);
+    if (headers["retry-after"] !== undefined && Number.isFinite(after)) error.retryAfterSeconds = after;
+    throw error;
+  }
+  const response = JSON.parse(http(text).body);
   if (response.errors?.length) throw new Error(`GitHub GraphQL: ${response.errors.map((e) => e.message).join("; ")}`);
   if (!response.data) throw new Error("GitHub GraphQL: empty response");
   return response.data;
@@ -593,7 +614,7 @@ export function snapshot({ file, gh = realGh, now = Date.now() }) {
     let seen;
     try { seen = observe(gh, state.repo, state.pr); } catch (error) {
       if (!RATE_LIMIT.test(`${error?.stderr ?? ""} ${error?.message ?? ""}`)) throw error;
-      const until = retryAfterRefusal(gh, now);
+      const until = Math.max(retryAfterRefusal(gh, now), error.retryAfterSeconds != null ? now + error.retryAfterSeconds * 1000 : 0);
       state.github_pause = { until: new Date(until).toISOString(), at: new Date(now).toISOString() };
       return { refused: new RateLimited(`GitHub rate limit refused the snapshot; the next permitted request is at ${state.github_pause.until}`, until) };
     }

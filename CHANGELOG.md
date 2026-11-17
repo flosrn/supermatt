@@ -99,7 +99,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `ideate`: personal OMP patch sends independent refutation to the `challenger` mission agent, leaving grounding exploration unchanged.
 - `jury`: personal OMP patch assigns one host seat to `challenger` and remaining host seats to `reviewer`, retains those assignments for fresh review seats, and reports actual established model families without inferring diversity from lenses or agent names.
 - `babysit-pr`: personal OMP patch sends follow-up QA to the `qa` mission agent.
-  With ship-pr's shared observer running, registers the PR and waits on its observations instead of polling every minute; without it, waits five minutes between snapshots. `snapshot` exits 4 on a GitHub rate-limit refusal, records the next permitted time from the reset of the exhausted allowance (at least a minute), and sends no request before then (#124).
+  With ship-pr's shared observer running, registers the PR and takes a snapshot only when the observer reports a change, instead of polling every minute; without it, waits five minutes between snapshots. `snapshot` exits 4 on a GitHub rate-limit refusal, records the next permitted time from the refusal's `Retry-After` and the reset of an exhausted allowance (at least a minute), and sends no request before then (#124).
 - `recover-ci`: personal OMP patch sends repair QA to the `qa` mission agent.
 
 ## [0.23.0] - 2026-10-18
