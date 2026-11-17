@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { parseHttp, retryAt } from "../../../references/github-http.mjs";
 
 // A gh call that hangs (network, credential prompt) would hold the state lock: cut it off.
 const ghTimeoutMs = () => Number(process.env.SUPERMATT_GH_TIMEOUT_MS ?? 120_000);
@@ -310,32 +311,16 @@ const CONNECTIONS = {
   comments: `comments(first: 100, after: $cursor) { ${COMMENT_PAGE} }`,
   reviews: "reviews(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id author { login } body url state } }",
 };
+const FALLBACK = CORE.replace("$number: Int!", "$number: Int!, $cursor: String")
+  .replace("number url state", `${Object.values(CONNECTIONS).join("\n")} number url state`);
 const THREAD_COMMENTS = `query($id: ID!, $cursor: String) { node(id: $id) { ... on PullRequestReviewThread { comments(first: 100, after: $cursor) { ${COMMENT_PAGE} } } } }`;
 
-// `--include` puts the status line and headers before the body, on refusals too, so a refused
-// read can name its Retry-After. A gh that prints a bare body still parses.
-function http(text) {
-  if (!/^HTTP\/\S+ \d{3}/.test(text ?? "")) return { headers: {}, body: text };
-  const blank = /\r?\n\r?\n/.exec(text);
-  const headers = {};
-  for (const line of (blank ? text.slice(0, blank.index) : text).split(/\r?\n/).slice(1)) {
-    const at = line.indexOf(":");
-    if (at > 0) headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim();
-  }
-  return { headers, body: blank ? text.slice(blank.index + blank[0].length) : "" };
-}
 
 // A refusal that names Retry-After is a rate limit whatever its wording, on a failed exit
 // or on a GraphQL error answer; the error carries the header GitHub sent.
 function retryAfter(headers, error) {
   if (headers["retry-after"] !== undefined) error.retryAfter = headers["retry-after"].trim();
   return error;
-}
-
-// Retry-After is delay seconds or an HTTP date (RFC 9110); an unreadable one waits a minute.
-function retryAt(header, now) {
-  if (/^[0-9]+$/.test(header)) return now + Number(header) * 1000;
-  return Date.parse(header) || now + 60_000;
 }
 
 function graphql(gh, query, variables) {
@@ -346,13 +331,26 @@ function graphql(gh, query, variables) {
   args.push("--include");
   let text;
   try { text = gh(args); } catch (error) {
-    throw retryAfter(http(typeof error?.stdout === "string" ? error.stdout : "").headers, error);
+    throw retryAfter(parseHttp(typeof error?.stdout === "string" ? error.stdout : "").headers, error);
   }
-  const { headers, body } = http(text);
+  const { headers, body } = parseHttp(text);
   const response = JSON.parse(body);
   if (response.errors?.length) throw retryAfter(headers, new Error(`GitHub GraphQL: ${response.errors.map((e) => e.message).join("; ")}`));
   if (!response.data) throw new Error("GitHub GraphQL: empty response");
   return response.data;
+}
+
+function restPages(gh, endpoint) {
+  const result = [];
+  while (endpoint) {
+    let response;
+    try { response = parseHttp(gh(["api", endpoint, "--include"])); } catch (error) {
+      throw retryAfter(parseHttp(typeof error?.stdout === "string" ? error.stdout : "").headers, error);
+    }
+    result.push(JSON.parse(response.body));
+    endpoint = /<([^>]+)>;\s*rel="next"/.exec(response.headers.link ?? "")?.[1];
+  }
+  return result;
 }
 
 function pullRequestOf(data) {
@@ -370,11 +368,11 @@ function pages(first, next) {
   return nodes;
 }
 
-function all(gh, repo, number, name) {
+function all(gh, repo, number, name, first) {
   const [owner, repoName] = repo.split("/");
   const query = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${CONNECTIONS[name]} } } }`;
   const read = (cursor) => pullRequestOf(graphql(gh, query, { owner, name: repoName, number, cursor }))[name];
-  return pages(read(null), read);
+  return pages(first ?? read(null), read);
 }
 
 // Every comment of one review thread, past its first hundred.
@@ -405,8 +403,8 @@ function check(node) {
 
 // The attempt of every job of one workflow run, by job id (an Actions job id is its check run id).
 function attempts(gh, repo, run) {
-  const out = gh(["api", `repos/${repo}/actions/runs/${run}/jobs?filter=all&per_page=100`, "--paginate", "--jq", '.jobs[] | "\\(.id) \\(.run_attempt)"']);
-  return new Map(out.split("\n").filter(Boolean).map((line) => line.split(" ").map(Number)));
+  const pages = restPages(gh, `repos/${repo}/actions/runs/${run}/jobs?filter=all&per_page=100`);
+  return new Map(pages.flatMap((page) => page.jobs.map((job) => [job.id, job.run_attempt])));
 }
 
 // Jobs of one workflow run can share a display name and must each pass, and a rerun reports
@@ -446,7 +444,7 @@ function actionsJobs(gh, repo, runs) {
 const PLAN_WITHOUT_RULESETS = /Upgrade to GitHub Pro or make this repository public/;
 function branchRules(gh, repo, branch) {
   try {
-    return JSON.parse(gh(["api", `repos/${repo}/rules/branches/${encodeURIComponent(branch)}`, "--paginate", "--slurp"])).flat();
+    return restPages(gh, `repos/${repo}/rules/branches/${encodeURIComponent(branch)}`).flat();
   } catch (err) {
     if (PLAN_WITHOUT_RULESETS.test(String(err?.stderr ?? "") + String(err?.message ?? ""))) return [];
     throw err;
@@ -455,9 +453,9 @@ function branchRules(gh, repo, branch) {
 
 // One read of the PR as the babysitter sees it: head, base, merge state, checks on the
 // head (latest run per producer), required check names, and the feedback still on the PR.
-export function observe(gh, repo, number) {
+export function observe(gh, repo, number, { fallback = false } = {}) {
   const [owner, name] = repo.split("/");
-  const data = graphql(gh, CORE, { owner, name, number });
+  const data = graphql(gh, fallback ? FALLBACK : CORE, { owner, name, number });
   const viewer = data.viewer;
   const pr = pullRequestOf(data);
   const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts ?? { nodes: [], pageInfo: { hasNextPage: false } };
@@ -470,21 +468,22 @@ export function observe(gh, repo, number) {
     const held = latest.get(c.identity);
     if (!held || c.order > held.order || (c.order === held.order && c.status === "fail")) latest.set(c.identity, { ...c, attempt: null });
   }
-  const checks = [...latest.values(), ...actionsJobs(gh, repo, reported.filter((x) => x.actions))]
+  const actions = reported.filter((x) => x.actions);
+  const checks = [...latest.values(), ...(fallback ? actions.map((c) => ({ ...c, attempt: null })) : actionsJobs(gh, repo, actions))]
     .map(({ identity, order, actions, execution, ...c }) => c);
-  const rules = branchRules(gh, repo, pr.baseRefName);
+  const rules = fallback ? [] : branchRules(gh, repo, pr.baseRefName);
   const required = new Set(pr.baseRef?.refUpdateRule?.requiredStatusCheckContexts ?? []);
   for (const rule of rules) if (rule.type === "required_status_checks") for (const c of rule.parameters.required_status_checks) required.add(c.context);
 
   const feedback = [];
-  for (const t of all(gh, repo, number, "reviewThreads")) {
+  for (const t of all(gh, repo, number, "reviewThreads", pr.reviewThreads)) {
     const comments = threadComments(gh, t).filter((c) => !ours(c, viewer.login));
     if (!comments.length) continue;
     feedback.push({ id: t.id, kind: "thread", resolved: t.isResolved, path: t.path, line: t.line, outdated: t.isOutdated, url: comments[0].url,
       comments: comments.map((c) => ({ author: c.author?.login ?? null, body: c.body })), fingerprint: fingerprint(comments.map((c) => [c.id, c.body])) });
   }
   for (const [kind, connection] of [["comment", "comments"], ["review", "reviews"]]) {
-    for (const c of all(gh, repo, number, connection)) {
+    for (const c of all(gh, repo, number, connection, pr[connection])) {
       if (!c.body?.trim() || ours(c, viewer.login)) continue;
       feedback.push({ id: c.id, kind, author: c.author?.login ?? null, url: c.url, body: c.body, fingerprint: fingerprint(c.body) });
     }
@@ -498,7 +497,7 @@ export function observe(gh, repo, number) {
 
 // Decides what the babysitter does next from one observation and the durable state.
 // Order is fixed: feedback, then CI on the current head, then branch currency, then wait.
-export function evaluate(state, seen, now) {
+export function evaluate(state, seen, now, { fresh = true } = {}) {
   const invalidated = [];
   const headMoved = state.head != null && state.head.sha !== seen.head;
   if (state.head?.sha !== seen.head) {
@@ -574,7 +573,7 @@ export function evaluate(state, seen, now) {
     // A head move already cleared the candidate; only the base can still change under it.
     const candidate = state.ready_candidate;
     if (candidate?.base === seen.base) {
-      if ((now - Date.parse(candidate.at)) / 1000 >= SETTLE_SECONDS) outcome = "ready";
+      if (fresh && (now - Date.parse(candidate.at)) / 1000 >= SETTLE_SECONDS) outcome = "ready";
       else waiting.push("settling before ready");
     } else {
       state.ready_candidate = { base: seen.base, at: new Date(now).toISOString() };
@@ -584,8 +583,13 @@ export function evaluate(state, seen, now) {
   if (next.length || human.length || waiting.length && !waiting.includes("settling before ready")) state.ready_candidate = null;
   if (!outcome && !next.length) next.push("wait");
 
+  const deadline = Date.parse(state.monitor.deadline_at);
+  const grace = Date.parse(state.head.since) + MISSING_CHECK_GRACE_SECONDS * 1000;
+  const settle = waiting.includes("settling before ready") ? Date.parse(state.ready_candidate.at) + SETTLE_SECONDS * 1000 : Infinity;
+  const wake = Math.min(deadline, missing.length && grace > now ? grace : Infinity, settle);
   return {
     outcome, next, head_moved: headMoved, invalidated,
+    wait_seconds: Math.max(0, Math.ceil((wake - now) / 1000)), wait_action: settle < deadline ? "snapshot" : "reevaluate",
     pr: { number: seen.number, url: seen.url, state: seen.state, draft: seen.draft, head: seen.head, base_ref: seen.base_ref, base: seen.base },
     // A thread's fingerprint carries its resolution and reopen count as the babysitter saw
     // them, so handled records that view, whatever a later snapshot saw.
@@ -635,7 +639,7 @@ function observerPause(observers, observerState, repo) {
 // The GitHub read happens inside the state transaction: an observation is never applied to
 // state another session advanced after it was taken. A refused read is no observation: it
 // records when GitHub permits the next request, and no snapshot asks before then.
-export function snapshot({ file, gh = realGh, now = Date.now(), observers, observerState }) {
+export function snapshot({ file, gh = realGh, now = Date.now(), observers, observerState, fallback = false }) {
   const result = update(file, (state) => {
     if (state.pr == null) throw new Error("no PR bound yet: create it, then run bind");
     const paused = Date.parse(state.github_pause?.until ?? "");
@@ -643,17 +647,25 @@ export function snapshot({ file, gh = realGh, now = Date.now(), observers, obser
     const shared = observerPause(observers, observerState, state.repo);
     if (shared > now) return { refused: new RateLimited(`the shared GitHub observer is paused for a rate limit until ${new Date(shared).toISOString()}; no request sent`, shared) };
     let seen;
-    try { seen = observe(gh, state.repo, state.pr); } catch (error) {
+    try { seen = observe(gh, state.repo, state.pr, { fallback }); } catch (error) {
       if (error?.retryAfter == null && !RATE_LIMIT.test(`${error?.stderr ?? ""} ${error?.message ?? ""}`)) throw error;
       const until = Math.max(retryAfterRefusal(gh, now), error.retryAfter != null ? retryAt(error.retryAfter, now) : 0);
       state.github_pause = { until: new Date(until).toISOString(), at: new Date(now).toISOString() };
       return { refused: new RateLimited(`GitHub rate limit refused the snapshot; the next permitted request is at ${state.github_pause.until}`, until) };
     }
+    state.observation = seen;
     const report = evaluate(state, seen, now);
     return { ...report, budgets: budgets(state, now), state_file: file };
   });
   if (result.refused) throw result.refused;
   return result;
+}
+
+export function reevaluate({ file, now = Date.now() }) {
+  return update(file, (state) => {
+    if (!state.observation) throw new Error("no retained snapshot: take a snapshot first");
+    return { ...evaluate(state, state.observation, now, { fresh: false }), budgets: budgets(state, now), state_file: file };
+  });
 }
 
 const DISPOSITIONS = ["fixed", "answered", "declined", "no-action", "needs-human"];
@@ -687,7 +699,8 @@ export function ciResult(file, { key, outcome, now = Date.now() }) {
 const USAGE = `Usage:
   babysit-state.mjs open [--pr N|URL] [--duration 8h] [--repo OWNER/REPO] [--branch NAME]
   babysit-state.mjs bind --state FILE --pr N
-  babysit-state.mjs snapshot --state FILE [--observer-state DIR]
+  babysit-state.mjs snapshot --state FILE [--observer-state DIR] [--fallback]
+  babysit-state.mjs reevaluate --state FILE
   babysit-state.mjs handled --state FILE --id ID --fingerprint FP --disposition fixed|answered|declined|no-action|needs-human
   babysit-state.mjs ci-result --state FILE --key KEY --outcome rerun|repaired|stopped|budget-exhausted
   babysit-state.mjs spend --state FILE repair|rerun [--note TEXT]
@@ -698,7 +711,7 @@ function main(argv) {
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
     state: { type: "string" }, pr: { type: "string" }, duration: { type: "string" }, repo: { type: "string" }, branch: { type: "string" },
     id: { type: "string" }, fingerprint: { type: "string" }, disposition: { type: "string" }, key: { type: "string" },
-    outcome: { type: "string" }, note: { type: "string" }, "observer-state": { type: "string" },
+    outcome: { type: "string" }, note: { type: "string" }, "observer-state": { type: "string" }, fallback: { type: "boolean" },
   } });
   const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
   const pr = values.pr == null ? null : command === "open" ? values.pr : Number(values.pr);
@@ -714,7 +727,8 @@ function main(argv) {
     }
     case "bind": return { bound: pr, stateFile: bind(values.state, pr) };
     // ship-pr's shared observer keeps its state under this default root, one directory per repository.
-    case "snapshot": return snapshot({ file: values.state, observers: join(process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state"), "supermatt", "merge-train"), observerState: values["observer-state"] && resolve(values["observer-state"]) });
+    case "snapshot": return snapshot({ file: values.state, observers: join(process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state"), "supermatt", "merge-train"), observerState: values["observer-state"] && resolve(values["observer-state"]), fallback: values.fallback });
+    case "reevaluate": return reevaluate({ file: values.state });
     case "handled": handled(values.state, values); return { handled: values.id };
     case "ci-result": ciResult(values.state, values); return { recorded: values.key };
     case "spend": return spend(values.state, positionals[0], { note: values.note });

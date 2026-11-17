@@ -39,6 +39,8 @@ The route most work travels. You have an idea and want it built.
 
 In Tern, a repository's Merge Train conflict markers also have a durable [shipping handoff](../ship-pr/SKILL.md#durable-conflict-handoff): one background watcher wakes the registered shipping session and its coordinator, then falls back to an operator notification. The watcher spends no model turns while nothing changes; registering a PR or adding its merge label is still not a completed merge. It is also the repository's one shared GitHub observer: `/ship-pr`, `/orchestrate` and `/babysit-pr` wait on its SHA-stamped checks, merges and post-merge runs instead of polling GitHub, and a second coordinator attaches to it rather than starting another reader.
 
+`/babysit-pr` joins observation without replacing shipping recipients. Its feedback reads follow observed changes; time-based blockers reevaluate locally. Without the observer, its fallback groups GraphQL reads at five-minute intervals and makes no recurring REST calls.
+
 Both implementation flows consult `codebase-design` before changing data contracts, state transitions, shared mutable state, or retryable effects. Adversarial review checks duplicate execution and recovery after interruption against the intended contract.
 
 ### Unattended: `/orchestrate`

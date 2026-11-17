@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -146,6 +146,58 @@ function fixture(t) {
   };
 }
 
+test("joining observation preserves the shipping recipients", async (t) => {
+  const f = fixture(t);
+  await f.register();
+  f.world.sessions.push(session("30", 303));
+  f.env.TERN_PANE = "30";
+  const joined = await f.call("register", ["--pr", "7", "--observe-only"]);
+  assert.deepEqual([joined.owner?.block, joined.coordinator?.block], ["10", "20"]);
+  await f.watch();
+  assert.deepEqual(f.world.messages.map((item) => item.block), ["10", "20"]);
+});
+
+test("observation-only registration starts without recipients and renews a retired registration", async (t) => {
+  const f = fixture(t);
+  const c = clock(f);
+  const first = await f.call("register", ["--pr", "7", "--observe-only"], c.overrides);
+  assert.deepEqual([first.owner, first.coordinator, first.origin], [undefined, undefined, undefined]);
+  f.world.issues = [[]];
+  f.world.pulls[7] = pr(7, { state: "closed", labels: [] });
+  await f.call("watch", ["--once"], c.overrides);
+  c.timeline.now += 1000;
+  await f.call("register", ["--pr", "7", "--observe-only"], c.overrides);
+  f.world.ghFails = true;
+  await assert.rejects(f.call("watch", ["--once"], c.overrides), /unavailable/);
+  assert.equal((await f.call("status", ["--pr", "7"], c.overrides)).outcome, "unknown");
+});
+
+test("probe logs count pagination and delivery revalidations across restarts for one rolling hour", async (t) => {
+  const f = fixture(t);
+  const c = clock(f);
+  f.world.comments[7] = [[comment()], [comment("conflict", NEXT, 2, { body: "ordinary comment" })]];
+  await f.register();
+  await f.call("watch", ["--once"], c.overrides);
+  assert.deepEqual(f.world.outputs.find((item) => item.event === "probe"), { event: "probe", at: "2026-01-01T00:00:00.000Z", calls: 5, callsLastHour: 5, windowSeconds: 3600 });
+  c.timeline.now += 60_000;
+  await f.call("watch", ["--once"], c.overrides);
+  assert.equal(f.world.outputs.find((item) => item.event === "probe")?.callsLastHour, 7);
+  c.timeline.now += 3600_000;
+  await f.call("watch", ["--once"], c.overrides);
+  assert.equal(f.world.outputs.find((item) => item.event === "probe")?.callsLastHour, 2);
+});
+
+test("a refused probe is counted once and a persisted pause sends no new probe", async (t) => {
+  const f = fixture(t);
+  const c = clock(f);
+  f.world.github = () => refusal(429, { "retry-after": "900" });
+  await assert.rejects(f.call("watch", ["--once"], c.overrides), /rate limit/);
+  assert.deepEqual(f.world.outputs.find((item) => item.event === "probe"), { event: "probe", at: "2026-01-01T00:00:00.000Z", calls: 1, callsLastHour: 1, windowSeconds: 3600 });
+  await assert.rejects(f.call("watch", ["--once"], c.overrides), /no request sent/);
+  assert.equal(f.world.outputs.length, 0);
+  assert.equal(f.world.requests.length, 1);
+});
+
 test("the recurring observation makes no REST call and at most one GraphQL request per tracked PR", async (t) => {
   const f = fixture(t);
   f.world.issues = [[issue(7), issue(8)], [issue(9)]];
@@ -289,6 +341,39 @@ test("an observation goes stale without a live reader, or once its PR left the o
   const dropped = await f.call("status", ["--pr", "7"]);
   assert.deepEqual(dropped.reasons, ["no observer is running", "PR 7 was not in the latest observation"]);
   assert.equal(dropped.stale, true);
+});
+
+test("a live but stalled reader makes an old observation unknown after three intervals", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  const c = clock(f);
+  await f.call("watch", ["--once"], c.overrides);
+  mkdirSync(join(f.state, "watch.lock"));
+  writeFileSync(join(f.state, "watch.lock", "999-aaaa.json"), JSON.stringify({ pid: 999 }));
+  const overrides = { ...c.overrides, alive: () => true };
+  c.timeline.now += 180_000;
+  assert.equal((await f.call("status", ["--pr", "7"], overrides)).outcome, "ok");
+  c.timeline.now += 1000;
+  const stale = await f.call("status", ["--pr", "7"], overrides);
+  assert.equal(stale.outcome, "unknown");
+  assert.equal(stale.stale, true);
+  assert.equal(stale.pr.head, HEAD);
+  assert.deepEqual(stale.reasons, ["no observation since 2026-01-01T00:00:00.000Z"]);
+});
+
+test("a live reader in an authorized quota pause keeps its last successful observation current", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  const c = clock(f);
+  f.world.github = (operation, variables) => ({ status: 200, headers: { ...RATE, "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1767226500" }, body: answer(f.world, operation, variables) });
+  await f.call("watch", ["--once"], c.overrides);
+  mkdirSync(join(f.state, "watch.lock"));
+  writeFileSync(join(f.state, "watch.lock", "999-aaaa.json"), JSON.stringify({ pid: 999 }));
+  c.timeline.now += 181_000;
+  const paused = await f.call("status", ["--pr", "7"], { ...c.overrides, alive: () => true });
+  assert.equal(paused.outcome, "ok");
+  assert.equal(paused.retryAt, "2026-01-01T00:15:00.000Z");
+  assert.deepEqual(paused.reasons, []);
 });
 
 test("a genuinely empty merge queue is an observed empty answer, not unknown", async (t) => {
@@ -495,6 +580,26 @@ test("observations read on one GitHub host are refused to a session pointed at a
   await f.watch();
   await assert.rejects(f.call("status", ["--pr", "7"], { env: { ...f.env, GH_HOST: "ghe.example.test" } }), /read with other GitHub credentials/);
   assert.equal(f.world.outputs.length, 0);
+});
+
+test("an attached event consumer refuses other credentials before exposing receipts", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  await f.register();
+  await f.watch();
+  mkdirSync(join(f.state, "watch.lock"));
+  writeFileSync(join(f.state, "watch.lock", "999-aaaa.json"), JSON.stringify({ pid: 999 }));
+  f.world.token = "token-b";
+  let slept = false;
+  await assert.rejects(f.call("watch", ["--until-event", "--coordinator", "20"], {
+    alive: () => true,
+    async sleep() {
+      if (slept) throw new Stop();
+      slept = true;
+      writeFileSync(join(f.state, "delivered.json"), JSON.stringify({ version: 1, repo: "acme/app", events: { new: { block: "20", outcome: "queued", event: { type: "conflict", pr: 7, head: HEAD } } } }));
+    },
+  }), /read with other GitHub credentials/);
+  assert.equal(f.world.outputs.some((item) => item.event === "tick"), false);
 });
 
 test("a missing observation never satisfies a wait: it reports unknown state and times out instead of succeeding", async (t) => {
@@ -949,6 +1054,11 @@ const out = value => { fs.writeFileSync(process.env.WATCH_WORLD, JSON.stringify(
 if (command === "gh" && a.join(" ") === "auth token") console.log("token-a");
 else if (command === "gh") {
   if (a[0] !== "api" || a[1] !== "-i" || a[2] !== "graphql") { console.error("unexpected argv"); process.exit(1); }
+  if (w.refusal) {
+    fs.writeFileSync(process.env.WATCH_WORLD, JSON.stringify(w));
+    process.stdout.write("HTTP/2.0 " + w.refusal.status + " Refused\\r\\nRetry-After: 900\\r\\n\\r\\n" + JSON.stringify({ message: "Request refused" }));
+    console.error("gh: Request refused"); process.exit(1);
+  }
   const v = {};
   for (let i = 3; i < a.length; i += 2) { const at = a[i + 1].indexOf("="); v[a[i + 1].slice(0, at)] = a[i + 1].slice(at + 1); }
   const op = /^query (\\w+)/.exec(v.query)[1];
@@ -983,13 +1093,29 @@ else { console.error("unexpected argv"); process.exit(1); }
   };
 }
 
+test("actual gh HTTP 403 and 429 refusals persist Retry-After and prevent an early restart request", (t) => {
+  for (const status of [403, 429]) {
+    const f = binaries(t);
+    f.edit((world) => { world.refusal = { status }; });
+    const before = Date.now();
+    const refused = f.run("watch", ["--once"]);
+    assert.equal(refused.status, 1, refused.stderr);
+    const observer = JSON.parse(readFileSync(join(f.state, "observer.json"), "utf8"));
+    assert.equal(observer.attempt.outcome, "rate-limited");
+    assert.ok(Date.parse(observer.pauseUntil) >= before + 900_000);
+    assert.equal(f.read().calls.filter((call) => call.command === "gh").length, 1);
+    assert.match(f.run("watch", ["--once"]).stderr, /no request sent/);
+    assert.equal(f.read().calls.filter((call) => call.command === "gh").length, 1);
+  }
+});
+
 test("actual CLI registers, posts accepted owner inbox and deduplicates after process restart", (t) => {
   const f = binaries(t);
   const registered = f.run("register", ["--pr", "7", "--owner", "10"]);
   assert.equal(registered.status, 0, registered.stderr);
   const watched = f.run("watch", ["--once"]);
   assert.equal(watched.status, 0, watched.stderr);
-  assert.equal(JSON.parse(watched.stdout).results[0].outcome, "queued");
+  assert.equal(JSON.parse(watched.stdout.trim().split("\n").at(-1)).results[0].outcome, "queued");
   assert.equal(f.read().messages[0].block, "10");
   assert.equal(f.run("watch", ["--once"]).status, 0);
   assert.equal(f.read().messages.length, 1);
@@ -1178,8 +1304,9 @@ test("until-event waits through an empty tick and exits with the next routed bat
     out(value) { outputs.push(value); },
   });
   assert.equal(waits, 1);
-  assert.deepEqual(outputs.map((item) => item.event), ["ready", "tick"]);
-  assert.equal(outputs[1].results[0].outcome, "queued");
+  assert.deepEqual(outputs.map((item) => item.event), ["ready", "probe", "probe", "tick"]);
+  assert.deepEqual(outputs.filter((item) => item.event === "probe").map((item) => item.calls), [1, 3]);
+  assert.equal(outputs.at(-1).results[0].outcome, "queued");
   assert.equal(existsSync(join(f.state, "watch.lock")), false);
 });
 
@@ -1214,7 +1341,7 @@ test("actual CLI dry-run emits a literal route plan without creating state or po
   const f = binaries(t);
   const result = f.run("watch", ["--once", "--dry-run", "--coordinator", "20"]);
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), {
+  assert.deepEqual(JSON.parse(result.stdout.trim().split("\n").at(-1)), {
     event: "tick", open: 1,
     results: [{
       type: "conflict", pr: 7, head: HEAD, url: "https://github.com/acme/app/pull/7", outcome: "planned",
@@ -1248,10 +1375,10 @@ require("node:module").syncBuiltinESMExports();
   const result = f.run("watch", ["--until-event", "--coordinator", "20"]);
   assert.equal(result.status, 0, result.stderr);
   const output = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
-  assert.deepEqual(output.map((item) => item.event), ["ready", "tick"]);
+  assert.deepEqual(output.map((item) => item.event), ["ready", "probe", "probe", "probe", "probe", "tick"]);
   assert.equal(f.read().snapshots.length, 0, "ignored markers must not end the host wait");
   assert.deepEqual(f.read().messages.map((item) => item.block), ["10", "20"], "only the new trusted head may be routed, to its owner and coordinator");
-  const [event] = output[1].results;
+  const [event] = output.at(-1).results;
   assert.equal(event.pr, 7);
   assert.equal(event.head, NEXT);
   assert.equal(event.kind, "message");

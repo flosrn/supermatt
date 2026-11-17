@@ -6,7 +6,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, processStart, MARKER, RateLimited } from "../skills/babysit-pr/scripts/babysit-state.mjs";
+import { open, bind, spend, extend, parseDuration, snapshot, reevaluate, handled, ciResult, reclaim, processStart, MARKER, RateLimited } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
 // A hook in a linked worktree exports an absolute GIT_DIR, which would aim every git command below at the real repo.
 for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
@@ -71,18 +71,23 @@ function host({ prs = [], live = null, viewer = "me" } = {}) {
         return JSON.stringify({ data: { node: { comments: page(p.threads.find((x) => x.id === id).comments.nodes, args) } } });
       }
       let pullRequest;
-      if (query.includes("reviewThreads(")) {
-        const threads = page(p.threads, args);
-        pullRequest = { reviewThreads: { ...threads, nodes: threads.nodes.map((x) => ({ ...x, comments: page(x.comments.nodes, []) })) } };
-      }
-      else if (query.includes("comments(first")) pullRequest = { comments: page(p.comments, args) };
-      else if (query.includes("reviews(first")) pullRequest = { reviews: page(p.reviews, args) };
-      else pullRequest = {
+      if (query.includes("commits(last:")) pullRequest = {
         number: p.number, url: p.url, state: p.state, isDraft: p.isDraft, headRefName: p.headRefName, headRefOid: p.headRefOid,
         baseRefName: p.baseRefName, mergeable: p.mergeable, mergeStateStatus: p.mergeStateStatus, reviewDecision: p.reviewDecision,
         baseRef: { target: { oid: p.baseOid }, refUpdateRule: p.required.length ? { requiredStatusCheckContexts: p.required } : null },
         commits: { nodes: [{ commit: { oid: p.headRefOid, statusCheckRollup: { contexts: page(p.checks, []) } } }] },
       };
+      else if (query.includes("reviewThreads(")) {
+        const threads = page(p.threads, args);
+        pullRequest = { reviewThreads: { ...threads, nodes: threads.nodes.map((x) => ({ ...x, comments: page(x.comments.nodes, []) })) } };
+      }
+      else if (query.includes("comments(first")) pullRequest = { comments: page(p.comments, args) };
+      else if (query.includes("reviews(first")) pullRequest = { reviews: page(p.reviews, args) };
+      if (query.includes("commits(last:") && query.includes("reviewThreads(")) {
+        pullRequest.reviewThreads = { ...page(p.threads, args), nodes: page(p.threads, args).nodes.map((x) => ({ ...x, comments: page(x.comments.nodes, []) })) };
+        pullRequest.comments = page(p.comments, args);
+        pullRequest.reviews = page(p.reviews, args);
+      }
       return JSON.stringify({ data: { viewer: { login: viewer }, repository: { pullRequest } } });
     }
     if (group === "api" && verb === "user") return `${viewer}\n`;
@@ -90,11 +95,15 @@ function host({ prs = [], live = null, viewer = "me" } = {}) {
     // A job whose attempt is null is one the API does not list.
     const jobs = /^repos\/acme\/app\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100$/.exec(verb);
     if (group === "api" && jobs) {
-      return live.checks.filter((c) => c.checkSuite?.workflowRun?.databaseId === Number(jobs[1]) && c.attempt != null).map((c) => `${c.databaseId} ${c.attempt}\n`).join("");
+      return JSON.stringify({ jobs: live.checks.filter((c) => c.checkSuite?.workflowRun?.databaseId === Number(jobs[1]) && c.attempt != null).map((c) => ({ id: c.databaseId, run_attempt: c.attempt })) });
     }
-    if (group === "api" && verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}`) {
+    if (group === "api" && (verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}` || verb === "https://api.github.com/rules-next")) {
       if (live.rules instanceof Error) throw live.rules;
       const pages = [live.rules.slice(0, 30), live.rules.slice(30)];
+      if (args.includes("--include")) {
+        const next = verb === "https://api.github.com/rules-next";
+        return `HTTP/2.0 200 OK\r\n${!next && pages[1].length ? 'Link: <https://api.github.com/rules-next>; rel="next"\r\n' : ""}\r\n${JSON.stringify(pages[next ? 1 : 0])}`;
+      }
       return JSON.stringify(args.includes("--slurp") ? (args.includes("--paginate") ? pages : [pages[0]]) : pages[0]);
     }
     throw new Error(`unexpected gh ${args.join(" ")}`);
@@ -125,6 +134,137 @@ function refusing(h, quota) {
   };
 }
 
+test("a fallback snapshot batches rich feedback into one GraphQL read and makes no REST request", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [], required: ["build"], threads: [thread("T1", comment("TC1", "Fix thread"))], comments: [comment("C1", "Fix comment")], reviews: [comment("R1", "Fix review")] });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.deepEqual(report.feedback.map((f) => f.id), ["T1", "C1", "R1"]);
+  assert.deepEqual(report.checks.missing, ["build"]);
+  assert.equal(h.calls.length, 1, "one request for an ordinary fallback snapshot");
+  assert.equal(h.calls[0][1], "graphql");
+});
+
+test("fallback keeps every same-name Actions failure without guessing rerun attempts", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [checkRun("test", "FAILURE", 1), checkRun("test", "SUCCESS", 2)] });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.deepEqual(report.checks.failing.map((c) => [c.key, c.attempt]), [["check-run:1", null]]);
+  assert.equal(report.checks.total, 2);
+  assert.equal(h.calls.length, 1);
+});
+
+test("fallback follows overflow feedback pages without rereading the batched first pages", (t) => {
+  const many = Array.from({ length: 101 }, (_, i) => comment(`C${i}`, `Feedback ${i}`));
+  const { h, stateFile } = babysat(t, { checks: [], threads: [thread("T1", ...many)], comments: many, reviews: many.map((c) => ({ ...c, id: `R${c.id}` })) });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.equal(report.feedback.length, 203);
+  assert.equal(report.feedback[0].comments.length, 101);
+  assert.equal(report.feedback.filter((f) => f.kind === "comment").length, 101);
+  assert.equal(report.feedback.filter((f) => f.kind === "review").length, 101);
+  assert.equal(h.calls.length, 4, "one batched read plus three overflow pages");
+  assert.ok(h.calls.every((args) => args[1] === "graphql"));
+});
+
+test("REST authentication refusal is not a quota pause", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [] });
+  const gh = (args) => {
+    if (args[1].includes("/rules/")) throw Object.assign(new Error("Bad credentials"), { stdout: 'HTTP/2.0 401 Unauthorized\r\n\r\n{"message":"Bad credentials"}', stderr: "gh: Bad credentials (HTTP 401)" });
+    return h.gh(args);
+  };
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), /Bad credentials/);
+  assert.equal(JSON.parse(readFileSync(stateFile, "utf8")).github_pause, undefined);
+});
+
+test("a retained snapshot bounds observer wait at missing-check grace and reevaluates locally", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [], required: ["build"] });
+  const first = snapshot({ file: stateFile, gh: h.gh, now: NOW });
+  assert.equal(first.wait_seconds, 600);
+  assert.equal(first.wait_action, "reevaluate");
+  const calls = h.calls.length;
+  const before = reevaluate({ file: stateFile, now: NOW + 599_000 });
+  assert.equal(before.outcome, null);
+  assert.equal(before.wait_seconds, 1);
+  const due = reevaluate({ file: stateFile, now: NOW + 600_000 });
+  assert.equal(due.outcome, "blocked");
+  assert.deepEqual(due.blockers, ["required check missing: build"]);
+  assert.equal(h.calls.length, calls, "local deadline evaluation sends no feedback request");
+});
+
+test("settling wakes for a fresh snapshot, never declares cached data ready, and bounds the monitor deadline", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [] });
+  const first = snapshot({ file: stateFile, gh: h.gh, now: NOW });
+  assert.equal(first.wait_seconds, 300);
+  assert.equal(first.wait_action, "snapshot");
+  const calls = h.calls.length;
+  const due = reevaluate({ file: stateFile, now: NOW + 300_000 });
+  assert.equal(due.outcome, null, "a clean second look must be a fresh GitHub observation");
+  assert.equal(due.wait_action, "snapshot");
+  assert.equal(due.wait_seconds, 0);
+  assert.equal(h.calls.length, calls);
+  assert.equal(snapshot({ file: stateFile, gh: h.gh, now: NOW + 300_000 }).outcome, "ready");
+  const missing = babysat(t, { checks: [], required: ["build"] });
+  const state = JSON.parse(readFileSync(missing.stateFile, "utf8"));
+  state.monitor.deadline_at = new Date(NOW + 200_000).toISOString();
+  writeFileSync(missing.stateFile, JSON.stringify(state));
+  assert.equal(snapshot({ file: missing.stateFile, gh: missing.h.gh, now: NOW }).wait_seconds, 200);
+  assert.equal(reevaluate({ file: missing.stateFile, now: NOW + 200_000 }).outcome, "budget-exhausted");
+});
+
+test("REST rules Retry-After alone persists a pause before any subsequent snapshot request", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [] });
+  const gh = (args) => {
+    if (args[1] === "rate_limit") return JSON.stringify({ resources: {} });
+    if (args[1] === "repos/acme/app/rules/branches/main") {
+      h.calls.push(args);
+      throw Object.assign(new Error("Forbidden"), { stdout: "HTTP/2.0 403 Forbidden\r\nRetry-After: 900\r\n\r\n{\"message\":\"Forbidden\"}", stderr: "gh: Forbidden (HTTP 403)" });
+    }
+    return h.gh(args);
+  };
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), (error) => error instanceof RateLimited && error.retryAt === NOW + 900_000);
+  const calls = h.calls.length;
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW + 1000 }), /no request sent/);
+  assert.equal(h.calls.length, calls);
+});
+
+test("REST Actions Retry-After alone pauses snapshots without hiding a refusal behind job parsing", (t) => {
+  const { h, stateFile } = babysat(t);
+  const gh = (args) => {
+    if (args[1] === "rate_limit") return JSON.stringify({ resources: {} });
+    if (args[1].includes("/actions/runs/")) {
+      h.calls.push(args);
+      throw Object.assign(new Error("Command failed: gh api jobs"), { stdout: "HTTP/2.0 403 Forbidden\r\nRetry-After: 900\r\n\r\n{}", stderr: "gh: Forbidden (HTTP 403)" });
+    }
+    return h.gh(args);
+  };
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), (error) => error instanceof RateLimited && error.retryAt === NOW + 900_000);
+  const calls = h.calls.length;
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW + 1000 }), /no request sent/);
+  assert.equal(h.calls.length, calls);
+});
+
+
+test("CLI fallback reads one batched GraphQL response and reevaluate makes no GitHub request", (t) => {
+  const { bin } = stubGh(t);
+  const { repo } = checkout(t);
+  const { stateFile } = babysat(t, { checks: [], required: ["build"] });
+  const log = join(bin, "calls");
+  writeFileSync(join(bin, "gh"), `#!/bin/sh
+echo call >> "${log}"
+case "$1 $2" in
+  "api graphql") echo '{"data":{"viewer":{"login":"me"},"repository":{"pullRequest":{"number":4,"state":"OPEN","headRefOid":"aaa","baseRefName":"main","baseRef":{"target":{"oid":"bbb"},"refUpdateRule":{"requiredStatusCheckContexts":["build"]}},"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}]},"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}},"reviews":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}' ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+`, { mode: 0o755 });
+  const fresh = cli(bin, ["snapshot", "--state", stateFile, "--fallback"], repo);
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.deepEqual(JSON.parse(fresh.stdout).checks.missing, ["build"]);
+  assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 1);
+  const cached = cli(bin, ["reevaluate", "--state", stateFile], repo);
+  assert.equal(cached.status, 0, cached.stderr);
+  assert.equal(JSON.parse(cached.stdout).outcome, "budget-exhausted");
+  assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 1);
+});
 test("a rate-limit refusal pauses snapshots until the exhausted allowance resets, sending nothing before", (t) => {
   const { h, stateFile, look } = babysat(t);
   const reset = NOW + 30 * 60_000;

@@ -11,6 +11,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
+import { parseHttp, retryAt } from "../../../references/github-http.mjs";
 
 const SENDER = "supermatt-merge-train";
 const SHA = /^[0-9a-f]{40}$/;
@@ -65,7 +66,7 @@ const herdr = fileURLToPath(new URL("../../orchestrate/scripts/tern-herdr.mjs", 
 const notifier = fileURLToPath(new URL("../../orchestrate/scripts/tern-notify.mjs", import.meta.url));
 const COMMON = "--repo OWNER/REPO --train-login LOGIN [--state DIR]";
 const usage = [
-  `merge-train-watch.mjs register ${COMMON} --pr N [--owner BLOCK] [--coordinator BLOCK] [--owner-agent NAME] [--coordinator-agent NAME]`,
+  `merge-train-watch.mjs register ${COMMON} --pr N [--observe-only | --owner BLOCK] [--coordinator BLOCK] [--owner-agent NAME] [--coordinator-agent NAME]`,
   `merge-train-watch.mjs watch ${COMMON} [--coordinator BLOCK] [--coordinator-agent NAME] [--interval 60] [--once] [--dry-run] [--until-event]`,
   `merge-train-watch.mjs wait ${COMMON} --pr N --for checks|merge|post-merge|change [--head SHA] [--after DIGEST] [--timeout SECONDS] [--coordinator BLOCK] [--interval 60]`,
   `merge-train-watch.mjs status ${COMMON} [--pr N]`,
@@ -89,18 +90,11 @@ function request(query, variables, env) {
   for (const [key, value] of Object.entries(variables)) if (value != null) args.push(typeof value === "number" ? "-F" : "-f", `${key}=${value}`);
   const result = spawnSync("gh", args, { env, encoding: "utf8", timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
   if (result.error) throw new Error(`gh failed: ${result.error.message}`);
-  const text = result.stdout ?? "";
-  const status = /^HTTP\/\S+ (\d{3})/.exec(text);
-  if (!status) throw new Error(`gh failed: ${result.stderr?.trim() || `exit ${result.status}`}`);
-  const blank = /\r?\n\r?\n/.exec(text);
-  const headers = {};
-  for (const line of (blank ? text.slice(0, blank.index) : text).split(/\r?\n/).slice(1)) {
-    const at = line.indexOf(":");
-    if (at > 0) headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim();
-  }
+  const { status, headers, body: text } = parseHttp(result.stdout ?? "");
+  if (status === null) throw new Error(`gh failed: ${result.stderr?.trim() || `exit ${result.status}`}`);
   let body = null;
-  try { body = JSON.parse(blank ? text.slice(blank.index + blank[0].length) : ""); } catch { body = null; }
-  return { status: Number(status[1]), headers, body };
+  try { body = JSON.parse(text); } catch { body = null; }
+  return { status, headers, body };
 }
 
 function json(text, source) {
@@ -153,7 +147,7 @@ function parse(argv, env) {
     status: ["repo", "train-login", "state", "pr"],
   }[command];
   if (!values) throw new Error(usage);
-  const flags = command === "watch" ? ["once", "dry-run", "until-event"] : [];
+  const flags = command === "watch" ? ["once", "dry-run", "until-event"] : command === "register" ? ["observe-only"] : [];
   const options = { command };
   for (let index = 0; index < args.length; index++) {
     const key = args[index].startsWith("--") ? args[index].slice(2) : "";
@@ -170,7 +164,7 @@ function parse(argv, env) {
     if (!/^[1-9][0-9]*$/.test(options.pr || "") || !Number.isSafeInteger(Number(options.pr))) throw new Error("--pr must be a positive integer");
     options.pr = Number(options.pr);
   }
-  if (command === "register") options.owner ??= env.TERN_PANE;
+  if (command === "register" && !options["observe-only"]) options.owner ??= env.TERN_PANE;
   for (const role of ["owner", "coordinator"]) {
     if (options[role] !== undefined && !BLOCK.test(options[role])) throw new Error(`--${role} must be a local Tern block`);
     if (options[`${role}-agent`] && (!ALIAS.test(options[`${role}-agent`]) || !options[role])) throw new Error(`--${role}-agent requires --${role} and a valid registered agent name`);
@@ -316,17 +310,18 @@ function registered(options) {
 }
 
 function register(options, deps) {
-  const record = { version: 1, repo: options.repo, pr: options.pr, registeredAt: iso(deps.now()), ...(BLOCK.test(deps.env.TERN_PANE || "") ? { origin: deps.env.TERN_PANE } : {}) };
+  stateRepo(options, true);
+  const record = options["observe-only"] ? registration(options, options.pr) ?? { version: 1, repo: options.repo, pr: options.pr } : { version: 1, repo: options.repo, pr: options.pr, ...(BLOCK.test(deps.env.TERN_PANE || "") ? { origin: deps.env.TERN_PANE } : {}) };
+  record.registeredAt = iso(deps.now());
   let listed;
   let named;
   for (const role of ["owner", "coordinator"]) {
-    if (!options[role]) continue;
+    if (options["observe-only"] || !options[role]) continue;
     const target = pin(options[role], options[`${role}-agent`], listed ??= sessions(deps));
     if (!target) throw new Error(`cannot register ${role}: no live local session identity in block ${options[role]}`);
     if (target.agent && !matchingAgent(target, named ??= agents(deps))) throw new Error(`cannot register ${role}: agent alias does not match the live block, pid and session file`);
     record[role] = target;
   }
-  stateRepo(options, true);
   mkdirSync(join(options.state, "registrations"), { recursive: true, mode: 0o700 });
   atomicJson(registrationPath(options, record.pr), record);
   return { event: "registered", ...record };
@@ -344,7 +339,7 @@ function graphql(deps, schedule, query, variables, subject) {
   const reset = Number(headers["x-ratelimit-reset"]) * 1000;
   // Retry-After is delay seconds or an HTTP date (RFC 9110).
   const header = headers["retry-after"]?.trim();
-  const retryAfter = header === undefined ? 0 : /^[0-9]+$/.test(header) ? now + Number(header) * 1000 : Date.parse(header) || now + MINIMUM_BACKOFF_MS;
+  const retryAfter = header === undefined ? 0 : retryAt(header, now);
   const exhausted = remaining === "0" && Number.isFinite(reset) ? reset : 0;
   const errors = Array.isArray(response?.body?.errors) ? response.body.errors : [];
   const text = errors.map((error) => error?.message).filter(Boolean).join("; ") || response?.body?.message || `HTTP ${response?.status}`;
@@ -524,6 +519,10 @@ function credentialOf(deps) {
   const host = deps.env.GH_HOST?.trim() || "github.com";
   try { return createHash("sha256").update(`${host}\n${deps.exec("gh", ["auth", "token"]).trim()}`).digest("hex").slice(0, 16); }
   catch { return null; }
+}
+
+function assertCredential(observer, deps) {
+  if (observer && (!observer.credential || observer.credential !== credentialOf(deps))) throw new Error("these observations were read with other GitHub credentials; use a separate --state for this identity rather than switching accounts");
 }
 
 function digest(value) {
@@ -760,7 +759,7 @@ function deliverAll(options, deps, globalCoordinator, ledger, pending, results, 
 function view(options, deps, number) {
   const now = deps.now();
   const observer = readObserver(options);
-  if (observer && (!observer.credential || observer.credential !== (deps.credential ??= credentialOf(deps)))) throw new Error("these observations were read with other GitHub credentials; use a separate --state for this identity rather than switching accounts");
+  assertCredential(observer, deps);
   const snapshot = number === undefined ? undefined : readJson(snapshotPath(options, number), null);
   const record = number === undefined ? undefined : registration(options, number);
   const pid = holder(options, deps);
@@ -805,7 +804,8 @@ function decide(options, snapshot, now) {
 
 // Events the reader delivered since this process attached that concern this coordinator: those
 // it received, and those about a PR registered to it, since its inbox may have refused them.
-function followed(options, seen) {
+function followed(options, deps, seen) {
+  assertCredential(readObserver(options), deps);
   if (!options.coordinator) return [];
   const results = [];
   for (const [id, receipt] of Object.entries(readLedger(options).events)) {
@@ -816,6 +816,23 @@ function followed(options, seen) {
     if (blocks.includes(options.coordinator) || registration(options, receipt.event.pr)?.coordinator?.block === options.coordinator) results.push({ ...receipt.event, ...receipt });
   }
   return results;
+}
+
+// The reader owns this rolling ledger too. Count transport attempts, including refused reads,
+// pagination and the current-head read before each delivery; attached consumers cost no calls.
+function probe(options, deps, coordinator) {
+  const path = join(options.state, "calls.json");
+  const history = readJson(path, { version: 1, repo: options.repo, times: [] });
+  if (history.version !== 1 || history.repo !== options.repo || !Array.isArray(history.times) || !history.times.every(Number.isFinite)) throw new Error("invalid GitHub call ledger");
+  const times = [];
+  try {
+    return tick(options, { ...deps, github(query, variables) { times.push(deps.now()); return deps.github(query, variables); } }, coordinator);
+  } finally {
+    const now = deps.now();
+    const recent = [...history.times, ...times].filter((at) => at > now - 3_600_000);
+    if (!options["dry-run"]) atomicJson(path, { version: 1, repo: options.repo, times: recent });
+    deps.out({ event: "probe", at: iso(now), calls: times.length, callsLastHour: recent.length, windowSeconds: 3600 });
+  }
 }
 
 async function serve(options, deps) {
@@ -864,7 +881,7 @@ async function serve(options, deps) {
         } else {
           next = options.interval * 1000;
           try {
-            const result = tick(options, deps, coordinator);
+            const result = probe(options, deps, coordinator);
             if (options.command === "watch") {
               if (!options["until-event"] || result.results.length) deps.out(result);
               if ((options.once || options["until-event"]) && result.results.some((event) => event.outcome === "pending")) throw new Error("event delivery remains pending");
@@ -876,7 +893,7 @@ async function serve(options, deps) {
           }
         }
       } else if (options["until-event"]) {
-        const results = followed(options, seen);
+        const results = followed(options, deps, seen);
         if (results.length) { deps.out({ event: "tick", attached: attached ?? null, results }); return; }
       }
       if (options.command === "wait") {
