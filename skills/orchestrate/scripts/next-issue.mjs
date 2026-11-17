@@ -9,10 +9,10 @@
 // collaborator (a stranger's issue waits for a human). Drops issues with an open blocker
 // (native, or a "Blocked by:" line) and specs with open children.
 // Usage: next-issue.mjs [--local ROOT] [--only KEY[,KEY...]] READY BUG TRIAGE LIGHT STANDARD HEAVY
-import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSyncWithStderr } from "../../../references/exec-file-sync.mjs";
 
 const TEAM = ["OWNER", "MEMBER", "COLLABORATOR"];
 
@@ -155,7 +155,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   }
   try {
-    const issues = local ? loadLocal(root) : JSON.parse(execFileSync("gh", ["api", "repos/{owner}/{repo}/issues?state=all&per_page=100", "--paginate", "--slurp"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 })).flat();
+    const issues = local ? loadLocal(root) : JSON.parse(execFileSyncWithStderr("gh", ["api", "repos/{owner}/{repo}/issues?state=all&per_page=100", "--paginate", "--slurp"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 })).flat();
     const result = keys === undefined ? { issues: pick(issues, ...args), skipped: [] } : only(issues, keys, ...args);
     for (const i of result.issues) console.log(`${key(i)}\t${i.title.replace(/[\t\r\n]/g, " ")}\t${i.stage}\t${i.tier}`);
     for (const { key, reason } of result.skipped) console.error(`skipped\t${key}\t${reason}`);

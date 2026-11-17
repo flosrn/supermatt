@@ -39,6 +39,24 @@ function snapshot(root, env) {
   return result.stdout;
 }
 
+test("snapshot relays local environment discovery warnings without changing JSON", (t) => {
+  const { base, root } = workspace(t);
+  const baseline = snapshot(root, gitEnv);
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8", env: gitEnv }).trim();
+  const bin = join(base, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "git"), `#!/bin/sh
+if [ "$1 $2" = 'rev-parse --local-env-vars' ]; then
+  printf 'git discovery warning\\n' >&2
+fi
+exec "$REAL_GIT" "$@"
+`, { mode: 0o755 });
+  const result = run(root, { ...gitEnv, PATH: bin, REAL_GIT: realGit });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, baseline);
+  assert.equal(result.stderr, "git discovery warning\n");
+});
+
 test("detects existing untracked content mutations while unchanged and ignored files stay stable", (t) => {
   const { root } = workspace(t);
   writeFileSync(join(root, "new.txt"), "before\n");

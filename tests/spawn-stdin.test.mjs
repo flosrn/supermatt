@@ -103,7 +103,7 @@ function blankComments(text) {
 
 // The spawn functions' names in a file, including the local names it imports them under.
 function spawnerNames(code) {
-  const names = new Set(spawners);
+  const names = new Map(spawners.map((name) => [name, name]));
   const lists = [
     ...code.matchAll(/import\s*\{([^}]*)\}\s*from\s*["'](?:node:)?child_process["']/g),
     ...code.matchAll(/\{([^}]*)\}\s*=\s*(?:require|await\s+import)\(\s*["'](?:node:)?child_process["']/g),
@@ -111,10 +111,10 @@ function spawnerNames(code) {
   for (const [, list] of lists) {
     for (const specifier of list.split(",")) {
       const [name, alias] = specifier.split(/\s+as\s+|:/).map((part) => part.trim());
-      if (alias && spawners.includes(name)) names.add(alias);
+      if (alias && spawners.includes(name)) names.set(alias, name);
     }
   }
-  return [...names];
+  return names;
 }
 
 const escaped = (name) => name.replace(/\$/g, "\\$");
@@ -192,11 +192,13 @@ function pipedStdinSpawns(roots) {
   for (const root of roots) {
     for (const file of sources(root)) {
       const code = blankComments(readFileSync(file, "utf8"));
-      const call = new RegExp(`(?<![\\w$])(${spawnerNames(code).map(escaped).join("|")})\\s*\\(`, "g");
+      const names = spawnerNames(code);
+      const call = new RegExp(`(?<![\\w$])(${[...names.keys()].map(escaped).join("|")})\\s*\\(`, "g");
       for (const match of code.matchAll(call)) {
         const open = match.index + match[0].length - 1;
         const [, ...rest] = args(code.slice(open + 1, closing(code, open) - 1));
-        const safe = rest.some((arg) => arg.startsWith("{") && stdinIsSafe(arg));
+        const options = names.get(match[1]) === "execSync" || rest[0]?.startsWith("{") ? rest[0] : rest[1];
+        const safe = options?.startsWith("{") && stdinIsSafe(options);
         if (!safe) {
           const line = code.slice(0, match.index).split("\n").length;
           offenders.push(`${relative(repo, file)}:${line}: ${match[1]}`);
@@ -301,4 +303,47 @@ test("only a plain literal stdio or a present input value proves stdin, whatever
   ].join("\n"));
   const at = (line) => `${relative(repo, file)}:${line}: execFileSync`;
   assert.deepEqual(pipedStdinSpawns([root]), [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 20, 21, 22].map(at));
+});
+
+test("an ignored fourth argument cannot prove execFileSync stdin", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "spawn-stdin-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = join(root, "extra.mjs");
+  writeFileSync(file, 'execFileSync("git", args, { encoding: "utf8" }, { stdio: ["ignore", "pipe", "pipe"] });\n');
+  assert.deepEqual(pipedStdinSpawns([root]), [`${relative(repo, file)}:1: execFileSync`]);
+});
+
+test("an ignored third argument cannot prove execSync stdin", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "spawn-stdin-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = join(root, "extra.mjs");
+  writeFileSync(file, 'execSync("git status", undefined, { stdio: "ignore" });\n');
+  assert.deepEqual(pipedStdinSpawns([root]), [`${relative(repo, file)}:1: execSync`]);
+});
+
+test("only the consumed options count for each synchronous API and imported alias", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "spawn-stdin-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = join(root, "overloads.mjs");
+  writeFileSync(file, [
+    'import { execSync as shell, spawnSync as spawn, execFileSync as run } from "node:child_process";',
+    'spawnSync("git", args, {}, { stdio: "ignore" });',
+    'shell("git status", {}, { stdio: "ignore" });',
+    'spawn("git", args, {}, { input: "x" });',
+    'run("git", args, {}, { input: "x" });',
+    'execFileSync("git", { encoding: "utf8" }, { stdio: "ignore" });',
+    'spawnSync("git", { encoding: "utf8" }, { stdio: "ignore" });',
+    'execFileSync("git", { stdio: "ignore" });',
+    'spawnSync("git", { stdio: "ignore" });',
+    'shell("git status", { stdio: "ignore" });',
+    'run("git", undefined, { stdio: "ignore" });',
+    'spawn("git", null, { stdio: "ignore" });',
+    'run("cat", args, { input: body.text });',
+    'spawn("cat", args, { input: "hello" });',
+  ].join("\n"));
+  const at = (line, name) => `${relative(repo, file)}:${line}: ${name}`;
+  assert.deepEqual(pipedStdinSpawns([root]), [
+    at(2, "spawnSync"), at(3, "shell"), at(4, "spawn"), at(5, "run"),
+    at(6, "execFileSync"), at(7, "spawnSync"),
+  ]);
 });
