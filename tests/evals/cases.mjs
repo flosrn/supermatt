@@ -323,7 +323,7 @@ const signupSource = {
   names: ({ max = 20, fold = "" } = {}) => `const reserved = ["admin"];\n\nexport function checkName(name) {\n  if (name.length < 3 || name.length > ${max}) return "Rejected: a name has 3 to 20 characters";\n  if (reserved.includes(name${fold})) return "Rejected: reserved name";\n  return "Accepted";\n}\n`,
   test: testHead + 'import { checkName } from "../src/names.mjs";\n\ntest("admin is a reserved name", () => {\n  assert.equal(checkName("admin"), "Rejected: reserved name");\n});\n\ntest("alice is accepted", () => {\n  assert.equal(checkName("alice"), "Accepted");\n});\n',
 };
-const signupIssue = (staffRule, comments = "") => `# Reserve staff names at signup\n\nStatus: ready-for-agent\n\n## Acceptance\n\n- \`node bin/signup.mjs <name>\` prints \`Accepted\` and exits 0, or prints \`Rejected: <reason>\` and exits 1.\n- A name has 3 to 20 characters.\n- ${staffRule}\n- \`alice\` is accepted.\n${comments}`
+const signupIssue = (staffRule, comments = "") => `# Reserve staff names at signup\n\nStatus: ready-for-agent\n\n## Acceptance\n\n- \`node bin/signup.mjs <name>\` prints \`Accepted\` and exits 0, or prints \`Rejected: <reason>\` and exits 1.\n- A name has 3 to 20 characters.\n- ${staffRule}\n- \`alice\` is accepted.\n${comments}`;
 const openStaffRule = "Reject names that impersonate staff, such as `admin`, with the reason `reserved name`.";
 const signupWork = names => ({
   "package.json": '{"name":"signup","private":true,"type":"module","scripts":{"test":"node --test"}}\n',
@@ -336,12 +336,12 @@ const signupWork = names => ({
 });
 // Commits each patch on top of the fixture commit, which it tags `base`, and tags a commit when asked.
 const signupSetup = steps => '#!/bin/sh\nset -eu\ncommit() { git -c user.name=Dev -c user.email=dev@example.invalid -c commit.gpgsign=false commit -qm "$1"; }\ngit tag base\n'
-  + steps.map(([patch, message, tag]) => `git apply ${patch}\ngit add -A bin src\ncommit "${message}"\n${tag ? `git tag ${tag}\n` : ""}`).join("");
+  + steps.map(({ patch, message, tag }) => `git apply ${patch}\ngit add -A bin src\ncommit "${message}"\n${tag ? `git tag ${tag}\n` : ""}`).join("");
 const signupChange = names => shopPatch({ "bin/signup.mjs": { after: signupSource.bin }, "src/names.mjs": { after: names } });
 const signupQaFiles = (steps, issue) => ({
   "package.json": '{"name":"signup","private":true,"type":"module"}\n',
   "issues/9.md": issue,
-  "setup.sh": signupSetup(steps.map(({ patch, message, tag }) => [patch, message, tag])),
+  "setup.sh": signupSetup(steps),
   ...Object.fromEntries(steps.map(({ patch, diff }) => [patch, diff])),
 });
 const closedStaffList = "\n## Comments\n\n2026-11-17, caller decision on the staff-name rule, a closed list. Rejected with `reserved name`: `admin`, `Admin`, `ADMIN`, ` admin` (a leading space). Accepted: `alice`, `administrator`, `badminton`.\n";
