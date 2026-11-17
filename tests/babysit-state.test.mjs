@@ -172,9 +172,11 @@ test("state replacement exposes only a0600 temporary inside the dedicated0700 di
   snapshot({ file: stateFile, gh: h.gh, now: NOW });
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
     import assert from "node:assert/strict";
-    import fs from "node:fs";
     import { syncBuiltinESMExports } from "node:module";
     import { dirname } from "node:path";
+    // Patch before anything imports node:fs as ESM: Bun binds a builtin's named exports when it is
+    // first imported and ignores syncBuiltinESMExports, which Node needs for bindings it already made.
+    const fs = process.getBuiltinModule("node:fs");
     const file = process.argv[1];
     const rename = fs.renameSync;
     let inspected = false;
