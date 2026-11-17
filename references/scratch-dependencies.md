@@ -10,19 +10,49 @@ Before a copied tree is edited or runs a reproduction, mutation, or hook, check 
 
 Run `node <this file's directory>/check-scratch-containment.mjs <scratch>` with both paths shell-quoted, or use Bun with `--no-env-file`. It rejects a linked scratch root, unresolved symlinks, and links whose canonical targets escape the scratch tree, with one exception.
 
+A link whose target does not exist fails as `dangling link (target missing in scratch): <link> -> <target>`.
+
 That exception is a link to a system file the user cannot change: a non-directory owned by root, not writable by the current user, and outside the user's home. Directories never qualify, since a read-only directory can hold writable paths.
 
 The check also rejects a `.git` entry at any depth that is not a directory, such as the `gitdir:` pointer file a raw copy of a linked worktree keeps, since Git commands in scratch would follow it into the real repository and commit on its branch; a `.git` directory, such as `git init` creates in the copy, passes.
 
-The system-file exception covers a Python virtualenv, whose `bin/python` links to a system interpreter such as `/usr/bin/python3.12`. Leave that link as it is and never copy the interpreter into scratch.
+In each directory holding `pyvenv.cfg`, the check rejects a `bin/` script with an absolute interpreter path outside scratch (`shebang points outside scratch`). It reads the `#!` line or the shell word after `'''exec'` on line 2 of the `/bin/sh` launcher.
+
+A root-owned interpreter path ending at a system file covered by the exception, such as `/usr/bin/env` or `/usr/bin/python3`, passes.
+
+The system-file exception covers a Python virtualenv whose `bin/python` links to a system interpreter such as `/usr/bin/python3.12`. Leave that link as it is and never copy the interpreter into scratch.
 
 If the trigger needs no Python, remove the copied virtualenv directories that contain escaping links or editable-install metadata, then rerun the containment check instead of repairing or reinstalling them.
 
-If the trigger needs Python, keep its installed dependencies contained: an interpreter the user owns or one under the home directory (pyenv, uv, or a per-user Homebrew) fails the check, so recreate the environment inside scratch with the repository's supported setup and a copied interpreter, such as `python3 -m venv --copies`, then reinstall its dependencies there.
+If the trigger needs Python, an interpreter the user owns or one under the home directory (pyenv, uv, or a per-user Homebrew) fails the check until the scratch Python helper copies its runtime into the virtualenv. Replacing the interpreter link with a different Python is not an environment rebuild.
 
-Replacing the interpreter link with a different Python is not an environment rebuild.
+Whenever the copy holds a Python virtualenv (a directory holding `pyvenv.cfg`), run `node "<this file's directory>/prepare-scratch-python.mjs" "<repo>" "<scratch>"` (Bun: `bun --no-env-file`) right after the copy and before the containment check, with the same two paths in the same order as the copy helper.
+
+The Python helper refuses a missing, symlinked, or non-directory scratch root, a scratch root containing `.git`, and a scratch root equal to, inside, or containing the repository. It writes only inside scratch and never through a link, refusing a linked `bin` directory.
+
+Once it finds a virtualenv, the helper refuses a repository or scratch path holding a quote, backslash, or control character, since virtualenv files store such a path escaped or cannot hold it. It also refuses a virtualenv path holding a control character.
+
+For each virtualenv whose interpreter the user owns, the helper copies the runtime, the parent of the `bin` directory holding the interpreter's canonical path, with its symlinks and modes, to `<venv>/.scratch-python/<runtime>`. It relinks the `bin/` links that left scratch into the copy and points `pyvenv.cfg`'s `home`, `executable`, and `command` at it.
+
+A link to a locked system interpreter stays. A virtualenv created with `--copies` keeps its interpreter.
+
+In every virtualenv, the helper replaces the repository path, as given and canonical, with the scratch path in each text file outside the copied runtime: editable-install `.pth` lines and finder modules, `direct_url.json`, `activate` scripts, and console-script interpreters.
+
+The repository path escaped as Python's `json.dumps` or `ascii()` writes it becomes the scratch path escaped the same way. A file URL of the repository, in Python's or uv's percent-encoding, becomes the scratch path in Python's encoding. A rewritten `#!` line longer than 127 bytes or holding a space becomes the `/bin/sh` `'''exec'` launcher that pip and uv write.
+
+After preparing every virtualenv, the helper checks containment of the whole scratch tree before starting any Python. A failed check stops preparation without executing startup code. The helper then runs each virtualenv's `bin/python` from `/` and fails unless `sys.prefix` is that virtualenv.
+
+The helper prints each change, then a summary; a rerun on the same scratch changes nothing, and a failure prints one `Scratch Python preparation failed: <reason>` line and exits 1.
+
+Conda environments, which have no `pyvenv.cfg`, and Windows layouts are not handled. Two cases are unverified: a uv runtime relocated on macOS, and a pyenv build with `--enable-shared`, which may still load `libpython` from its original prefix where the containment check cannot see it.
 
 Python editable installs can keep the original checkout in `.pth` path entries under `site-packages` or `dist-packages`, or in `direct_url.json` file URLs; the containment check rejects these escapes (while allowing the same read-only system files as interpreter links).
+
+The containment check reads a `.pth` the way Python's site module does: a line ends wherever Python's `str.splitlines` ends one, such as at a line feed, a carriage return, or a vertical tab; blank, comment, and `import` lines are skipped. A `.pth` link to a regular file inside scratch is read through the link, and a `.pth` that is not a regular file is skipped.
+
+A virtualenv's `lib/pythonX.Y/site-packages` (or `dist-packages`) is checked under that name, against which Python resolves relative lines, even where `lib` or a directory below it is a link inside scratch, and so is any other `site-packages` or `dist-packages` that is a link inside scratch.
+
+A `direct_url.json` that records only an archive install (an `archive_info` object, with no `dir_info` or `vcs_info` key), such as the record of the wheel pip came from in a uv runtime, may name a URL outside scratch, since the archive's files were copied into `site-packages`; any other record, such as a directory install (`dir_info`), editable or not, may not.
 
 For a trigger that needs Python, force a real reinstall of the editable package from inside the scratch copy, for example `uv pip install --reinstall -e .` or the repository's `uv sync --locked --reinstall-package <package>` command; plain `uv sync` can leave copied editable metadata unchanged. Rerun the containment check after the reinstall, including the interpreter check above.
 

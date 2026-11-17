@@ -70,6 +70,8 @@ The common-directory assertion resolves filesystem aliases such as macOS's `/var
 `tests/exec-file-sync.test.mjs` checks the shared stdin-ignoring helper against Node's default `execFileSync` contract: stdout return, stderr relay on success and failure, and captured error fields. The helper is used only where stderr previously relayed; explicitly quiet callers keep their existing behavior. CLI regressions cover the affected helpers, with `tests/tern-notify.test.mjs` stopping on a fake invalid terminal without sending a notification.
 `tests/review-snapshot.test.mjs` also copies the snapshot script alone outside the tree and checks its JSON and stderr relay, so review and QA can use the copied helper without repository-relative dependencies.
 
+`tests/scratch-python.test.mjs` copies the system `python3` binary to stand in for a user-owned interpreter such as uv's, builds an offline virtualenv with editable installs and console scripts from it, and checks that `references/prepare-scratch-python.mjs` makes a scratch copy run and import from the copy without changing the source. Its cases that build a virtualenv skip on macOS, whose `/usr/bin/python3` is a launcher that cannot be copied, and as root. One case runs everywhere with a shell script standing in for the interpreter, to prepare a copied runtime that holds pip's install record of a wheel outside scratch.
+
 The changelog guard reports the protected base heading and complete new-side range for mixed Unreleased/released hunks, because replacement lines cannot be unambiguously aligned. Edits wholly within protected content report their new-side start line; pure deletions use Git's new-side anchor.
 
 To run the `lint` job's dash and whitespace checks locally, compare your branch with `main`:
