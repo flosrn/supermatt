@@ -526,8 +526,9 @@ const TIMEOUT_HELP = "a bare number is milliseconds; or use an ms, s or m suffix
 const ms = (value) => {
   if (value === undefined) return undefined;
   const m = /^(\d+)(ms|s|m)?$/.exec(value);
-  if (!m) throw new Usage(`invalid timeout ${value}: ${TIMEOUT_HELP}`);
-  return Number(m[1]) * UNIT_MS[m[2] ?? ""];
+  const n = m && Number(m[1]) * UNIT_MS[m[2] ?? ""];
+  if (!Number.isSafeInteger(n)) throw new Usage(`invalid timeout ${value}: ${TIMEOUT_HELP}`);
+  return n;
 };
 
 const isHelp = (args) => args.length === 1 && args[0] === "--help";
@@ -608,8 +609,12 @@ const commands = {
     const record = join(RECORDS, `${pane}-${Date.now()}-${process.pid}.jsonl`);
     // The ctrl+u presses discard the input line, where a keystroke meant for an
     // omp that just exited would otherwise run ahead of the launch.
-    tern("send", pane, "keys", ...Array(LINE_CLEARS).fill("ctrl+u"));
-    tern("run", pane, ["PI_TUI_NATIVE=1", `PI_TUI_TSP_RECORD=${quote(record)}`, "omp", ...rest.map(quote)].join(" "));
+    try {
+      tern("send", pane, "keys", ...Array(LINE_CLEARS).fill("ctrl+u"));
+      tern("run", pane, ["PI_TUI_NATIVE=1", `PI_TUI_TSP_RECORD=${quote(record)}`, "omp", ...rest.map(quote)].join(" "));
+    } catch (e) {
+      throw e instanceof Failure ? new Failure(e.code, `${e.message}; the name ${name} was not kept: the launch failed`) : e;
+    }
     // The omp this start launched is the first omp Tern shows in the pane's
     // foreground, which held its shell until the launch. `last` is the latest
     // read: the agent, or undefined for none; `unread` marks a read that failed

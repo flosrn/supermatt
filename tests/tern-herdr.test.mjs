@@ -397,11 +397,14 @@ test("--timeout takes a bare number as milliseconds, or an ms, s or m suffix", (
     ["agent", "wait", "app-work-1-1", "--timeout", "abc"],
     ["agent", "prompt", "app-work-1-1", "go", "--timeout", "2h"],
     ["agent", "start", "app-work-1-2", "--kind", "omp", "--pane", "50", "--timeout", "1.5s"],
+    ["agent", "prompt", "app-work-1-1", "go", "--timeout", `${"9".repeat(400)}ms`],
+    ["agent", "wait", "app-work-1-1", "--timeout", "9007199254740993"],
   ]) {
     const r = w.run(...args);
     assert.equal(r.code, 2, args.join(" "));
     assert.match(r.stderr, /invalid timeout/, args.join(" "));
   }
+  assert.deepEqual(sends(w), [], "a rejected timeout types nothing");
 });
 
 test("a worker whose composer is ready only after the start timeout keeps its name, and takes a prompt once ready", (t) => {
@@ -429,6 +432,15 @@ test("a start timeout does not keep the name once the pane holds a process other
     assert.match(r.error.message, /app-work-1-1 was not kept/, JSON.stringify(swap));
     assert.ok(!existsSync(join(w.stateDir, "names", "app-work-1-1.json")), JSON.stringify(swap));
   }
+});
+
+test("a start whose launch fails does not keep the name, and says so", (t) => {
+  const w = lane(t, { failure: { command: "run", remaining: 1, message: "launch denied" } });
+  const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "1s");
+  assert.equal(r.error?.code, "tern_failed", r.stderr);
+  assert.match(r.error.message, /tern run: launch denied/);
+  assert.match(r.error.message, /app-work-1-1 was not kept/);
+  assert.ok(!existsSync(join(w.stateDir, "names", "app-work-1-1.json")));
 });
 
 test("a name is cleared once its omp exits, and its surface record goes with it", (t) => {
