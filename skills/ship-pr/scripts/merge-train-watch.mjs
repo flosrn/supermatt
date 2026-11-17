@@ -80,7 +80,7 @@ class RateLimited extends Error {
 function iso(ms) { return new Date(ms).toISOString(); }
 
 function run(command, args, env) {
-  const result = spawnSync(command, args, { env, encoding: "utf8", timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
+  const result = spawnSync(command, args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(`${command} failed: ${result.error?.message || result.stderr?.trim() || `exit ${result.status}`}`);
   return result.stdout;
 }
@@ -89,7 +89,7 @@ function run(command, args, env) {
 function request(query, variables, env) {
   const args = ["api", "-i", "graphql", "-f", `query=${query}`];
   for (const [key, value] of Object.entries(variables)) if (value != null) args.push(typeof value === "number" ? "-F" : "-f", `${key}=${value}`);
-  const result = spawnSync("gh", args, { env, encoding: "utf8", timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
+  const result = spawnSync("gh", args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
   if (result.error) throw new Error(`gh failed: ${result.error.message}`);
   const { status, headers, body: text } = parseHttp(result.stdout ?? "");
   if (status === null) throw new Error(`gh failed: ${result.stderr?.trim() || `exit ${result.status}`}`);

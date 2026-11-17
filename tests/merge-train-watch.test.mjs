@@ -1391,7 +1391,7 @@ const fs = require("node:fs");
 const cp = require("node:child_process");
 const calls = [];
 const writeFileSync = fs.writeFileSync.bind(fs);
-cp.execFileSync = (command, args) => { calls.push({command,args}); return command === "tern" ? JSON.stringify({child:{pid:42}}) : "ttys123\\n"; };
+cp.spawnSync = (command, args) => { calls.push({command,args}); const stdout = command === "tern" ? JSON.stringify({child:{pid:42}}) : "ttys123\\n"; return { status: 0, signal: null, stdout, stderr: "", output: [null, stdout, ""] }; };
 fs.writeFileSync = (path, text) => { writeFileSync(process.env.NOTIFY_LOG, JSON.stringify({calls,path,text}) + "\\n", { flag: "a" }); };
 require("node:module").syncBuiltinESMExports();
 `);

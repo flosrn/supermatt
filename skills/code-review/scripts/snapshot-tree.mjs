@@ -1,7 +1,20 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+
+// This script is copied alone by review and QA, so its discovery call cannot import shared helpers.
+function execFileSyncWithStderr(file, args, options) {
+  const result = spawnSync(file, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw Object.assign(result.error, result);
+  if (result.status !== 0) {
+    let message = `Command failed: ${[options.argv0 || file, ...args].join(" ")}`;
+    if (result.stderr?.length) message += `\n${result.stderr.toString()}`;
+    throw Object.assign(new Error(message), result);
+  }
+  return result.stdout;
+}
 
 function snapshot(root, env, nested = false) {
   const absolute = path => Buffer.concat([root, Buffer.from("/"), path]);
@@ -69,7 +82,7 @@ try {
   if (process.argv.length !== 3) throw new Error("Usage: snapshot-tree.mjs <repository-root>");
   process.chdir(realpathSync(process.argv[2]));
   const env = { ...process.env };
-  const localVariables = execFileSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8" }).trim().split("\n");
+  const localVariables = execFileSyncWithStderr("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8" }).trim().split("\n");
   for (const key of [...localVariables, "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM"]) delete env[key];
   process.stdout.write(JSON.stringify(snapshot(Buffer.from(process.cwd()), env)) + "\n");
 } catch (error) {

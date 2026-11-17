@@ -1275,6 +1275,21 @@ const cli = (bin, args, cwd) => spawnSync(process.execPath, [CLI, ...args], { cw
 const tree = (dir) => !existsSync(dir) ? {} : Object.fromEntries(readdirSync(dir, { recursive: true }).map(String).sort()
   .filter((path) => statSync(join(dir, path)).isFile()).map((path) => [path, readFileSync(join(dir, path), "utf8")]));
 
+test("CLI open relays successful git warnings without changing PR discovery", (t) => {
+  const { bin } = stubGh(t);
+  const { repo } = checkout(t);
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  writeFileSync(join(bin, "git"), `#!/bin/sh
+printf 'babysit git warning\\n' >&2
+exec '${realGit.replace(/'/g, "'\\''")}' "$@"
+`, { mode: 0o755 });
+  const result = cli(bin, ["open", "--repo", "acme/app", "--pr", "40"], repo);
+  assert.equal(result.status, 0, result.stderr);
+  const opened = JSON.parse(result.stdout);
+  assert.deepEqual([opened.action, opened.pr], ["reuse", 40]);
+  assert.equal(result.stderr, "babysit git warning\n");
+});
+
 test("CLI open accepts a matching PR URL without dropping its repository identity", (t) => {
   const { bin } = stubGh(t);
   const { repo } = checkout(t);

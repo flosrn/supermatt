@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { execFileSyncWithStderr } from "../../../references/exec-file-sync.mjs";
 import { parseHttp, retryAt } from "../../../references/github-http.mjs";
 
 // A gh call that hangs (network, credential prompt) would hold the state lock: cut it off.
@@ -749,7 +750,7 @@ function main(argv) {
     id: { type: "string" }, fingerprint: { type: "string" }, disposition: { type: "string" }, key: { type: "string" },
     outcome: { type: "string" }, note: { type: "string" }, "observer-state": { type: "string" }, fallback: { type: "boolean" },
   } });
-  const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+  const git = (...args) => execFileSyncWithStderr("git", args, { encoding: "utf8" }).trim();
   const pr = values.pr == null ? null : command === "open" ? values.pr : Number(values.pr);
   if (command !== "open" && pr != null && !Number.isInteger(pr)) throw new Error(`--pr must be a PR number: ${values.pr}`);
   if (command !== "open" && !values.state) throw new Error(`--state FILE is required\n${USAGE}`);
