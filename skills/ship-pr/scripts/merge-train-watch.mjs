@@ -41,7 +41,8 @@ const TRACK_AFTER_MERGE_MS = 24 * 60 * 60_000;
 const WAIT_FOR = ["checks", "merge", "post-merge", "change"];
 
 const CONTEXTS = `contexts(first: 100) { pageInfo { hasNextPage } nodes { __typename
-  ... on CheckRun { id name conclusion detailsUrl } ... on StatusContext { id context state targetUrl } } }`;
+  ... on CheckRun { id name conclusion detailsUrl startedAt completedAt checkSuite { workflowRun { workflow { name } } } }
+  ... on StatusContext { id context state targetUrl createdAt } } }`;
 const COMMENTS = "pageInfo { hasPreviousPage startCursor } nodes { databaseId createdAt body author { __typename login } }";
 const PULL = `number state merged mergedAt updatedAt headRefOid labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
   commits(last: 1) { nodes { commit { oid statusCheckRollup { ${CONTEXTS} } } } }`;
@@ -67,7 +68,7 @@ const notifier = fileURLToPath(new URL("../../orchestrate/scripts/tern-notify.mj
 const COMMON = "--repo OWNER/REPO --train-login LOGIN [--state DIR]";
 const usage = [
   `merge-train-watch.mjs register ${COMMON} --pr N [--observe-only | --owner BLOCK] [--coordinator BLOCK] [--owner-agent NAME] [--coordinator-agent NAME]`,
-  `merge-train-watch.mjs watch ${COMMON} [--coordinator BLOCK] [--coordinator-agent NAME] [--interval 60] [--once] [--dry-run] [--until-event]`,
+  `merge-train-watch.mjs watch ${COMMON} [--coordinator BLOCK] [--coordinator-agent NAME] [--train-check-name NAME] [--interval 60] [--once] [--dry-run] [--until-event]`,
   `merge-train-watch.mjs wait ${COMMON} --pr N --for checks|merge|post-merge|change [--head SHA] [--after DIGEST] [--timeout SECONDS] [--coordinator BLOCK] [--interval 60]`,
   `merge-train-watch.mjs status ${COMMON} [--pr N]`,
 ].join("\n");
@@ -142,7 +143,7 @@ function parse(argv, env) {
   const [command, ...args] = argv;
   const values = {
     register: ["repo", "train-login", "state", "pr", "owner", "coordinator", "owner-agent", "coordinator-agent"],
-    watch: ["repo", "train-login", "state", "coordinator", "coordinator-agent", "interval"],
+    watch: ["repo", "train-login", "state", "coordinator", "coordinator-agent", "train-check-name", "interval"],
     wait: ["repo", "train-login", "state", "pr", "for", "head", "after", "timeout", "coordinator", "coordinator-agent", "interval"],
     status: ["repo", "train-login", "state", "pr"],
   }[command];
@@ -180,6 +181,7 @@ function parse(argv, env) {
     if (options.timeout !== undefined) options.timeout = Number(options.timeout);
   }
   options.once = options.once || options["dry-run"];
+  options["train-check-name"] ??= "Merge Train";
   return options;
 }
 
@@ -375,20 +377,31 @@ function labelsOf(labels, subject) {
 }
 
 // GitHub answers a null rollup for a commit without checks; a missing field is an incomplete answer.
-function contextsOf(commit, subject) {
+function contextsOf(commit, subject, train) {
   if (!Object.hasOwn(commit, "statusCheckRollup")) throw new Error(`invalid check rollup for ${subject}`);
   if (commit.statusCheckRollup === null) return [];
   const contexts = commit.statusCheckRollup?.contexts;
   if (!Array.isArray(contexts?.nodes) || typeof contexts.pageInfo?.hasNextPage !== "boolean") throw new Error(`invalid check rollup for ${subject}`);
   if (contexts.pageInfo.hasNextPage) throw new Error(`more than 100 checks on ${subject}; the watcher cannot prove none failed`);
-  return contexts.nodes.map((node) => {
+  const latest = new Map();
+  for (const node of contexts.nodes) {
     const isRun = node?.__typename === "CheckRun";
     if (!isRun && node?.__typename !== "StatusContext") throw new Error(`invalid check rollup for ${subject}`);
+    const workflow = isRun ? node.checkSuite?.workflowRun?.workflow?.name ?? null : null;
+    const at = isRun ? node.startedAt ?? node.completedAt ?? null : node.createdAt ?? null;
     const check = { id: node.id, name: isRun ? node.name : node.context, conclusion: isRun ? node.conclusion : node.state, url: isRun ? node.detailsUrl : node.targetUrl };
-    if (typeof check.id !== "string" || !check.id || typeof check.name !== "string" || (check.conclusion !== null && typeof check.conclusion !== "string")) throw new Error(`invalid check rollup for ${subject}`);
+    if (typeof check.id !== "string" || !check.id || typeof check.name !== "string" || (check.conclusion !== null && typeof check.conclusion !== "string") || (workflow !== null && typeof workflow !== "string") || (at !== null && typeof at !== "string")) throw new Error(`invalid check rollup for ${subject}`);
+    // The train's own run is cancelled whenever a newer train run replaces it; it is not a head check.
+    if (workflow === train || check.name === train) continue;
+    // Only the latest run of a check counts: a rerun supersedes the red it repeats. An untimed run is queued, hence newest.
+    const group = JSON.stringify([node.__typename, workflow, check.name]);
+    const previous = latest.get(group);
+    if (previous && previous.at === null) continue;
+    if (previous && at !== null && at < previous.at) continue;
     const result = check.conclusion === null || (!isRun && PENDING_STATUS.has(check.conclusion)) ? "pending" : PASS.has(check.conclusion) ? "pass" : "fail";
-    return { ...check, url: /^https:\/\/[^\s"<>]{1,300}$/.test(check.url || "") ? check.url : null, result };
-  });
+    latest.set(group, { at, check: { ...check, url: /^https:\/\/[^\s"<>]{1,300}$/.test(check.url || "") ? check.url : null, result } });
+  }
+  return [...latest.values()].map((entry) => entry.check);
 }
 
 // Checks of one commit, stamped with that commit: they never stand for another head.
@@ -402,9 +415,9 @@ function checksOf(sha, contexts) {
   };
 }
 
-function postMergeOf(commit, subject) {
+function postMergeOf(commit, subject, train) {
   if (!SHA.test(commit?.oid || "")) throw new Error(`merged ${subject} has no readable merge commit`);
-  const checks = checksOf(commit.oid, contextsOf(commit, `the merge commit of ${subject}`));
+  const checks = checksOf(commit.oid, contextsOf(commit, `the merge commit of ${subject}`, train));
   const suites = commit.checkSuites;
   const deployments = commit.deployments;
   if (!Array.isArray(suites?.nodes) || typeof suites.pageInfo?.hasNextPage !== "boolean" || !Array.isArray(deployments?.nodes) || typeof deployments.pageInfo?.hasNextPage !== "boolean") throw new Error(`invalid merge commit for ${subject}`);
@@ -426,17 +439,17 @@ function postMergeOf(commit, subject) {
   return { sha: commit.oid, state: results.has("fail") ? "failure" : results.has("pending") ? "pending" : any ? "success" : "none", workflows, checks, deployments: deployed };
 }
 
-function pullOf(node, expected) {
+function pullOf(node, train, expected) {
   const subject = `PR ${expected ?? node?.number}`;
   if (!Number.isSafeInteger(node?.number) || node.number < 1 || (expected !== undefined && node.number !== expected)) throw new Error(`invalid pull request response for ${subject}`);
   if (!["OPEN", "CLOSED", "MERGED"].includes(node.state) || !SHA.test(node.headRefOid || "") || typeof node.updatedAt !== "string") throw new Error(`invalid pull request response for ${subject}`);
   const commit = node.commits?.nodes?.[0]?.commit;
   if (!SHA.test(commit?.oid || "")) throw new Error(`invalid check rollup for ${subject}`);
-  const value = { number: node.number, state: node.state, head: node.headRefOid, updatedAt: node.updatedAt, labels: labelsOf(node.labels, subject), checks: checksOf(commit.oid, contextsOf(commit, subject)) };
+  const value = { number: node.number, state: node.state, head: node.headRefOid, updatedAt: node.updatedAt, labels: labelsOf(node.labels, subject), checks: checksOf(commit.oid, contextsOf(commit, subject, train)) };
   if (node.state === "MERGED") {
     if (Number.isNaN(Date.parse(node.mergedAt))) throw new Error(`invalid pull request response for ${subject}`);
     // Only the aliased read of a registered PR carries the merge commit; a merged PR always has one.
-    value.postMerge = postMergeOf(node.mergeCommit, subject);
+    value.postMerge = postMergeOf(node.mergeCommit, subject, train);
     value.merge = { sha: value.postMerge.sha, at: node.mergedAt };
   }
   return value;
@@ -509,7 +522,7 @@ function observe(options, deps, schedule, observer) {
     const page = data.repository?.pullRequests;
     if (!Array.isArray(page?.nodes) || typeof page.pageInfo?.hasNextPage !== "boolean") throw new Error("invalid pull request listing");
     for (const node of page.nodes) {
-      const value = pullOf(node);
+      const value = pullOf(node, options["train-check-name"]);
       if (tracked.has(value.number)) continue;
       tracked.set(value.number, value);
       comments.set(value.number, node.comments);
@@ -518,7 +531,7 @@ function observe(options, deps, schedule, observer) {
     if (typeof page.pageInfo.endCursor !== "string" || !page.pageInfo.endCursor || page.pageInfo.endCursor === cursor) throw new Error("invalid pull request listing");
     cursor = page.pageInfo.endCursor;
   }
-  for (const number of wanted) if (!tracked.has(number)) tracked.set(number, pullOf(aliased[`pr${number}`], number));
+  for (const number of wanted) if (!tracked.has(number)) tracked.set(number, pullOf(aliased[`pr${number}`], options["train-check-name"], number));
   const queue = [...tracked.values()].filter((value) => comments.has(value.number) && eligible(value)).map((value) => value.number);
   for (const number of queue) tracked.get(number).comments = commentsOf(deps, schedule, options, number, comments.get(number));
   return { viewer, tracked, queue };
