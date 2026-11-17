@@ -34,6 +34,8 @@ git add -A && git commit -q -m init
 runs() { [ -f "$TMP/runs" ] && wc -l < "$TMP/runs" | tr -d ' ' || echo 0; }
 # Feeds the pre-push hook the ref line git gives it for a push of a commit (default HEAD) to main.
 pre_push() { echo "refs/heads/main $(git rev-parse "${1:-HEAD}") refs/heads/main 0000000000000000000000000000000000000000" | sh "$REPO/scripts/run-tests.sh" --pre-push; }
+# Succeeds when the command succeeds and runs the stand-in suite exactly once.
+runs_once() { before_once="$(runs)"; "$@" > /dev/null && [ "$(runs)" = $((before_once + 1)) ]; }
 
 sh "$REPO/scripts/run-tests.sh" || fail "green run on a clean tree exited nonzero"
 [ "$(runs)" = 1 ] || fail "the direct run did not run the suite once"
@@ -143,11 +145,10 @@ git init -q -b main "$TMP/unborn"
 echo j > file && git commit -q -am hidden-untracked
 git config status.showUntrackedFiles no
 echo y > untracked
-sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run beside a hidden untracked file exited nonzero"
+runs_once sh "$REPO/scripts/run-tests.sh" || fail "a green run beside a hidden untracked file did not run the suite once"
 rm untracked
 git config --unset status.showUntrackedFiles
-before="$(runs)"
-pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run beside a hidden untracked file was recorded"
+runs_once pre_push || fail "a run beside a hidden untracked file was recorded"
 
 # When Git cannot read the worktree after the suite, the run cannot be shown clean and stays unrecorded.
 echo k > file && git commit -q -am unreadable-index
@@ -155,33 +156,29 @@ SUPERMATT_TEST_COMMAND="echo run >> '$TMP/runs'; if [ -f '$TMP/move' ]; then rm 
 touch "$TMP/move"
 sh "$REPO/scripts/run-tests.sh" > /dev/null 2>&1 || :
 cp "$TMP/index" .git/index
-before="$(runs)"
-pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run whose final status check failed was recorded"
+runs_once pre_push || fail "a run whose final status check failed was recorded"
 
 # A sparse checkout hides absent files from status; the suite saw only part of the tree, so the run stays unrecorded.
 SUPERMATT_TEST_COMMAND="echo run >> '$TMP/runs'"
 echo l > file && git commit -q -am sparse
 git update-index --skip-worktree file && rm file
-sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run in a sparse checkout exited nonzero"
+runs_once sh "$REPO/scripts/run-tests.sh" || fail "a green run in a sparse checkout did not run the suite once"
 git update-index --no-skip-worktree file && git checkout -q -- file
-before="$(runs)"
-pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run in a sparse checkout was recorded"
+runs_once pre_push || fail "a run in a sparse checkout was recorded"
 
 # A file marked assume-unchanged can differ from the commit without status showing it.
 echo m > file && git commit -q -am assume
 git update-index --assume-unchanged file && echo changed > file
-sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run beside an assume-unchanged file exited nonzero"
+runs_once sh "$REPO/scripts/run-tests.sh" || fail "a green run beside an assume-unchanged file did not run the suite once"
 git update-index --no-assume-unchanged file && git checkout -q -- file
-before="$(runs)"
-pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run beside an assume-unchanged file was recorded"
+runs_once pre_push || fail "a run beside an assume-unchanged file was recorded"
 
 # A suite that removes the changes it started with tested them, not the commit's tree.
 echo h2 > file && git commit -q -am dirty-start
 SUPERMATT_TEST_COMMAND="echo run >> '$TMP/runs'; rm -f leftover"
 echo x > leftover
-sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run that removed its starting changes exited nonzero"
-before="$(runs)"
-pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run that started with uncommitted changes was recorded"
+runs_once sh "$REPO/scripts/run-tests.sh" || fail "a green run that removed its starting changes did not run the suite once"
+runs_once pre_push || fail "a run that started with uncommitted changes was recorded"
 
 # The repository's pre-push job, run by lefthook: it hands git's ref lines to the script, and a push with no record runs
 # the suite whatever files it changes. CI installs no lefthook; the hook only runs where lefthook is installed.
@@ -217,6 +214,12 @@ ORDER="$TMP/order" && export ORDER
 PATH="$REAL_PATH" env -u SUPERMATT_TEST_COMMAND sh "$REPO/scripts/run-tests.sh" > /dev/null 2>&1 || fail "the default suite failed on a green fixture"
 [ "$(cat "$ORDER")" = "shell
 node" ] || fail "the default suite did not run the shell tests, then node: $(cat "$ORDER")"
+# Node's runner runs every JavaScript test file: a failing second one fails the suite, and nothing is recorded.
+printf '%s\n' "import test from 'node:test';" "test('red', () => { throw new Error('red'); });" > tests/b.test.mjs
+git add -A && git commit -q -m red-node
+! PATH="$REAL_PATH" env -u SUPERMATT_TEST_COMMAND sh "$REPO/scripts/run-tests.sh" > /dev/null 2>&1 || fail "a red JavaScript test let the default suite pass"
+! grep -q "^$(git rev-parse 'HEAD^{tree}') " .git/supermatt-test-runs || fail "a red JavaScript run was recorded"
+git rm -q tests/b.test.mjs && git commit -q -m green-node
 echo 'exit 1' > tests/0.test.sh && git add -A && git commit -q -m red-shell
 rm "$ORDER"
 ! PATH="$REAL_PATH" env -u SUPERMATT_TEST_COMMAND sh "$REPO/scripts/run-tests.sh" > /dev/null 2>&1 || fail "a red shell test let the default suite pass"
