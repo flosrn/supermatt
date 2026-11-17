@@ -566,14 +566,42 @@ export function evaluate(state, seen, now) {
   };
 }
 
+export class RateLimited extends Error {
+  constructor(message, retryAt) { super(message); this.retryAt = retryAt; }
+}
+
+const RATE_LIMIT = /rate limit|HTTP 429/i;
+
+// The next permitted request after a refusal: the reset of an exhausted core or GraphQL
+// allowance, and at least a minute, as GitHub asks when a refusal names no reset. The quota
+// endpoint counts against no limit, so reading it costs nothing.
+function retryAfterRefusal(gh, now) {
+  let resources = {};
+  try { resources = JSON.parse(gh(["api", "rate_limit"])).resources ?? {}; } catch { resources = {}; }
+  const resets = [resources.core, resources.graphql].filter((r) => r?.remaining === 0 && Number.isFinite(r.reset)).map((r) => r.reset * 1000);
+  return Math.max(now + 60_000, ...resets);
+}
+
 // The GitHub read happens inside the state transaction: an observation is never applied to
-// state another session advanced after it was taken.
+// state another session advanced after it was taken. A refused read is no observation: it
+// records when GitHub permits the next request, and no snapshot asks before then.
 export function snapshot({ file, gh = realGh, now = Date.now() }) {
-  return update(file, (state) => {
+  const result = update(file, (state) => {
     if (state.pr == null) throw new Error("no PR bound yet: create it, then run bind");
-    const report = evaluate(state, observe(gh, state.repo, state.pr), now);
+    const paused = Date.parse(state.github_pause?.until ?? "");
+    if (paused > now) return { refused: new RateLimited(`GitHub rate limit pause until ${state.github_pause.until}; no request sent`, paused) };
+    let seen;
+    try { seen = observe(gh, state.repo, state.pr); } catch (error) {
+      if (!RATE_LIMIT.test(`${error?.stderr ?? ""} ${error?.message ?? ""}`)) throw error;
+      const until = retryAfterRefusal(gh, now);
+      state.github_pause = { until: new Date(until).toISOString(), at: new Date(now).toISOString() };
+      return { refused: new RateLimited(`GitHub rate limit refused the snapshot; the next permitted request is at ${state.github_pause.until}`, until) };
+    }
+    const report = evaluate(state, seen, now);
     return { ...report, budgets: budgets(state, now), state_file: file };
   });
+  if (result.refused) throw result.refused;
+  return result;
 }
 
 const DISPOSITIONS = ["fixed", "answered", "declined", "no-action", "needs-human"];
@@ -647,6 +675,6 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     console.log(JSON.stringify(main(process.argv.slice(2)), null, 2));
   } catch (error) {
     console.error(error.message);
-    process.exitCode = error instanceof BudgetExhausted ? 3 : 1;
+    process.exitCode = error instanceof BudgetExhausted ? 3 : error instanceof RateLimited ? 4 : 1;
   }
 }

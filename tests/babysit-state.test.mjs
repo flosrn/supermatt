@@ -6,7 +6,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, processStart, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
+import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, processStart, MARKER, RateLimited } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
 // A hook in a linked worktree exports an absolute GIT_DIR, which would aim every git command below at the real repo.
 for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
@@ -112,6 +112,38 @@ function babysat(t, over = {}) {
   const look = (now = NOW) => snapshot({ file: stateFile, gh: h.gh, now });
   return { live, h, stateFile, look };
 }
+
+// gh reports a refused read on stderr; the quota endpoint, which no limit counts, names the reset.
+function refusing(h, quota) {
+  return (args) => {
+    if (args[0] === "api" && args[1] === "rate_limit") { h.calls.push(args); return JSON.stringify({ resources: quota }); }
+    if (args[0] === "api" && args[1] === "graphql") {
+      h.calls.push(args);
+      throw Object.assign(new Error("Command failed: gh api graphql"), { stderr: "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n" });
+    }
+    return h.gh(args);
+  };
+}
+
+test("a rate-limit refusal pauses snapshots until the exhausted allowance resets, sending nothing before", (t) => {
+  const { h, stateFile, look } = babysat(t);
+  const reset = NOW + 30 * 60_000;
+  const refusal = (() => { try { snapshot({ file: stateFile, gh: refusing(h, { core: { remaining: 4000, reset: NOW / 1000 + 60 }, graphql: { remaining: 0, reset: reset / 1000 } }), now: NOW }); } catch (error) { return error; } })();
+  assert.ok(refusal instanceof RateLimited, refusal?.message);
+  assert.equal(refusal.retryAt, reset);
+  assert.match(refusal.message, /2026-10-14T12:30:00.000Z/);
+  const calls = h.calls.length;
+  assert.throws(() => look(reset - 1000), (error) => error instanceof RateLimited && /no request sent/.test(error.message));
+  assert.equal(h.calls.length, calls, "no GitHub request before the reset");
+  assert.equal(look(reset).pr.number, 4);
+});
+
+test("a refusal that names no exhausted allowance waits at least a minute", (t) => {
+  const { h, stateFile, look } = babysat(t);
+  assert.throws(() => snapshot({ file: stateFile, gh: refusing(h, { core: { remaining: 10, reset: NOW / 1000 }, graphql: { remaining: 10, reset: NOW / 1000 } }), now: NOW }), (error) => error.retryAt === NOW + 60_000);
+  assert.throws(() => look(NOW + 59_000), RateLimited);
+  assert.equal(look(NOW + 60_000).pr.number, 4);
+});
 
 test("a branch with no open PR asks for one, and a resume after bind reuses it", async (t) => {
   const dir = stateDir(t);
@@ -894,6 +926,24 @@ test("CLI open refuses a branch with several open PRs and binds none of them", (
   assert.equal(refused.status, 1, refused.stdout);
   assert.match(refused.stderr, /\b40\b.*\b41\b/);
   assert.deepEqual(tree(states), before);
+});
+
+test("CLI snapshot exits 4 on a GitHub rate-limit refusal and names the next permitted request", (t) => {
+  const { bin } = stubGh(t);
+  const { repo } = checkout(t);
+  const opened = JSON.parse(cli(bin, ["open", "--repo", "acme/app", "--pr", "40"], repo).stdout);
+  writeFileSync(join(bin, "gh"), `#!/bin/sh
+case "$1 $2" in
+  "api rate_limit") echo '{"resources":{"graphql":{"remaining":0,"reset":4102444800}}}' ;;
+  *) echo "gh: API rate limit exceeded for user ID 1. (HTTP 403)" >&2; exit 1 ;;
+esac
+`, { mode: 0o755 });
+  const refused = cli(bin, ["snapshot", "--state", opened.stateFile], repo);
+  assert.equal(refused.status, 4, refused.stderr);
+  assert.match(refused.stderr, /next permitted request is at 2100-01-01T00:00:00.000Z/);
+  const paused = cli(bin, ["snapshot", "--state", opened.stateFile], repo);
+  assert.equal(paused.status, 4);
+  assert.match(paused.stderr, /no request sent/);
 });
 
 // Runs one refused CLI call against a state file and checks nothing under its directory changed.
