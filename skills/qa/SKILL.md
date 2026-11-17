@@ -23,7 +23,7 @@ The networkless fallback still reads the repository QA convention below. For any
 
 QA due before merge runs before `code-review`: once those scenarios show the change does what was asked, the review can spend itself on how the code is written and how it fails. Report any required post-deploy QA separately as pending.
 
-QA reports to its caller and leaves the code and the issue tracker as it found them: it files, comments on, and labels no issue, since a fail in unmerged work is the caller's to fix, not a ticket. Scratch state, scenario lists, reports, screenshots, and raw evidence go in `$DIR`, a fresh `mktemp -d` in the OS temporary directory outside the repository. Return the report to the caller with paths to retained evidence there. Saving or committing QA artifacts in the repository requires an explicit user request; callers keep them out of the repository when handing off or shipping the work, though a caller may copy the evidence a report cites to its own durable directory outside the repository. The caller fixes each fail, test-first, and runs QA again.
+QA reports to its caller and leaves the code and the issue tracker as it found them: it files, comments on, and labels no issue, since a fail in unmerged work is the caller's to fix, not a ticket. Scratch state, scenario lists, reports, screenshots, and raw evidence go in `$DIR`, a fresh `mktemp -d` in the OS temporary directory outside the repository. Return the report to the caller with paths to retained evidence there. Saving or committing QA artifacts in the repository requires an explicit user request; callers keep them out of the repository when handing off or shipping the work, though a caller may copy the evidence a report cites to its own durable directory outside the repository. The caller fixes each decided fail, test-first, and runs QA again; for an undecided fail (step 2), it first gets a closed list of accepted and rejected cases for that rule from whoever decides the request.
 
 ## Process
 
@@ -35,7 +35,7 @@ The request is what the change was meant to do: the spec or issue the caller pas
 
 Before writing scenarios, read `docs/agents/qa.md` from the repository root when it exists, and follow the protocols it references for the affected change. This optional convention can define authorized surfaces, accounts and paid commands, budgets, stop rules, forbidden effects, role-play agents, and whether scenarios run before merge or after deploy. Without it, keep this skill's existing defaults. If it exists but cannot be read, report the affected coverage as blocked rather than assuming authorization. Its authorization overrides only the generic live-account blocking rule in step 3, not higher-priority safety rules, required approvals, or execution sandbox boundaries.
 
-For a follow-up with a prior report and its tested commit, inspect the intervening diff. Rerun the earlier fails, scenarios affected by the fix, and one adjacent regression flow. Carry forward unaffected passes and blocked scenarios with their original evidence and tested commit; a gap stays blocked until observed. Expand only where the diff, a new failure, or an explicit repository requirement makes earlier evidence invalid. Without a usable prior report, run the full pass. A test-only or report-only diff with unchanged runtime code and configuration keeps the earlier browser verdict.
+For a follow-up with a prior report and its tested commit, inspect the intervening diff. The caller may also pass closed lists of accepted and rejected cases, each answering an undecided fail of an earlier report for one rule: they are decided expected results for that rule (step 2), and the earlier fail is rerun against its list. Rerun the earlier fails, scenarios affected by the fix, and one adjacent regression flow. Carry forward unaffected passes and blocked scenarios with their original evidence and tested commit; a gap stays blocked until observed. Expand only where the diff, a new failure, or an explicit repository requirement makes earlier evidence invalid. Without a usable prior report, run the full pass. A test-only or report-only diff with unchanged runtime code and configuration keeps the earlier browser verdict.
 
 ### 2. Write the scenarios
 
@@ -48,6 +48,15 @@ A **scenario** is one thing a user does and the result they should then see: the
 - CRUD on each record the change writes: create, read, update, and delete it, and follow the data to every view that shows it and through a restart;
 - a flow: the scenarios chained one after another with no reset between them, the way a user's session runs, entering and leaving each state the change adds;
 - one existing flow that shares the changed code, to catch a regression next to the change.
+
+Give each expected result its **source**, since the caller acts on a fail by where its expected result comes from:
+
+- **Request**: a quote of the spec or issue, a stated example or a closed rule that settles this input.
+- **Caller decision**: a case on a closed list of accepted and rejected cases that the caller passed in for one rule.
+- **Base build**: the base build's observed result, for a regression on a path the request leaves unchanged or for a change meant to keep behavior.
+- **Inference**: anything else, such as product sense, a FEW HICCUPPS oracle (step 4), a platform convention, or a generalisation of an open rule, one that names a property ("names that impersonate staff") without settling which inputs have it.
+
+An expected result from the request, a caller decision, or the base build is **decided**; one that rests only on inference is **undecided**. When the caller passed a closed list for a rule, the scenarios for that rule are exactly the list's cases, each with its listed result: invent no other input for that rule.
 
 Above the scenarios, list the change's invariants under **Never and always**: what must never happen (data lost, a file left half-written, a secret in a log) and what must always hold (the terminal restored, the old data still readable). Check them after every scenario, the unhappy ones most of all.
 
@@ -73,11 +82,11 @@ Run every scenario due at the current stage on an initial pass; on a follow-up, 
 
 When the convention names role-play subagents, the independent QA context writes their briefs from the request and convention, spawns them through the host's subagent mechanism, and judges their raw output against the scenarios and oracles below. Require each player to retain verbatim interactions and command results in `$DIR`; read that evidence yourself rather than accepting the player's verdict. The implementing session neither writes the role-play briefs nor judges the output. If no independent QA context or required player can start, report the affected scenarios as an independence/capability gap rather than having the implementing session fill those roles.
 
-Judge each result with the FEW HICCUPPS oracles as well as the request. A result that matches the request still fails when it contradicts the rest of the product (a sibling command names its flags, keys, or exit codes another way), the program's own claims (`--help`, the README, its error text), or the conventions of its platform and of comparable tools (`NO_COLOR`, `-` for stdin, a 4xx status for a bad request). An error message passes when it names the bad input and what to do next.
+Judge each result with the FEW HICCUPPS oracles as well as the request. A result that matches the request still fails when it contradicts the rest of the product (a sibling command names its flags, keys, or exit codes another way), the program's own claims (`--help`, the README, its error text), or the conventions of its platform and of comparable tools (`NO_COLOR`, `-` for stdin, a 4xx status for a bad request). An error message passes when it names the bad input and what to do next. A fail judged only by these oracles rests on inference unless the request or a caller decision states the same expected result.
 
 A screen that says "Saved" shows only that the program claims the write. Confirm each write at its store: read back the file, the database row, or the API, then restart or reload and read it again.
 
-Record each scenario in `$DIR/scenarios.md` as **pass**, **fail**, or **blocked**, with its evidence: the captured screen, the output, a screenshot path, the error. Evidence is what the tool wrote: redirect or `tee` output into a file in `$DIR` and cite that file, so a retyped summary never stands in for it. A fail also records the steps that reproduce it, the expected result, and the observed one. Before you record a fail, spend a few steps on it:
+Record each scenario in `$DIR/scenarios.md` as **pass**, **fail**, or **blocked**, with its evidence: the captured screen, the output, a screenshot path, the error. Evidence is what the tool wrote: redirect or `tee` output into a file in `$DIR` and cite that file, so a retyped summary never stands in for it. A fail also records the steps that reproduce it, the expected result with its source (step 2), and the observed one, and is marked **undecided** when that source is inference, **decided** otherwise. Before you record a fail, spend a few steps on it:
 
 - **Isolate**: cut the steps to the fewest that still fail.
 - **Maximize**: follow the same path to a worse outcome, such as a crash or lost data.
@@ -86,7 +95,7 @@ Record each scenario in `$DIR/scenarios.md` as **pass**, **fail**, or **blocked*
 
 A fail ends that scenario, not the run.
 
-Once every scenario due at this stage has a status, run one exploratory charter on the riskiest part of the change: "Explore <target> with <resources> to discover <information>", for about twenty actions, within the same authorization and timing limits. On a follow-up, keep exploration within the fix and its adjacent regression flow. Add each problem it finds to `$DIR/scenarios.md` as a new scenario with its status.
+Once every scenario due at this stage has a status, run one exploratory charter on the riskiest part of the change: "Explore <target> with <resources> to discover <information>", for about twenty actions, within the same authorization and timing limits. On a follow-up, keep exploration within the fix and its adjacent regression flow. Add each problem it finds to `$DIR/scenarios.md` as a new scenario with its status and the source of its expected result. Exploration invents no input for a rule the caller closed with a list; when another scenario still meets an input outside that list that looks wrong under the rule, record it as an undecided fail, not a decided one.
 
 Done when every scenario due at this stage has a status and its evidence, and every post-deploy obligation is recorded separately.
 
@@ -94,7 +103,7 @@ Done when every scenario due at this stage has a status and its evidence, and ev
 
 Stop everything you started: each tmux session with `tui stop qa-<name>` (the run's tmux server exits with its last session), then servers and browser tabs. Keep the evidence files the report cites in `$DIR`, and delete the remaining scratch state. Use literal paths, typed out as the earlier call printed them: an `rm -rf` on a variable or a command substitution, such as `"$(cat /tmp/qa-dir)"`, is denied. Done when `tmux ls` lists none of your sessions and `$DIR` holds nothing but those evidence files. A cleanup command that fails or is blocked goes in the report as leftover state, with the command to remove it.
 
-Report one line per scenario (status, what it checked, the evidence or its path), then every fail in full, then:
+Report one line per scenario (status, what it checked, the evidence or its path), then every fail in full, each with the source of its expected result (the quoted request text, the caller's list, the base build, or the inference) and its **decided** or **undecided** marker, then:
 
 - **Not covered**: what no scenario tested and why, such as a platform, a browser, or a terminal you did not run.
 - **Concerns**: what is neither a pass nor a fail but looked wrong, such as a slow first load or a stray warning. A result that contradicts a sentence of the request is a fail, also when that sentence calls the path unchanged or out of scope.
@@ -102,7 +111,7 @@ Report one line per scenario (status, what it checked, the evidence or its path)
 
 Then the verdict:
 
-- Any fail: **Fails QA**.
+- Any fail: **Fails QA**, listing the undecided fails apart from the decided ones.
 - Otherwise, any blocked scenario: **Passes with gaps**, naming each blocked scenario and what it needs.
 - Otherwise: **Passes QA**.
 

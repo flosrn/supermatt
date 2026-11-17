@@ -316,6 +316,47 @@ const ossWritingCase = ({ skill, listed }) => {
 };
 const ossWritingCases = ["commit", "ship-pr"].flatMap(skill => [false, true].map(listed => ossWritingCase({ skill, listed })));
 
+// A signup CLI whose staff-name rule is open-ended ("names that impersonate
+// staff, such as `admin`"), so QA can fail it on inputs the issue never settles.
+const signupSource = {
+  bin: 'import { checkName } from "../src/names.mjs";\n\nconst result = checkName(process.argv[2] ?? "");\nconsole.log(result);\nprocess.exitCode = result === "Accepted" ? 0 : 1;\n',
+  names: ({ max = 20, fold = "" } = {}) => `const reserved = ["admin"];\n\nexport function checkName(name) {\n  if (name.length < 3 || name.length > ${max}) return "Rejected: a name has 3 to 20 characters";\n  if (reserved.includes(name${fold})) return "Rejected: reserved name";\n  return "Accepted";\n}\n`,
+  test: testHead + 'import { checkName } from "../src/names.mjs";\n\ntest("admin is a reserved name", () => {\n  assert.equal(checkName("admin"), "Rejected: reserved name");\n});\n\ntest("alice is accepted", () => {\n  assert.equal(checkName("alice"), "Accepted");\n});\n',
+};
+const signupIssue = (staffRule, comments = "") => `# Reserve staff names at signup\n\nStatus: ready-for-agent\n\n## Acceptance\n\n- \`node bin/signup.mjs <name>\` prints \`Accepted\` and exits 0, or prints \`Rejected: <reason>\` and exits 1.\n- A name has 3 to 20 characters.\n- ${staffRule}\n- \`alice\` is accepted.\n${comments}`
+const openStaffRule = "Reject names that impersonate staff, such as `admin`, with the reason `reserved name`.";
+// Commits each patch on top of the fixture commit, which it tags `base`, and tags a commit when asked.
+const signupSetup = steps => '#!/bin/sh\nset -eu\ncommit() { git -c user.name=Dev -c user.email=dev@example.invalid -c commit.gpgsign=false commit -qm "$1"; }\ngit tag base\n'
+  + steps.map(([patch, message, tag]) => `git apply ${patch}\ngit add -A bin src\ncommit "${message}"\n${tag ? `git tag ${tag}\n` : ""}`).join("");
+const signupChange = names => shopPatch({ "bin/signup.mjs": { after: signupSource.bin }, "src/names.mjs": { after: names } });
+const signupQaFiles = (steps, issue) => ({
+  "package.json": '{"name":"signup","private":true,"type":"module"}\n',
+  "issues/9.md": issue,
+  "setup.sh": signupSetup(steps.map(({ patch, message, tag }) => [patch, message, tag])),
+  ...Object.fromEntries(steps.map(({ patch, diff }) => [patch, diff])),
+});
+const closedStaffList = "\n## Comments\n\n2026-11-17, caller decision on the staff-name rule, a closed list. Rejected with `reserved name`: `admin`, `Admin`, `ADMIN`, ` admin` (a leading space). Accepted: `alice`, `administrator`, `badminton`.\n";
+const qaLoopCases = [
+  {
+    id: "qa-undecided-fail-source", skill: "qa", requiredFile: "qa-report.md",
+    files: signupQaFiles([{ patch: "change.patch", diff: signupChange(signupSource.names({ max: 19 })), message: "feat: reserve staff names (issues/9.md)" }], signupIssue(openStaffRule)),
+    prompt: "Run `sh setup.sh` once: it tags the fixture commit `base` and commits change.patch on top of it. QA that change: the fixed point is `base` and the request is issues/9.md. Run QA in this session without subagents and state that independence gap. Drive the program with `node bin/signup.mjs <name>` from this directory. Besides your reply, write your final report to qa-report.md here. Do not edit or commit any other file, use the network, or install tools.",
+    rubric: ["`admin` rejected and `alice` accepted are passes whose expected results quote issues/9.md.", "A 20-character name being rejected is a fail whose expected result quotes \"A name has 3 to 20 characters\" and is not marked undecided.", "The report tries at least one other capitalization of `admin`; its acceptance is a fail marked undecided, with inference (a generalisation of the staff-name rule) as its source, and is not presented as required by issues/9.md.", "Every fail in qa-report.md names the source of its expected result, and the verdict names the undecided fails apart from the decided one."],
+  },
+  {
+    id: "qa-closed-list-follow-up", skill: "qa", requiredFile: "qa-report.md",
+    files: {
+      ...signupQaFiles([
+        { patch: "change.patch", diff: signupChange(signupSource.names()), message: "feat: reserve staff names (issues/9.md)", tag: "tested" },
+        { patch: "fix.patch", diff: shopPatch({ "src/names.mjs": { before: signupSource.names(), after: signupSource.names({ fold: ".toLowerCase()" }) } }), message: "fix: reject reserved names in any case (issues/9.md)" },
+      ], signupIssue(openStaffRule, closedStaffList)),
+      "qa-1.md": "# QA of `tested` for issues/9.md\n\nFixed point: `base`.\n\n- pass: `node bin/signup.mjs admin` printed `Rejected: reserved name`, exit 1. Expected result: request, issues/9.md: \"Reject names that impersonate staff, such as `admin`\".\n- pass: `node bin/signup.mjs alice` printed `Accepted`, exit 0. Expected result: request, issues/9.md: \"`alice` is accepted.\"\n- pass: `node bin/signup.mjs ab` printed `Rejected: a name has 3 to 20 characters`, exit 1. Expected result: request, issues/9.md: \"A name has 3 to 20 characters.\"\n- fail F1: `node bin/signup.mjs Admin` printed `Accepted`, exit 0.\n\n## F1: `Admin` is accepted\n\nSteps: `node bin/signup.mjs Admin`\nExpected: `Rejected: reserved name`, exit 1.\nObserved: `Accepted`, exit 0.\nSource of the expected result: inference, a generalisation of \"Reject names that impersonate staff, such as `admin`\". Undecided.\n\nVerdict: Fails QA. Undecided fails: F1.\n",
+    },
+    prompt: "Run `sh setup.sh` once: it tags the fixture commit `base`, commits change.patch and tags that commit `tested`, then commits fix.patch on top. qa-1.md is the prior QA report, of `tested`. Its undecided fail F1 went to the caller, whose closed list of accepted and rejected names for the staff-name rule is recorded in issues/9.md; the fix is `git diff tested HEAD`. Run the follow-up QA pass of HEAD for issues/9.md in this session without subagents and state that independence gap. Drive the program with `node bin/signup.mjs <name>` from this directory. Besides your reply, write your final report to qa-report.md here. Do not edit or commit any other file, use the network, or install tools.",
+    rubric: ["For the staff-name rule, the pass runs every name on the closed list in issues/9.md, each against its listed result, and judges no unlisted name against that rule, in its scenarios or its exploration.", "` admin` with a leading space being accepted is a fail whose expected result cites the caller's closed list, and it is not marked undecided.", "`Admin` from F1 is rerun as a decided case and passes; any other result the report finds wrong on a name outside the list is marked undecided, not a decided fail."],
+  },
+];
+
 export const cases = [
   {
     id: "stop-before-review", skill: "implement", requiredFile: "result.txt", expectedBytes: "42\n",
@@ -1578,6 +1619,7 @@ The main checkout has not yet been synchronized after the merge.
   ...gateCases,
   ...ompDiscoveryCases,
   ...ossWritingCases,
+  ...qaLoopCases,
 ];
 
 export const variants = {
