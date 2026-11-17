@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 // Node shuts down the write side of the empty stdin socketpair and the seccomp filter refuses that shutdown(2) (#107, #111).
 // Every synchronous spawn in shipped code therefore either ignores or inherits stdin, or passes `input`, in an options
 // object written at the call: options held in a variable stay unproven, since a mutation or an alias can pipe stdin again.
+// The guard reads source text, not values: an `input` given as a variable, property or call result is trusted to hold
+// data, because only running the code could show it evaluates to null or undefined.
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const shippedRoots = ["skills", "references", "scripts"];
@@ -117,24 +119,47 @@ function spawnerNames(code) {
 
 const escaped = (name) => name.replace(/\$/g, "\\$");
 
-const absent = /^(?:null|undefined|void\s+0)$/;
+// A quoted string or template literal that is the whole value, and its text.
+function stringLiteral(value) {
+  const quote = value[0];
+  if (!"'\"`".includes(quote) || value.length < 2) return null;
+  let i = 1;
+  for (; i < value.length && value[i] !== quote; i++) if (value[i] === "\\") i++;
+  return i === value.length - 1 ? value.slice(1, -1) : null;
+}
 
-// Whether an options literal's own top-level properties ignore or inherit stdin, or feed it an `input` that is
-// not literally absent. A later spread may override either, so it leaves stdin unproven.
+const detaches = (value) => {
+  const text = stringLiteral(value);
+  if (text !== null) return text === "ignore" || text === "inherit";
+  if (!value.startsWith("[") || closing(value, 0) !== value.length) return false;
+  const [first = ""] = args(value.slice(1, -1));
+  return ["ignore", "inherit"].includes(stringLiteral(first));
+};
+
+// A string or template literal, or a variable, property or call result: what a caller passes as data. Anything
+// else (null, undefined, void, parentheses, operators) may evaluate to nothing, so it proves no input.
+const feeds = (value) =>
+  stringLiteral(value) !== null ||
+  (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(|$)/.test(value) &&
+    !/^(?:null|undefined|void)\b/.test(value) &&
+    (!value.includes("(") || closing(value, value.indexOf("(")) === value.length));
+
+// Whether an options literal's own top-level properties ignore or inherit stdin, or feed it an input. Only plain
+// `key: value` and shorthand properties are read: a spread, computed key, accessor or method may redefine stdio or
+// input, so it leaves both unproven until a later plain property settles them.
 function stdinIsSafe(literal) {
   let detached = false;
   let fed = false;
   for (const part of args(literal.slice(1, -1))) {
-    if (part.startsWith("...")) {
+    const property = /^(?:([A-Za-z_$][\w$]*)|(["'])([^"']*)\2)\s*(?::\s*([\s\S]*))?$/.exec(part);
+    if (!property) {
       detached = fed = false;
       continue;
     }
-    const property = /^(?:([A-Za-z_$][\w$]*)|(["'])([^"']*)\2)\s*(?::\s*([\s\S]*))?$/.exec(part);
-    if (!property) continue;
     const key = property[1] ?? property[3];
-    const value = property[4] ?? key;
-    if (key === "input") fed = !absent.test(value.trim());
-    else if (key === "stdio") detached = detachedStdin.test(value.trim());
+    const value = (property[4] ?? key).trim();
+    if (key === "input") fed = feeds(value);
+    else if (key === "stdio") detached = detaches(value);
   }
   return detached || fed;
 }
@@ -220,4 +245,26 @@ test("only the options' own top-level stdio or input counts, and aliases are cal
     at(2, "execFileSync"), at(3, "execFileSync"), at(6, "execFileSync"), at(7, "run"), at(10, "spawnSync"), at(12, "execFileSync"),
     at(13, "execFileSync"), at(14, "execFileSync"),
   ]);
+});
+
+test("only a plain literal stdio or a present input value proves stdin, whatever else the literal holds", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "spawn-stdin-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = join(root, "forms.mjs");
+  writeFileSync(file, [
+    'execFileSync("git", [], { input: (null) });',
+    'execFileSync("git", [], { input: void(0) });',
+    'execFileSync("git", [], { input: void 1 });',
+    'execFileSync("git", [], { input: null ?? undefined });',
+    'execFileSync("git", [], { stdio: ["ignore", "pipe", "pipe"], ["stdio"]: "pipe" });',
+    'execFileSync("git", [], { input: "x", get input() { return null; } });',
+    'execFileSync("git", [], { stdio: "ignore", stdio() {} });',
+    'execFileSync("git", [], { stdio: ["ignore"].map(() => "pipe") });',
+    'execFileSync("cat", [], { input: body.text });',
+    'execFileSync("cat", [], { input: render(x) });',
+    'execFileSync("cat", [], { input: `a${b}` });',
+    'execFileSync("git", [], { stdio: `inherit` });',
+  ].join("\n"));
+  const at = (line) => `${relative(repo, file)}:${line}: execFileSync`;
+  assert.deepEqual(pipedStdinSpawns([root]), [1, 2, 3, 4, 5, 6, 7, 8].map(at));
 });
