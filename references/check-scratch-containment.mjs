@@ -22,8 +22,6 @@ function entries(path) {
   }
 }
 
-
-
 function head(file) {
   const buffer = Buffer.alloc(4096);
   const descriptor = openSync(file, "r");
@@ -68,6 +66,35 @@ function allowedSystemTarget(path, home) {
   }
 }
 
+const SITE_DIRECTORIES = ["site-packages", "dist-packages"];
+
+// Python's site module reads a .pth file in a site directory with universal newlines, skips it unless it is a
+// regular file, and adds each path line to sys.path resolved against the site directory as it was named.
+function checkPathFile(file, site, root, home) {
+  if (!statSync(file).isFile()) return;
+  for (const line of readFileSync(file, "utf8").split(/\r\n|\r|\n/)) {
+    const value = line.trim();
+    if (!value || value.startsWith("#") || /^import[ \t]/.test(value)) continue;
+    const target = canonicalTarget(resolve(site, value));
+    if (outside(root, target) && !allowedSystemTarget(target, home)) {
+      throw new Error(`.pth path escapes scratch: ${file} -> ${target}; if the trigger needs no Python, remove the copied virtualenv containing this entry; otherwise rebuild the environment inside scratch and force-reinstall the editable package from the scratch copy. Rerun the containment check.`);
+    }
+  }
+}
+
+// The walk does not enter a linked directory, so a site directory linked inside scratch has its .pth files read
+// here, each link among them checked before its content is read.
+function checkLinkedSite(site, root, home) {
+  for (const entry of entries(site).filter((item) => (item.isFile() || item.isSymbolicLink()) && item.name.endsWith(".pth"))) {
+    const file = join(site, entry.name);
+    if (entry.isSymbolicLink()) {
+      const target = linkTarget(file);
+      if (outside(root, target) && !lockedSystemFile(target, home)) throw new Error(`symlink escapes scratch: ${file} -> ${target}`);
+    }
+    checkPathFile(file, site, root, home);
+  }
+}
+
 const [directory, ...extra] = process.argv.slice(2);
 if (!directory || extra.length) {
   console.error("Usage: check-scratch-containment.mjs <scratch-directory>");
@@ -91,25 +118,21 @@ if (!directory || extra.length) {
           if (outside(root, target) && !lockedSystemFile(target, home)) {
             throw new Error(`symlink escapes scratch: ${path} -> ${target}`);
           }
+          if (SITE_DIRECTORIES.includes(entry.name) && statSync(target).isDirectory()) checkLinkedSite(path, root, home);
         } else if (entry.isDirectory()) {
           pending.push(path);
         } else if (entry.name === "pyvenv.cfg" && entry.isFile()) {
           checkScripts(current, root, home);
         }
-        // Python's site module skips a .pth it cannot read as a file, such as a link to a directory.
-        if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".pth") &&
-            ["site-packages", "dist-packages"].includes(basename(current)) && statSync(path).isFile()) {
-          for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
-            const value = line.trim();
-            if (!value || value.startsWith("#") || /^import[ \t]/.test(value)) continue;
-            const target = canonicalTarget(resolve(current, value));
-            if (outside(root, target) && !allowedSystemTarget(target, home)) {
-              throw new Error(`.pth path escapes scratch: ${path} -> ${target}; if the trigger needs no Python, remove the copied virtualenv containing this entry; otherwise rebuild the environment inside scratch and force-reinstall the editable package from the scratch copy. Rerun the containment check.`);
-            }
-          }
+        if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".pth") && SITE_DIRECTORIES.includes(basename(current))) {
+          checkPathFile(path, current, root, home);
         }
         if ((entry.isFile() || entry.isSymbolicLink()) && entry.name === "direct_url.json") {
-          const { url } = JSON.parse(readFileSync(path, "utf8"));
+          const record = JSON.parse(readFileSync(path, "utf8"));
+          // An archive install (a wheel or sdist) copied its files into site-packages, so its URL is provenance
+          // only; a directory install, editable or not, can still import from where its URL points.
+          if (record.archive_info && !record.dir_info) continue;
+          const { url } = record;
           if (typeof url === "string" && url.startsWith("file:")) {
             const target = canonicalTarget(fileURLToPath(url));
             if (outside(root, target) && !allowedSystemTarget(target, home)) {

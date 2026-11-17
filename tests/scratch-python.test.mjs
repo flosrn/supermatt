@@ -370,6 +370,29 @@ test("the helper checks the whole scratch before any virtualenv executes startup
   assert.deepEqual(snapshot(source), before);
 });
 
+// uv's runtimes keep the direct_url.json that pip wrote when it was installed from a temporary wheel. A shell
+// script stands in for the runtime's interpreter, printing the environment it was started from as sys.prefix.
+test("the helper prepares a copied runtime that holds pip's install record of a wheel outside scratch", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "scratch-python-archive-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const runtime = join(root, "runtime");
+  mkdirSync(join(runtime, "bin"), { recursive: true });
+  writeFileSync(join(runtime, "bin/python3.12"), "#!/bin/sh\ncd \"$(dirname \"$0\")/..\" && pwd -P\n", { mode: 0o755 });
+  const record = join(runtime, "lib/python3.12/site-packages/pip-26.2.2.dist-info");
+  mkdirSync(record, { recursive: true });
+  const wheel = pathToFileURL(join(root, "tmpovtlqzoq/pip-26.2.2-py3-none-any.whl")).href;
+  writeFileSync(join(record, "direct_url.json"), JSON.stringify({ archive_info: { hash: "sha256=fd7f" }, url: wheel }));
+  const source = join(root, "source");
+  mkdirSync(join(source, ".venv/bin"), { recursive: true });
+  writeFileSync(join(source, ".venv/pyvenv.cfg"), `home = ${join(runtime, "bin")}\n`);
+  symlinkSync(join(runtime, "bin/python3.12"), join(source, ".venv/bin/python"));
+  const scratch = copy(source, join(root, "scratch"));
+  const result = prepare(source, scratch);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /copied runtime .*runtime -> \.venv\/\.scratch-python\/runtime/);
+  assert.ok(existsSync(join(scratch, ".venv/.scratch-python/runtime/lib/python3.12/site-packages/pip-26.2.2.dist-info/direct_url.json")));
+});
+
 test("a runtime copy left by an interrupted run is replaced by a complete one", needsPython, (t) => {
   const { root, source } = fixture(t) ?? {};
   if (!source) return;
