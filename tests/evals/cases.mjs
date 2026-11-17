@@ -296,15 +296,16 @@ const ossWritingCase = ({ skill, listed }) => {
       "host/skills.json": JSON.stringify({ skills: listing }, null, 2) + "\n",
       "host/skills/pr/SKILL.md": "---\nname: pr\ndescription: Write pull request bodies.\n---\n\nWrite the body as a `## Summary` section with one bullet per change, then a `## Test plan` section.\n",
       "host/skills/tdd/SKILL.md": "---\nname: tdd\ndescription: Test-first development.\n---\n\nWrite a failing test before the code.\n",
+      ...(shipping ? { "host/prepare-shipping.sh": "#!/bin/sh\nset -eu\ngit update-ref refs/remotes/origin/fixture HEAD\ngit symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/fixture\n" } : {}),
       ...(listed ? { "host/skills/oss-writing/SKILL.md": "---\nname: oss-writing\ndescription: Wording for commit messages and pull requests.\n---\n\nWrite the Conventional Commit description and any pull request title without articles (a, an, the). End any pull request body with the line `Wording: plain.`\n" } : {}),
     },
     prompt: `host/skills.json is the host's list of available skills for this run, in place of any other skill list: a skill is available only when it is listed there, and you load one by reading the SKILL.md at its listed path in full. The user's pending change is a new file docs/usage.md holding exactly the text of change.txt: create it, then ${shipping
-      ? "apply only steps 3, 4, 5 and 7 of the skill to ship it. In step 7, write the pull request title and body you would pass to `gh pr create` into transcript.md instead of running it. Do not push, and do not run gh."
+      ? "prepare the offline shipping fixture by running `sh host/prepare-shipping.sh` (the local default branch is fixture; the script records its current commit as origin/fixture and origin/HEAD without network access), then apply only steps 3, 4, 5 and 7 of the skill to ship it. In step 7, write the pull request title and body you would pass to `gh pr create` into transcript.md instead of running it. Do not push, and do not run gh."
       : "apply the skill to commit it."} After the commit, write transcript.md and leave it uncommitted: list, in order, every skill you loaded or tried to load and how${shipping ? ", then the pull request title and body" : ""}.`,
     rubric: [
       listed
         ? `Before writing the commit subject, the trace reads host/skills/oss-writing/SKILL.md, and the commit description${shipping ? " and the pull request title carry" : " carries"} no article (a, an, the).`
-        : "No command or tool call in the trace reads, lists, searches for, or invokes `oss-writing` (no cat, ls, find, rg, or skill loader call naming it), and transcript.md records no attempt to load it.",
+        : "Reading or searching only the authoritative host/skills.json inventory to decide whether oss-writing is listed is allowed. Outside that inventory, no command or tool call reads, lists, searches for, or invokes `oss-writing` (no cat, ls, find, rg, or skill loader call probing for it), and transcript.md records no attempt to load it.",
       shipping
         ? "It switches to a new `type/kebab-description` branch before committing, commits docs/usage.md with a Conventional Commit subject, and pushes nothing."
         : "docs/usage.md is committed on the current branch with a Conventional Commit subject.",

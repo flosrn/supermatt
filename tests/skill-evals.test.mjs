@@ -88,6 +88,32 @@ test("corpus selection fails closed and each behavior has a review rubric", () =
   }
 });
 
+test("optional wording shipping fixtures can complete the default-branch transition", t => {
+  for (const id of ["ship-pr-oss-writing-unlisted", "ship-pr-oss-writing-listed"]) {
+    const root = mkdtempSync(join(tmpdir(), "supermatt-wording-shipping-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const item = cases.find(c => c.id === id);
+    for (const [path, content] of Object.entries(item.files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
+    const git = args => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+    git(["init", "-q", "-b", "fixture"]);
+    git(["add", "."]);
+    git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]);
+    const initial = git(["rev-parse", "HEAD"]).trim();
+    if (existsSync(join(root, "host/prepare-shipping.sh"))) {
+      execFileSync("sh", ["host/prepare-shipping.sh"], { cwd: root });
+    }
+    git(["switch", "-q", "-c", "docs/notes-usage"]);
+    const reset = spawnSync("git", ["branch", "-f", "fixture", "origin/fixture"], { cwd: root, encoding: "utf8" });
+    assert.equal(reset.status, 0, `${id}: ${reset.stderr}`);
+    assert.equal(git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).trim(), "origin/fixture");
+    assert.equal(git(["rev-parse", "fixture"]).trim(), initial);
+    assert.equal(git(["branch", "--show-current"]).trim(), "docs/notes-usage");
+  }
+});
+
 test("redaction covers explicit credentials and common token assignments", () => {
   const text = 'Authorization: Bearer fake-token\napi_key="fake-key"\n{"access_token":"json-token"}\nprivate-secret';
   assert.doesNotMatch(redact(text, ["private-secret"]), /fake-token|fake-key|json-token|private-secret/);
