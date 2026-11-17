@@ -15,6 +15,16 @@ set -eu
 cd "$(git rev-parse --show-toplevel)"
 command="${SUPERMATT_TEST_COMMAND:-for t in tests/*.test.sh; do sh \"\$t\" || exit 1; done && node --test tests/*.test.mjs}"
 record="$(git rev-parse --path-format=absolute --git-common-dir)/supermatt-test-runs"
+
+if [ "${1:-}" = --pre-push ]; then
+  refs="$(cat)"
+  # The second field of each line is the pushed commit, all zeros when the line deletes a ref.
+  if [ -n "$refs" ] && ! printf '%s\n' "$refs" | cut -d ' ' -f 2 | grep -q '[^0]'; then
+    echo "run-tests: the push only deletes refs: skipping the suite."
+    exit 0
+  fi
+fi
+
 node="$(node --version)"
 key="$node $(printf '%s' "$command" | git hash-object --stdin)"
 # Succeeds when tree $1 already passed with this command and node version.
@@ -24,16 +34,16 @@ tree="$(git rev-parse 'HEAD^{tree}')"
 head="$(git rev-parse HEAD)"
 
 if [ "${1:-}" = --pre-push ]; then
-  refs=
   missing=
   elsewhere=
   while read -r _ sha ref _; do
-    refs=1
     case "$sha" in *[!0]*) ;; *) continue ;; esac
     [ "$(git rev-parse "$sha^{commit}" 2>/dev/null)" = "$head" ] || elsewhere="$elsewhere $ref"
     pushed="$(git rev-parse "$sha^{tree}" 2>/dev/null)" || pushed=
     recorded "$pushed" || missing=1
-  done
+  done <<EOF
+$refs
+EOF
   if [ -n "$refs" ] && [ -z "$missing" ]; then
     echo "run-tests: every pushed tree already passed: skipping the suite."
     exit 0

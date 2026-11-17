@@ -134,6 +134,10 @@ case "$out" in *refs/heads/dest*) ;; *) fail "pre-push did not name the destinat
 before="$(runs)"
 printf '(delete) %s refs/heads/gone %s\n' "$zero" "$untested" | sh "$REPO/scripts/run-tests.sh" --pre-push > /dev/null \
   && [ "$(runs)" = "$before" ] || fail "a deletion-only push ran the suite"
+deletion="(delete) $zero refs/heads/gone $untested"
+echo "$deletion" | FAKE_NODE_VERSION= sh "$REPO/scripts/run-tests.sh" --pre-push > /dev/null 2>&1 || fail "a deletion-only push needed node"
+git init -q -b main "$TMP/unborn"
+(cd "$TMP/unborn" && echo "$deletion" | sh "$REPO/scripts/run-tests.sh" --pre-push > /dev/null 2>&1) || fail "a deletion-only push needed a first commit"
 
 # An untracked file the suite may read keeps the run unrecorded, even when status is configured to hide untracked files.
 echo j > file && git commit -q -am hidden-untracked
