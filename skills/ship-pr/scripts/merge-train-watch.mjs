@@ -516,10 +516,12 @@ function observe(options, deps, schedule, observer) {
   return { viewer, tracked, queue };
 }
 
-// A short digest of the local gh credential: consumers compare theirs with the reader's without
-// any network request, so one principal's observations are never served to another.
+// A short digest of the GitHub host and the local gh credential for it: consumers compare theirs
+// with the reader's without any network request, so one principal's observations are never
+// served to another account, token or host.
 function credentialOf(deps) {
-  try { return createHash("sha256").update(deps.exec("gh", ["auth", "token"]).trim()).digest("hex").slice(0, 16); }
+  const host = deps.env.GH_HOST?.trim() || "github.com";
+  try { return createHash("sha256").update(`${host}\n${deps.exec("gh", ["auth", "token"]).trim()}`).digest("hex").slice(0, 16); }
   catch { return null; }
 }
 

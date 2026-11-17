@@ -476,6 +476,14 @@ test("observations read with other GitHub credentials are refused to a consumer,
   await assert.rejects(f.call("wait", ["--pr", "7", "--for", "change", "--after", "0000000000000000"], clock(f).overrides), /read with other GitHub credentials/);
 });
 
+test("observations read on one GitHub host are refused to a session pointed at another host", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  await f.watch();
+  await assert.rejects(f.call("status", ["--pr", "7"], { env: { ...f.env, GH_HOST: "ghe.example.test" } }), /read with other GitHub credentials/);
+  assert.equal(f.world.outputs.length, 0);
+});
+
 test("a missing observation never satisfies a wait: it reports unknown state and times out instead of succeeding", async (t) => {
   const f = fixture(t);
   f.world.comments[7] = [[]];
