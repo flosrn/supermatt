@@ -360,7 +360,7 @@ test("a red check on the current head is delivered within one poll, even without
     const f = fixture(t);
     await f.register();
     f.world.comments[7] = kind === "held" ? [[comment("held", CANDIDATE, 2)]] : [[]];
-    f.world.rollups[7] = rollup([checkRun("CR_ok", "SUCCESS"), checkRun("CR_wait", null), red]);
+    f.world.rollups[7] = rollup([checkRun("CR_ok", "SUCCESS", { name: "build" }), checkRun("CR_wait", null, { name: "lint" }), red]);
     const result = await f.watch();
     assert.equal(result.results.length, 1, kind);
     const [event] = result.results;
@@ -405,6 +405,52 @@ test("a failed check is delivered once per check run, a failed rerun is new, and
   f.world.rollups[7] = rollup([checkRun("CR_3", "FAILURE")], NEXT);
   assert.deepEqual((await f.watch()).results, []);
   assert.equal(Object.keys(f.ledger().events).length, 2);
+});
+
+test("the train's own cancelled run is not a head check, under the default or a configured train name", async (t) => {
+  for (const [name, extra] of [["Merge Train", []], ["Ship Queue", ["--train-check-name", "Ship Queue"]]]) {
+    const f = fixture(t);
+    await f.register();
+    f.world.comments[7] = [[]];
+    const train = { checkSuite: { workflowRun: { workflow: { name } } }, startedAt: "2026-01-01T00:05:00Z" };
+    f.world.rollups[7] = rollup([checkRun("CR_1", "SUCCESS"), checkRun("CR_train", "CANCELLED", { name: "merge", ...train }), status("SC_train", "ERROR", { context: name })]);
+    const result = await f.watch(extra);
+    assert.deepEqual(result.results, [], name);
+    assert.equal(f.world.messages.length + f.world.notifications.length, 0, name);
+  }
+});
+
+test("a red run superseded by a passing rerun of the same check delivers nothing", async (t) => {
+  const f = fixture(t);
+  await f.register();
+  f.world.comments[7] = [[]];
+  const workflow = { checkSuite: { workflowRun: { workflow: { name: "Validate" } } } };
+  f.world.rollups[7] = rollup([
+    checkRun("CR_new", "SUCCESS", { ...workflow, startedAt: "2026-01-01T00:10:00Z" }),
+    checkRun("CR_old", "FAILURE", { ...workflow, startedAt: "2026-01-01T00:00:00Z" }),
+    status("SC_new", "SUCCESS", { createdAt: "2026-01-01T00:10:00Z" }),
+    status("SC_old", "ERROR", { createdAt: "2026-01-01T00:00:00Z" }),
+  ]);
+  const result = await f.watch();
+  assert.deepEqual(result.results, []);
+  assert.equal(f.world.messages.length + f.world.notifications.length, 0);
+});
+
+test("the latest run of a check still delivers when it is red, apart from same-named checks of other workflows", async (t) => {
+  const f = fixture(t);
+  await f.register();
+  f.world.comments[7] = [[]];
+  const workflow = (name) => ({ checkSuite: { workflowRun: { workflow: { name } } } });
+  f.world.rollups[7] = rollup([
+    checkRun("CR_new", "FAILURE", { ...workflow("Validate"), startedAt: "2026-01-01T00:10:00Z" }),
+    checkRun("CR_old", "SUCCESS", { ...workflow("Validate"), startedAt: "2026-01-01T00:00:00Z" }),
+    checkRun("CR_other", "SUCCESS", { ...workflow("Release"), startedAt: "2026-01-01T00:20:00Z" }),
+  ]);
+  const result = await f.watch();
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0].type, "check-failure");
+  assert.deepEqual(result.results[0].checks.map((check) => check.id), ["CR_new"]);
+  assert.equal(f.world.messages.length, 1);
 });
 
 test("unreadable, failed or truncated check rollups fail visibly", async (t) => {

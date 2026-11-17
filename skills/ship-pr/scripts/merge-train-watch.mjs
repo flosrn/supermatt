@@ -16,10 +16,11 @@ const ALIAS = /^[a-z][a-z0-9_-]{0,31}$/;
 const RED = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"]);
 const ROLLUP = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) {
   commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) { pageInfo { hasNextPage } nodes { __typename
-  ... on CheckRun { id name conclusion detailsUrl } ... on StatusContext { id context state targetUrl } } } } } } } } } }`;
+  ... on CheckRun { id name conclusion detailsUrl startedAt completedAt checkSuite { workflowRun { workflow { name } } } }
+  ... on StatusContext { id context state targetUrl createdAt } } } } } } } } } }`;
 const herdr = fileURLToPath(new URL("../../orchestrate/scripts/tern-herdr.mjs", import.meta.url));
 const notifier = fileURLToPath(new URL("../../orchestrate/scripts/tern-notify.mjs", import.meta.url));
-const usage = "merge-train-watch.mjs register --repo OWNER/REPO --train-login LOGIN --state DIR --pr N [--owner BLOCK] [--coordinator BLOCK] [--owner-agent NAME] [--coordinator-agent NAME]\nmerge-train-watch.mjs watch --repo OWNER/REPO --train-login LOGIN --state DIR [--coordinator BLOCK] [--coordinator-agent NAME] [--interval 60] [--once] [--dry-run] [--until-event]";
+const usage = "merge-train-watch.mjs register --repo OWNER/REPO --train-login LOGIN --state DIR --pr N [--owner BLOCK] [--coordinator BLOCK] [--owner-agent NAME] [--coordinator-agent NAME]\nmerge-train-watch.mjs watch --repo OWNER/REPO --train-login LOGIN --state DIR [--coordinator BLOCK] [--coordinator-agent NAME] [--train-check-name NAME] [--interval 60] [--once] [--dry-run] [--until-event]";
 
 function run(command, args, env) {
   const result = spawnSync(command, args, { env, encoding: "utf8", timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
@@ -64,7 +65,7 @@ function dependencies(overrides) {
 function parse(argv, env) {
   const [command, ...args] = argv;
   if (!["register", "watch"].includes(command)) throw new Error(usage);
-  const values = command === "register" ? ["repo", "train-login", "state", "pr", "owner", "coordinator", "owner-agent", "coordinator-agent"] : ["repo", "train-login", "state", "coordinator", "coordinator-agent", "interval"];
+  const values = command === "register" ? ["repo", "train-login", "state", "pr", "owner", "coordinator", "owner-agent", "coordinator-agent"] : ["repo", "train-login", "state", "coordinator", "coordinator-agent", "train-check-name", "interval"];
   const flags = command === "watch" ? ["once", "dry-run", "until-event"] : [];
   const options = { command };
   for (let index = 0; index < args.length; index++) {
@@ -89,6 +90,7 @@ function parse(argv, env) {
   options.interval = Number(options.interval ?? 60);
   if (!Number.isInteger(options.interval) || options.interval < 60) throw new Error("--interval must be an integer of at least 60 seconds");
   options.once = options.once || options["dry-run"];
+  options["train-check-name"] ??= "Merge Train";
   return options;
 }
 
@@ -237,8 +239,8 @@ function conflict(comments, head, trainLogin) {
 // Check names and URLs come from repository content, so they travel as bounded, quoted data.
 function quoted(text) { return JSON.stringify(text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 100)); }
 
-function failedChecks(deps, repo, number, head) {
-  const [owner, name] = repo.split("/");
+function failedChecks(deps, options, number, head) {
+  const [owner, name] = options.repo.split("/");
   const response = deps.query("gh", ["api", "graphql", "-f", `query=${ROLLUP}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`]);
   if (response?.errors?.length) throw new Error(`GitHub GraphQL failed for PR ${number}: ${response.errors.map((error) => error.message).join("; ")}`);
   const commit = response?.data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit;
@@ -248,14 +250,24 @@ function failedChecks(deps, repo, number, head) {
   const contexts = commit.statusCheckRollup?.contexts ?? { pageInfo: { hasNextPage: false }, nodes: [] };
   if (!Array.isArray(contexts.nodes) || typeof contexts.pageInfo?.hasNextPage !== "boolean") throw new Error(`invalid check rollup for PR ${number}`);
   if (contexts.pageInfo.hasNextPage) throw new Error(`more than 100 checks on PR ${number}; the watcher cannot prove none failed`);
-  const checks = contexts.nodes.map((node) => {
+  const latest = new Map();
+  for (const node of contexts.nodes) {
     const isRun = node?.__typename === "CheckRun";
     if (!isRun && node?.__typename !== "StatusContext") throw new Error(`invalid check rollup for PR ${number}`);
+    const workflow = isRun ? node.checkSuite?.workflowRun?.workflow?.name ?? null : null;
+    const at = isRun ? node.startedAt ?? node.completedAt ?? null : node.createdAt ?? null;
     const check = { id: node.id, name: isRun ? node.name : node.context, conclusion: isRun ? node.conclusion : node.state, url: isRun ? node.detailsUrl : node.targetUrl };
-    if (typeof check.id !== "string" || !check.id || typeof check.name !== "string" || (check.conclusion !== null && typeof check.conclusion !== "string")) throw new Error(`invalid check rollup for PR ${number}`);
-    return { ...check, url: /^https:\/\/[^\s"<>]{1,300}$/.test(check.url || "") ? check.url : null };
-  });
-  return checks.filter((check) => RED.has(check.conclusion));
+    if (typeof check.id !== "string" || !check.id || typeof check.name !== "string" || (check.conclusion !== null && typeof check.conclusion !== "string") || (workflow !== null && typeof workflow !== "string") || (at !== null && typeof at !== "string")) throw new Error(`invalid check rollup for PR ${number}`);
+    // The train's own run is cancelled whenever a newer train run replaces it; it is not a head check.
+    if (workflow === options["train-check-name"] || check.name === options["train-check-name"]) continue;
+    // Only the latest run of a check counts: a rerun supersedes the red it repeats. An untimed run is queued, hence newest.
+    const group = JSON.stringify([node.__typename, workflow, check.name]);
+    const previous = latest.get(group);
+    if (previous && previous.at === null) continue;
+    if (previous && at !== null && at < previous.at) continue;
+    latest.set(group, { at, check: { ...check, url: /^https:\/\/[^\s"<>]{1,300}$/.test(check.url || "") ? check.url : null } });
+  }
+  return [...latest.values()].map((entry) => entry.check).filter((check) => RED.has(check.conclusion));
 }
 
 // Conflict keys predate typed events, so existing ledgers keep deduplicating them.
@@ -283,7 +295,7 @@ function scan(options, deps) {
       if (eligible(current) && current.head.sha === pr.head.sha) events.push({ type: "conflict", pr: issue.number, head: pr.head.sha, url: `https://github.com/${options.repo}/pull/${issue.number}` });
     }
     // Holds gate train approval, not CI: a red check is reported even on a held PR.
-    const failed = failedChecks(deps, options.repo, issue.number, pr.head.sha);
+    const failed = failedChecks(deps, options, issue.number, pr.head.sha);
     if (failed.length) events.push({ type: "check-failure", pr: issue.number, head: pr.head.sha, url: `https://github.com/${options.repo}/pull/${issue.number}`, checks: failed });
   }
   return { events, open: seen.size };
