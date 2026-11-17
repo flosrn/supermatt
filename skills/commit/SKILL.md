@@ -13,6 +13,6 @@ Commit every change in the working tree on the current branch. Do not switch or 
 3. An untracked directory that holds a local tool's state (an index, cache, or database, such as `.codegraph/`) belongs in the root `.gitignore`, even when it ships its own `.gitignore`: add its path there, commit that line with the rest, and say so in the report.
 4. Stage the changes. Prefer explicit paths over `git add -A`.
 5. Write a Conventional Commit `type(scope): description`, matching the subject style in `git log` when history exists. When the `oss-writing` skill is installed, load and follow it through the host's skill mechanism for the wording.
-6. Commit. Report the subject and the short hash, plus the `.gitignore` line from step 3 if you added one, nothing else.
+6. Commit, passing any body as the [commit bodies rule](../../references/harnesses.md#commit-bodies) shows for OMP's commit helper; when the body must carry citations or evidence, read it back as that rule says before you describe it. Report the subject and the short hash, plus the `.gitignore` line from step 3 if you added one, nothing else.
 
 Split into several commits when the diff covers unrelated changes.
