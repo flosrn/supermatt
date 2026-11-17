@@ -81,6 +81,12 @@ If any trigger matches, dispatch one `security-reviewer` with the fixed diff, ma
 
 In `code-review`, apply the integration procedure in that skill. Outside it, include the specialist's findings and coverage in the handoff, with concrete evidence and unresolved limits. Reuse an already completed specialist review only while its relevant diff and inputs are unchanged. An unavailable, failed, or unfinished specialist is incomplete security coverage, never an implicit pass; name the exact gap in the handoff.
 
+### Commit bodies
+
+On OMP, a commit made through the eval `commit` helper passes its body by name. In a JavaScript cell, put the body in the options object: `await d.commit("type(scope): subject", { body: ["- line", "Refs #N"] })`, after `const d = await commit.draft()`. The JavaScript helper reads the body only from that object: an array passed as the second argument is taken as the options object, so the commit lands with no body and the helper still reports success. OMP's own commit guidance may show that positional form; do not follow it. In a Python cell, pass `body=[...]` as a keyword.
+
+When a commit's body must carry something (issue citations, evidence, a hypothesis, `Fixes` or `Closes` lines), read it back with `git log -1 --format=%B <sha>` and confirm it holds what you meant before stating what the body contains, on any host. If it is missing or wrong while that commit is still `HEAD` and unpushed, rewrite the message with `git commit --amend --only -F <message file>`, which leaves other staged changes out of the commit, then read it back again. Otherwise, report what the body actually holds instead of what you meant it to hold.
+
 
 ## External peer resolver
 
