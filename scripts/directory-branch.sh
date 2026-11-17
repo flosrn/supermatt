@@ -3,8 +3,8 @@
 #
 # Pushes TAG's tree, minus the repository's dev-only files, as a new commit on
 # origin's directory branch. Plugin directories track that branch, so they only
-# see released versions and never scan scripts, tests, or CI files that plugin
-# users do not need.
+# see released versions and never scan scripts, tests, CI files, or the git
+# hooks that run them, none of which plugin users need.
 set -eu
 
 tag="$1"
@@ -13,7 +13,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 export GIT_INDEX_FILE="$tmp/index"
 git read-tree "$tag"
-git rm -rq --cached --ignore-unmatch scripts tests .github
+git rm -rq --cached --ignore-unmatch scripts tests .github lefthook.yml
 tree="$(git write-tree)"
 unset GIT_INDEX_FILE
 

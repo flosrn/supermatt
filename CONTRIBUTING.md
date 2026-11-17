@@ -180,7 +180,7 @@ Pull requests are squash merged.
 
 Ordinary changes keep the plugin version unchanged and their changelog entries under Unreleased. Only an explicit maintainer release request starts a release. Follow the version and changelog rules in [AGENTS.md](./AGENTS.md): the Claude manifest holds the only version, and new skills or features require a minor bump.
 
-After the release PR passes its checks and merges, the maintainer runs `sh scripts/release.sh` on a clean, up-to-date `main`. It creates and pushes the signed tag, publishes the GitHub Release from that version's changelog section, and updates the `directory` branch used by the plugin directory. `sh scripts/release.sh -n` previews the tag and notes after the release PR merges. The release projection omits the root `scripts/`, `tests/`, and `.github/` directories; bundled helpers inside `skills/` remain available. Do not edit `directory` by hand.
+After the release PR passes its checks and merges, the maintainer runs `sh scripts/release.sh` on a clean, up-to-date `main`. It creates and pushes the signed tag, publishes the GitHub Release from that version's changelog section, and updates the `directory` branch used by the plugin directory. `sh scripts/release.sh -n` previews the tag and notes after the release PR merges. The release projection omits the root `scripts/`, `tests/`, and `.github/` directories and `lefthook.yml`, whose hooks call those scripts; bundled helpers inside `skills/` remain available. Do not edit `directory` by hand.
 
 ## Who decides
 
