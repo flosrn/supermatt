@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { open, bind, spend, extend, parseDuration, snapshot, handled, ciResult, reclaim, processStart, MARKER } from "../skills/babysit-pr/scripts/babysit-state.mjs";
+import { open, bind, spend, extend, parseDuration, snapshot, reevaluate, handled, ciResult, reclaim, processStart, MARKER, RateLimited } from "../skills/babysit-pr/scripts/babysit-state.mjs";
 
 // A hook in a linked worktree exports an absolute GIT_DIR, which would aim every git command below at the real repo.
 for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete process.env[name];
@@ -71,18 +71,28 @@ function host({ prs = [], live = null, viewer = "me" } = {}) {
         return JSON.stringify({ data: { node: { comments: page(p.threads.find((x) => x.id === id).comments.nodes, args) } } });
       }
       let pullRequest;
-      if (query.includes("reviewThreads(")) {
-        const threads = page(p.threads, args);
-        pullRequest = { reviewThreads: { ...threads, nodes: threads.nodes.map((x) => ({ ...x, comments: page(x.comments.nodes, []) })) } };
-      }
-      else if (query.includes("comments(first")) pullRequest = { comments: page(p.comments, args) };
-      else if (query.includes("reviews(first")) pullRequest = { reviews: page(p.reviews, args) };
-      else pullRequest = {
+      if (query.includes("commits(last:")) pullRequest = {
         number: p.number, url: p.url, state: p.state, isDraft: p.isDraft, headRefName: p.headRefName, headRefOid: p.headRefOid,
         baseRefName: p.baseRefName, mergeable: p.mergeable, mergeStateStatus: p.mergeStateStatus, reviewDecision: p.reviewDecision,
         baseRef: { target: { oid: p.baseOid }, refUpdateRule: p.required.length ? { requiredStatusCheckContexts: p.required } : null },
         commits: { nodes: [{ commit: { oid: p.headRefOid, statusCheckRollup: { contexts: page(p.checks, []) } } }] },
       };
+      else if (query.includes("reviewThreads(")) {
+        const threads = page(p.threads, args);
+        pullRequest = { reviewThreads: { ...threads, nodes: threads.nodes.map((x) => ({ ...x, comments: page(x.comments.nodes, []) })) } };
+      }
+      else if (query.includes("comments(first")) pullRequest = { comments: page(p.comments, args) };
+      else if (query.includes("reviews(first")) pullRequest = { reviews: page(p.reviews, args) };
+      if (query.includes("commits(last:") && query.includes("reviewThreads(")) {
+        pullRequest.reviewThreads = { ...page(p.threads, args), nodes: page(p.threads, args).nodes.map((x) => ({ ...x, comments: page(x.comments.nodes, []) })) };
+        pullRequest.comments = page(p.comments, args);
+        pullRequest.reviews = page(p.reviews, args);
+      }
+      if (query.includes("rules(first:")) {
+        pullRequest ??= {};
+        pullRequest.baseRef ??= {};
+        pullRequest.baseRef.rules = page(p.graphqlRules ?? [], args);
+      }
       return JSON.stringify({ data: { viewer: { login: viewer }, repository: { pullRequest } } });
     }
     if (group === "api" && verb === "user") return `${viewer}\n`;
@@ -90,11 +100,15 @@ function host({ prs = [], live = null, viewer = "me" } = {}) {
     // A job whose attempt is null is one the API does not list.
     const jobs = /^repos\/acme\/app\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100$/.exec(verb);
     if (group === "api" && jobs) {
-      return live.checks.filter((c) => c.checkSuite?.workflowRun?.databaseId === Number(jobs[1]) && c.attempt != null).map((c) => `${c.databaseId} ${c.attempt}\n`).join("");
+      return JSON.stringify({ jobs: live.checks.filter((c) => c.checkSuite?.workflowRun?.databaseId === Number(jobs[1]) && c.attempt != null).map((c) => ({ id: c.databaseId, run_attempt: c.attempt })) });
     }
-    if (group === "api" && verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}`) {
+    if (group === "api" && (verb === `repos/acme/app/rules/branches/${encodeURIComponent(live.baseRefName)}` || verb === "https://api.github.com/rules-next")) {
       if (live.rules instanceof Error) throw live.rules;
       const pages = [live.rules.slice(0, 30), live.rules.slice(30)];
+      if (args.includes("--include")) {
+        const next = verb === "https://api.github.com/rules-next";
+        return `HTTP/2.0 200 OK\r\n${!next && pages[1].length ? 'Link: <https://api.github.com/rules-next>; rel="next"\r\n' : ""}\r\n${JSON.stringify(pages[next ? 1 : 0])}`;
+      }
       return JSON.stringify(args.includes("--slurp") ? (args.includes("--paginate") ? pages : [pages[0]]) : pages[0]);
     }
     throw new Error(`unexpected gh ${args.join(" ")}`);
@@ -112,6 +126,406 @@ function babysat(t, over = {}) {
   const look = (now = NOW) => snapshot({ file: stateFile, gh: h.gh, now });
   return { live, h, stateFile, look };
 }
+
+test("state open and bind keep dedicated storage private under umask022 without chmodding ancestors", (t) => {
+  const ancestor = stateDir(t);
+  chmodSync(ancestor, 0o751);
+  const dir = join(ancestor, "shared-parent", "babysit-pr");
+  mkdirSync(dirname(dir), { mode: 0o755 });
+  const mask = process.umask(0o022);
+  try {
+    const { stateFile } = open(base(dir, host().gh));
+    assert.equal(statSync(dir).mode & 0o777, 0o700);
+    assert.equal(statSync(stateFile).mode & 0o777, 0o600);
+    const bound = bind(stateFile, 4);
+    assert.equal(statSync(bound).mode & 0o777, 0o600);
+    assert.equal(statSync(stateFile).mode & 0o777, 0o600);
+    assert.equal(statSync(dirname(dir)).mode & 0o777, 0o755);
+    assert.equal(statSync(ancestor).mode & 0o777, 0o751);
+  } finally { process.umask(mask); }
+});
+
+test("every state mutation upgrades existing0755 and0644 storage and preserves0600 feedback", async (t) => {
+  for (const initial of [0o644, 0o600]) for (const operation of ["snapshot", "reevaluate", "handled", "ci-result", "spend", "extend", "resume"]) await t.test(`${operation} from ${initial.toString(8)}`, (t) => {
+    const { h, stateFile } = babysat(t, { comments: [comment("C1", "PRIVATE-REVIEW-SENTINEL")] });
+    const first = snapshot({ file: stateFile, gh: h.gh, now: NOW });
+    chmodSync(dirname(stateFile), 0o755);
+    chmodSync(stateFile, initial);
+    const mask = process.umask(0o022);
+    try {
+      if (operation === "snapshot") snapshot({ file: stateFile, gh: h.gh, now: NOW + 1000 });
+      if (operation === "reevaluate") reevaluate({ file: stateFile, now: NOW + 1000 });
+      if (operation === "handled") handled(stateFile, { id: "C1", fingerprint: first.feedback[0].fingerprint, disposition: "no-action", now: NOW });
+      if (operation === "ci-result") ciResult(stateFile, { key: "check-run:1", outcome: "repaired", now: NOW });
+      if (operation === "spend") spend(stateFile, "repair", { now: NOW });
+      if (operation === "extend") extend(stateFile, "1h", { now: NOW });
+      if (operation === "resume") open(base(dirname(stateFile), h.gh));
+      assert.equal(statSync(stateFile).mode & 0o777, 0o600, "private state survives atomic replacement");
+      assert.equal(statSync(dirname(stateFile)).mode & 0o777, 0o700, "upgrade only the dedicated directory");
+      assert.match(readFileSync(stateFile, "utf8"), /PRIVATE-REVIEW-SENTINEL/);
+    } finally { process.umask(mask); }
+  });
+});
+
+test("state replacement exposes only a0600 temporary inside the dedicated0700 directory", (t) => {
+  const { stateFile, h } = babysat(t, { comments: [comment("C1", "PRIVATE-REVIEW-SENTINEL")] });
+  snapshot({ file: stateFile, gh: h.gh, now: NOW });
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import assert from "node:assert/strict";
+    import { syncBuiltinESMExports } from "node:module";
+    import { dirname } from "node:path";
+    // Patch before anything imports node:fs as ESM: Bun binds a builtin's named exports when it is
+    // first imported and ignores syncBuiltinESMExports, which Node needs for bindings it already made.
+    const fs = process.getBuiltinModule("node:fs");
+    const file = process.argv[1];
+    const rename = fs.renameSync;
+    let inspected = false;
+    fs.renameSync = (temp, target) => {
+      assert.equal(target, file);
+      assert.equal(fs.statSync(temp).mode & 0o777, 0o600);
+      assert.equal(fs.statSync(dirname(temp)).mode & 0o777, 0o700);
+      assert.match(fs.readFileSync(temp, "utf8"), /PRIVATE-REVIEW-SENTINEL/);
+      inspected = true;
+      return rename(temp, target);
+    };
+    syncBuiltinESMExports();
+    process.umask(0o022);
+    const { extend } = await import(process.argv[2]);
+    extend(file, "1h");
+    assert.equal(inspected, true, "inspect the actual published temporary");
+  `, stateFile, new URL("../skills/babysit-pr/scripts/babysit-state.mjs", import.meta.url).href], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(statSync(stateFile).mode & 0o777, 0o600);
+});
+
+test("a state write refuses a preexisting temporary without deleting or changing it", (t) => {
+  const { stateFile } = babysat(t);
+  const before = readFileSync(stateFile, "utf8");
+  const temp = `${stateFile}.${process.pid}.tmp`;
+  writeFileSync(temp, "PREEXISTING-TEMP-SENTINEL\n", { mode: 0o640 });
+  chmodSync(temp, 0o640);
+  assert.throws(() => extend(stateFile, "1h", { now: NOW }), { code: "EEXIST" });
+  assert.equal(existsSync(temp), true, "a refused exclusive create does not own the existing temporary");
+  assert.equal(readFileSync(temp, "utf8"), "PREEXISTING-TEMP-SENTINEL\n");
+  assert.equal(statSync(temp).mode & 0o777, 0o640);
+  assert.equal(readFileSync(stateFile, "utf8"), before);
+});
+
+// gh reports a refused read on stderr; the quota endpoint, which no limit counts, names the reset.
+function refusing(h, quota) {
+  return (args) => {
+    if (args[0] === "api" && args[1] === "rate_limit") { h.calls.push(args); return JSON.stringify({ resources: quota }); }
+    if (args[0] === "api" && args[1] === "graphql") {
+      h.calls.push(args);
+      throw Object.assign(new Error("Command failed: gh api graphql"), { stderr: "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n" });
+    }
+    return h.gh(args);
+  };
+}
+
+test("a fallback snapshot batches rich feedback into one GraphQL read and makes no REST request", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [], required: ["build"], threads: [thread("T1", comment("TC1", "Fix thread"))], comments: [comment("C1", "Fix comment")], reviews: [comment("R1", "Fix review")] });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.deepEqual(report.feedback.map((f) => f.id), ["T1", "C1", "R1"]);
+  assert.deepEqual(report.checks.missing, ["build"]);
+  assert.equal(h.calls.length, 1, "one request for an ordinary fallback snapshot");
+  assert.equal(h.calls[0][1], "graphql");
+});
+
+test("fallback gives ruleset-only lint its full missing-check grace without REST", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [], mergeStateStatus: "BLOCKED", graphqlRules: [
+    { type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters", requiredStatusChecks: [{ context: "lint" }] } },
+  ] });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.deepEqual(report.checks.required, ["lint"]);
+  assert.deepEqual(report.checks.missing, ["lint"]);
+  assert.equal(report.outcome, null);
+  assert.equal(report.wait_seconds, 600);
+  assert.equal(report.wait_action, "reevaluate");
+  assert.equal(h.calls.length, 1);
+  assert.ok(h.calls.every((args) => args[1] === "graphql"));
+  const due = reevaluate({ file: stateFile, now: NOW + 600_000 });
+  assert.equal(due.outcome, "blocked");
+  assert.deepEqual(due.blockers, ["required check missing: lint"]);
+  assert.equal(h.calls.length, 1, "the grace deadline reads retained data only");
+});
+
+test("fallback reads every rules page before evaluating required checks", (t) => {
+  const graphqlRules = [
+    ...Array.from({ length: 200 }, () => ({ type: "DELETION", parameters: null })),
+    { type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters", requiredStatusChecks: [{ context: "lint" }, { context: "build" }] } },
+  ];
+  const { live, h, stateFile } = babysat(t, { required: ["build"], checks: [], graphqlRules });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.deepEqual(report.checks.required, ["build", "lint"]);
+  assert.deepEqual(report.checks.missing, ["build", "lint"]);
+  assert.equal(report.wait_seconds, 600);
+  assert.equal(h.calls.length, 3, "one batched first page plus two rules overflow pages");
+  assert.ok(h.calls.every((args) => args[1] === "graphql"));
+  assert.ok(h.calls[1].includes("cursor=100"));
+  assert.ok(h.calls[2].includes("cursor=200"));
+  live.checks = [checkRun("build", "SUCCESS", 1), checkRun("lint", "SUCCESS", 2)];
+  assert.deepEqual(snapshot({ file: stateFile, gh: h.gh, now: NOW + 601_000, fallback: true }).checks.missing, []);
+  assert.equal(snapshot({ file: stateFile, gh: h.gh, now: NOW + 901_000, fallback: true }).outcome, "ready");
+});
+
+test("fallback refuses incomplete applicable rules instead of retaining a successful observation", async (t) => {
+  const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+  const malformed = [
+    ["missing connection", undefined],
+    ["null connection", null],
+    ["missing pagination flag", { nodes: [], pageInfo: {} }],
+    ["nonboolean pagination flag", { nodes: [], pageInfo: { hasNextPage: 0 } }],
+    ["missing nodes", { pageInfo: { hasNextPage: false } }],
+    ["null node", { ...empty, nodes: [null] }],
+    ["missing rule type", { ...empty, nodes: [{ parameters: null }] }],
+    ["missing parameters", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS" }] }],
+    ["null required parameters", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: null }] }],
+    ["wrong required parameter type", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "PullRequestParameters" } }] }],
+    ["missing required contexts", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters" } }] }],
+    ["missing context name", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters", requiredStatusChecks: [{}] } }] }],
+    ["empty context name", { ...empty, nodes: [{ type: "REQUIRED_STATUS_CHECKS", parameters: { __typename: "RequiredStatusChecksParameters", requiredStatusChecks: [{ context: "" }] } }] }],
+    ["missing overflow cursor", { nodes: [], pageInfo: { hasNextPage: true, endCursor: null } }],
+  ];
+  for (const [name, rules] of malformed) await t.test(name, (t) => {
+    const { h, stateFile } = babysat(t, { checks: [] });
+    const before = readFileSync(stateFile, "utf8");
+    const gh = (args) => {
+      const response = JSON.parse(h.gh(args));
+      response.data.repository.pullRequest.baseRef.rules = args.some((arg) => arg.includes("commits(last:")) ? rules : empty;
+      return JSON.stringify(response);
+    };
+    assert.throws(() => snapshot({ file: stateFile, gh, now: NOW, fallback: true }), /incomplete applicable rules/);
+    assert.equal(readFileSync(stateFile, "utf8"), before);
+  });
+});
+
+test("fallback fails closed on partial or invalid overflow rule pages", async (t) => {
+  for (const kind of ["graphql-error", "missing-rules", "repeated-cursor"]) await t.test(kind, (t) => {
+    const { h, stateFile } = babysat(t, { graphqlRules: Array.from({ length: 101 }, () => ({ type: "DELETION", parameters: null })) });
+    const before = readFileSync(stateFile, "utf8");
+    let reads = 0;
+    const gh = (args) => {
+      reads++;
+      const response = JSON.parse(h.gh(args));
+      if (reads > 1) {
+        if (kind === "graphql-error") response.errors = [{ message: "rules permission denied" }];
+        if (kind === "missing-rules") delete response.data.repository.pullRequest.baseRef.rules;
+        if (kind === "repeated-cursor") response.data.repository.pullRequest.baseRef.rules = { nodes: [], pageInfo: { hasNextPage: true, endCursor: "100" } };
+      }
+      return JSON.stringify(response);
+    };
+    assert.throws(() => snapshot({ file: stateFile, gh, now: NOW, fallback: true }), /rules permission denied|incomplete applicable rules/);
+    assert.equal(reads, 2, "stop on the invalid overflow page, without retry or REST");
+    assert.equal(readFileSync(stateFile, "utf8"), before);
+  });
+});
+
+test("fallback keeps every same-name Actions failure without guessing rerun attempts", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [checkRun("test", "FAILURE", 1), checkRun("test", "SUCCESS", 2)] });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.deepEqual(report.checks.failing.map((c) => [c.key, c.attempt]), [["check-run:1", null]]);
+  assert.equal(report.checks.total, 2);
+  assert.equal(h.calls.length, 1);
+});
+
+test("fallback follows overflow feedback pages without rereading the batched first pages", (t) => {
+  const many = Array.from({ length: 101 }, (_, i) => comment(`C${i}`, `Feedback ${i}`));
+  const { h, stateFile } = babysat(t, { checks: [], threads: [thread("T1", ...many)], comments: many, reviews: many.map((c) => ({ ...c, id: `R${c.id}` })) });
+  h.calls.length = 0;
+  const report = snapshot({ file: stateFile, gh: h.gh, now: NOW, fallback: true });
+  assert.equal(report.feedback.length, 203);
+  assert.equal(report.feedback[0].comments.length, 101);
+  assert.equal(report.feedback.filter((f) => f.kind === "comment").length, 101);
+  assert.equal(report.feedback.filter((f) => f.kind === "review").length, 101);
+  assert.equal(h.calls.length, 4, "one batched read plus three overflow pages");
+  assert.ok(h.calls.every((args) => args[1] === "graphql"));
+});
+
+test("REST authentication refusal is not a quota pause", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [] });
+  const gh = (args) => {
+    if (args[1].includes("/rules/")) throw Object.assign(new Error("Bad credentials"), { stdout: 'HTTP/2.0 401 Unauthorized\r\n\r\n{"message":"Bad credentials"}', stderr: "gh: Bad credentials (HTTP 401)" });
+    return h.gh(args);
+  };
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), /Bad credentials/);
+  assert.equal(JSON.parse(readFileSync(stateFile, "utf8")).github_pause, undefined);
+});
+
+test("a retained snapshot bounds observer wait at missing-check grace and reevaluates locally", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [], required: ["build"] });
+  const first = snapshot({ file: stateFile, gh: h.gh, now: NOW });
+  assert.equal(first.wait_seconds, 600);
+  assert.equal(first.wait_action, "reevaluate");
+  const calls = h.calls.length;
+  const before = reevaluate({ file: stateFile, now: NOW + 599_000 });
+  assert.equal(before.outcome, null);
+  assert.equal(before.wait_seconds, 1);
+  const due = reevaluate({ file: stateFile, now: NOW + 600_000 });
+  assert.equal(due.outcome, "blocked");
+  assert.deepEqual(due.blockers, ["required check missing: build"]);
+  assert.equal(h.calls.length, calls, "local deadline evaluation sends no feedback request");
+});
+
+test("settling wakes for a fresh snapshot, never declares cached data ready, and bounds the monitor deadline", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [] });
+  const first = snapshot({ file: stateFile, gh: h.gh, now: NOW });
+  assert.equal(first.wait_seconds, 300);
+  assert.equal(first.wait_action, "snapshot");
+  const calls = h.calls.length;
+  const due = reevaluate({ file: stateFile, now: NOW + 300_000 });
+  assert.equal(due.outcome, null, "a clean second look must be a fresh GitHub observation");
+  assert.equal(due.wait_action, "snapshot");
+  assert.equal(due.wait_seconds, 0);
+  assert.equal(h.calls.length, calls);
+  assert.equal(snapshot({ file: stateFile, gh: h.gh, now: NOW + 300_000 }).outcome, "ready");
+  const missing = babysat(t, { checks: [], required: ["build"] });
+  const state = JSON.parse(readFileSync(missing.stateFile, "utf8"));
+  state.monitor.deadline_at = new Date(NOW + 200_000).toISOString();
+  writeFileSync(missing.stateFile, JSON.stringify(state));
+  assert.equal(snapshot({ file: missing.stateFile, gh: missing.h.gh, now: NOW }).wait_seconds, 200);
+  assert.equal(reevaluate({ file: missing.stateFile, now: NOW + 200_000 }).outcome, "budget-exhausted");
+});
+
+test("REST rules Retry-After alone persists a pause before any subsequent snapshot request", (t) => {
+  const { h, stateFile } = babysat(t, { checks: [] });
+  const gh = (args) => {
+    if (args[1] === "rate_limit") return JSON.stringify({ resources: {} });
+    if (args[1] === "repos/acme/app/rules/branches/main") {
+      h.calls.push(args);
+      throw Object.assign(new Error("Forbidden"), { stdout: "HTTP/2.0 403 Forbidden\r\nRetry-After: 900\r\n\r\n{\"message\":\"Forbidden\"}", stderr: "gh: Forbidden (HTTP 403)" });
+    }
+    return h.gh(args);
+  };
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), (error) => error instanceof RateLimited && error.retryAt === NOW + 900_000);
+  const calls = h.calls.length;
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW + 1000 }), /no request sent/);
+  assert.equal(h.calls.length, calls);
+});
+
+test("REST Actions Retry-After alone pauses snapshots without hiding a refusal behind job parsing", (t) => {
+  const { h, stateFile } = babysat(t);
+  const gh = (args) => {
+    if (args[1] === "rate_limit") return JSON.stringify({ resources: {} });
+    if (args[1].includes("/actions/runs/")) {
+      h.calls.push(args);
+      throw Object.assign(new Error("Command failed: gh api jobs"), { stdout: "HTTP/2.0 403 Forbidden\r\nRetry-After: 900\r\n\r\n{}", stderr: "gh: Forbidden (HTTP 403)" });
+    }
+    return h.gh(args);
+  };
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), (error) => error instanceof RateLimited && error.retryAt === NOW + 900_000);
+  const calls = h.calls.length;
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW + 1000 }), /no request sent/);
+  assert.equal(h.calls.length, calls);
+});
+
+
+test("CLI fallback reads one batched GraphQL response and reevaluate makes no GitHub request", (t) => {
+  const { bin } = stubGh(t);
+  const { repo } = checkout(t);
+  const { stateFile } = babysat(t, { checks: [], required: ["build"] });
+  const log = join(bin, "calls");
+  writeFileSync(join(bin, "gh"), `#!/bin/sh
+echo call >> "${log}"
+case "$1 $2" in
+  "api graphql") echo '{"data":{"viewer":{"login":"me"},"repository":{"pullRequest":{"number":4,"state":"OPEN","headRefOid":"aaa","baseRefName":"main","baseRef":{"target":{"oid":"bbb"},"rules":{"nodes":[],"pageInfo":{"hasNextPage":false}},"refUpdateRule":{"requiredStatusCheckContexts":["build"]}},"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}]},"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}},"reviews":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}' ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+`, { mode: 0o755 });
+  const fresh = cli(bin, ["snapshot", "--state", stateFile, "--fallback"], repo);
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.deepEqual(JSON.parse(fresh.stdout).checks.missing, ["build"]);
+  assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 1);
+  const cached = cli(bin, ["reevaluate", "--state", stateFile], repo);
+  assert.equal(cached.status, 0, cached.stderr);
+  assert.equal(JSON.parse(cached.stdout).outcome, "budget-exhausted");
+  assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 1);
+});
+test("a rate-limit refusal pauses snapshots until the exhausted allowance resets, sending nothing before", (t) => {
+  const { h, stateFile, look } = babysat(t);
+  const reset = NOW + 30 * 60_000;
+  const refusal = (() => { try { snapshot({ file: stateFile, gh: refusing(h, { core: { remaining: 4000, reset: NOW / 1000 + 60 }, graphql: { remaining: 0, reset: reset / 1000 } }), now: NOW }); } catch (error) { return error; } })();
+  assert.ok(refusal instanceof RateLimited, refusal?.message);
+  assert.equal(refusal.retryAt, reset);
+  assert.match(refusal.message, /2026-10-14T12:30:00.000Z/);
+  const calls = h.calls.length;
+  assert.throws(() => look(reset - 1000), (error) => error instanceof RateLimited && /no request sent/.test(error.message));
+  assert.equal(h.calls.length, calls, "no GitHub request before the reset");
+  assert.equal(look(reset).pr.number, 4);
+});
+
+test("a refusal that names no exhausted allowance waits at least a minute", (t) => {
+  const { h, stateFile, look } = babysat(t);
+  assert.throws(() => snapshot({ file: stateFile, gh: refusing(h, { core: { remaining: 10, reset: NOW / 1000 }, graphql: { remaining: 10, reset: NOW / 1000 } }), now: NOW }), (error) => error.retryAt === NOW + 60_000);
+  assert.throws(() => look(NOW + 59_000), RateLimited);
+  assert.equal(look(NOW + 60_000).pr.number, 4);
+});
+
+test("a refusal named only by Retry-After, or carried in a GraphQL error answer, pauses for it", (t) => {
+  for (const kind of ["forbidden", "graphql-error", "http-date"]) {
+    const { h, stateFile } = babysat(t);
+    const gh = (args) => {
+      if (args[0] === "api" && args[1] === "rate_limit") return JSON.stringify({ resources: { core: { remaining: 10, reset: NOW / 1000 }, graphql: { remaining: 10, reset: NOW / 1000 } } });
+      if (args[0] === "api" && args[1] === "graphql") {
+        h.calls.push(args);
+        if (kind === "forbidden") throw Object.assign(new Error("Command failed: gh api graphql"), { stdout: "HTTP/2.0 403 Forbidden\r\nRetry-After: 900\r\n\r\n{\"message\":\"Forbidden\"}", stderr: "gh: Forbidden (HTTP 403)\n" });
+        if (kind === "http-date") throw Object.assign(new Error("Command failed: gh api graphql"), { stdout: `HTTP/2.0 429 Too Many Requests\r\nRetry-After: ${new Date(NOW + 900_000).toUTCString()}\r\n\r\n{"message":"Too Many Requests"}`, stderr: "gh: Too Many Requests (HTTP 429)\n" });
+        return "HTTP/2.0 200 OK\r\nRetry-After: 900\r\n\r\n{\"errors\":[{\"message\":\"You have exceeded a secondary rate limit.\"}]}";
+      }
+      return h.gh(args);
+    };
+    assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), (error) => error instanceof RateLimited && error.retryAt === NOW + 900_000, kind);
+    const calls = h.calls.length;
+    assert.throws(() => snapshot({ file: stateFile, gh, now: NOW + 60_000 }), /no request sent/, kind);
+    assert.equal(h.calls.length, calls, kind);
+  }
+});
+
+test("a pause of the repository's shared observer holds snapshots without a request", (t) => {
+  const { h, stateFile } = babysat(t);
+  const root = stateDir(t);
+  mkdirSync(join(root, "acme", "app"), { recursive: true });
+  writeFileSync(join(root, "acme", "app", "observer.json"), JSON.stringify({ version: 1, repo: "acme/app", pauseUntil: new Date(NOW + 1_800_000).toISOString(), attempt: { at: new Date(NOW).toISOString(), outcome: "rate-limited" } }));
+  assert.throws(() => snapshot({ file: stateFile, gh: h.gh, now: NOW, observers: root }), (error) => error instanceof RateLimited && error.retryAt === NOW + 1_800_000);
+  assert.equal(h.calls.filter((args) => args[1] === "graphql").length, 0);
+  assert.equal(snapshot({ file: stateFile, gh: h.gh, now: NOW + 1_800_000, observers: root }).pr.number, 4);
+});
+
+test("a pause recorded in a custom shared observer state holds snapshots, and a malformed one is refused", (t) => {
+  const { h, stateFile } = babysat(t);
+  const custom = stateDir(t);
+  const write = (pauseUntil) => writeFileSync(join(custom, "observer.json"), JSON.stringify({ version: 1, repo: "acme/app", pauseUntil, attempt: { at: new Date(NOW).toISOString(), outcome: "rate-limited" } }));
+  write(new Date(NOW + 1_800_000).toISOString());
+  assert.throws(() => snapshot({ file: stateFile, gh: h.gh, now: NOW, observers: stateDir(t), observerState: custom }), (error) => error instanceof RateLimited && error.retryAt === NOW + 1_800_000);
+  write("soon");
+  assert.throws(() => snapshot({ file: stateFile, gh: h.gh, now: NOW, observerState: custom }), /invalid shared observer state/);
+  assert.equal(h.calls.filter((args) => args[1] === "graphql").length, 0);
+});
+
+test("a secondary limit's Retry-After is honored, and answers that carry their HTTP headers still parse", (t) => {
+  const { h, stateFile } = babysat(t);
+  let refused = false;
+  // gh --include prints the status line and headers before the body, on refusals too.
+  const gh = (args) => {
+    if (args[0] === "api" && args[1] === "rate_limit") return JSON.stringify({ resources: { core: { remaining: 10, reset: NOW / 1000 }, graphql: { remaining: 10, reset: NOW / 1000 } } });
+    if (args[0] === "api" && args[1] === "graphql" && args.includes("--include")) {
+      h.calls.push(args);
+      if (!refused) {
+        refused = true;
+        throw Object.assign(new Error("Command failed: gh api graphql"), { stdout: "HTTP/2.0 403 Forbidden\r\nRetry-After: 900\r\n\r\n{\"message\":\"You have exceeded a secondary rate limit.\"}", stderr: "gh: You have exceeded a secondary rate limit. (HTTP 403)\n" });
+      }
+      return `HTTP/2.0 200 OK\r\nX-Ratelimit-Remaining: 4999\r\n\r\n${h.gh(args)}`;
+    }
+    return h.gh(args);
+  };
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW }), (error) => error instanceof RateLimited && error.retryAt === NOW + 900_000);
+  assert.throws(() => snapshot({ file: stateFile, gh, now: NOW + 899_000 }), /no request sent/);
+  assert.equal(snapshot({ file: stateFile, gh, now: NOW + 900_000 }).pr.number, 4);
+});
 
 test("a branch with no open PR asks for one, and a resume after bind reuses it", async (t) => {
   const dir = stateDir(t);
@@ -909,6 +1323,24 @@ test("CLI open refuses a branch with several open PRs and binds none of them", (
   assert.equal(refused.status, 1, refused.stdout);
   assert.match(refused.stderr, /\b40\b.*\b41\b/);
   assert.deepEqual(tree(states), before);
+});
+
+test("CLI snapshot exits 4 on a GitHub rate-limit refusal and names the next permitted request", (t) => {
+  const { bin } = stubGh(t);
+  const { repo } = checkout(t);
+  const opened = JSON.parse(cli(bin, ["open", "--repo", "acme/app", "--pr", "40"], repo).stdout);
+  writeFileSync(join(bin, "gh"), `#!/bin/sh
+case "$1 $2" in
+  "api rate_limit") echo '{"resources":{"graphql":{"remaining":0,"reset":4102444800}}}' ;;
+  *) echo "gh: API rate limit exceeded for user ID 1. (HTTP 403)" >&2; exit 1 ;;
+esac
+`, { mode: 0o755 });
+  const refused = cli(bin, ["snapshot", "--state", opened.stateFile], repo);
+  assert.equal(refused.status, 4, refused.stderr);
+  assert.match(refused.stderr, /next permitted request is at 2100-01-01T00:00:00.000Z/);
+  const paused = cli(bin, ["snapshot", "--state", opened.stateFile], repo);
+  assert.equal(paused.status, 4);
+  assert.match(paused.stderr, /no request sent/);
 });
 
 // Runs one refused CLI call against a state file and checks nothing under its directory changed.
