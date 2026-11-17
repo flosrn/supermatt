@@ -24,7 +24,7 @@ To (re)link every skill into the local harness skill directories (`~/.claude/ski
 
 No em-dashes anywhere in this repo's prose (`SKILL.md` files, docs, `README.md`, `CHANGELOG.md`, ADRs, changesets, code comments). Where a sentence reaches for one, rewrite it instead with a comma, colon, period, parentheses, or a conjunction, whichever the sentence actually wants; never do a blind character substitution. The `no-dashes` pre-commit hook and the Validate workflow's `lint` job reject an added line holding an en or em dash.
 
-Before a commit, run the checks in [CONTRIBUTING.md § Check your change](./CONTRIBUTING.md#check-your-change), including its CI-parity test command.
+Before a commit, run the other checks in [CONTRIBUTING.md § Check your change](./CONTRIBUTING.md#check-your-change). Run its test command, `sh scripts/run-tests.sh`, once after the commit and before the push: a run on uncommitted changes is not recorded, so the pre-push hook would run the suite a second time.
 
 ## Agent skills
 
