@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const shippedRoots = ["skills", "references", "scripts"];
 const spawners = ["execFileSync", "spawnSync", "execSync"];
-const detachedStdin = /^(["'`])(?:ignore|inherit)\1$|^\[\s*(["'`])(?:ignore|inherit)\2/;
 
 function sources(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
