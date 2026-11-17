@@ -3,11 +3,13 @@
 #        run-tests.sh --pre-push    the pre-push hook: read git's ref lines on stdin, skip when every pushed tree already passed
 #
 # A green run on a clean worktree adds "<tree> <node --version> <command blob id>" to supermatt-test-runs in the
-# repository's common Git directory, shared by its worktrees, once per entry. The pre-push hook skips only when the tree of
-# every commit a ref is pushed to has an entry with the same node version and test command; any difference means a full run.
-# That run tests this worktree, not the pushed commits: it names each pushed ref that is not the checked-out commit, and
-# CI tests those. A red run, a run that starts or ends with uncommitted changes, and a run that ends on another HEAD tree
-# record nothing, and nothing ever removes an entry. A change made and undone while the suite runs goes unseen.
+# repository's common Git directory, shared by its worktrees, once per entry. The pre-push hook skips when the tree of
+# every commit a ref is pushed to has an entry with the same node version and test command (a push that only deletes refs
+# has none to check); any difference, or no ref line at all, means a full run. That run tests this worktree, not the pushed
+# commits: it names each destination ref whose pushed commit is not the checked-out one, and CI tests those. A red run,
+# a run that starts or ends with changes Git knows of (untracked files, sparse or assume-unchanged entries included), and a
+# run that ends on another HEAD tree record nothing, and nothing ever removes an entry. A change made and undone while the
+# suite runs goes unseen.
 # SUPERMATT_TEST_COMMAND replaces the suite command; tests/run-tests.test.sh uses it to stand in for the suite.
 set -eu
 cd "$(git rev-parse --show-toplevel)"
@@ -22,18 +24,18 @@ tree="$(git rev-parse 'HEAD^{tree}')"
 head="$(git rev-parse HEAD)"
 
 if [ "${1:-}" = --pre-push ]; then
-  checked=
+  refs=
   missing=
   elsewhere=
-  while read -r ref sha _ _; do
+  while read -r _ sha ref _; do
+    refs=1
     case "$sha" in *[!0]*) ;; *) continue ;; esac
-    checked=1
     [ "$(git rev-parse "$sha^{commit}" 2>/dev/null)" = "$head" ] || elsewhere="$elsewhere $ref"
     pushed="$(git rev-parse "$sha^{tree}" 2>/dev/null)" || pushed=
     recorded "$pushed" || missing=1
   done
-  if [ -n "$checked" ] && [ -z "$missing" ]; then
-    echo "run-tests: the pushed tree already passed: skipping the suite."
+  if [ -n "$refs" ] && [ -z "$missing" ]; then
+    echo "run-tests: every pushed tree already passed: skipping the suite."
     exit 0
   fi
   for ref in $elsewhere; do
@@ -41,9 +43,19 @@ if [ "${1:-}" = --pre-push ]; then
   done
 fi
 
-dirty="$(git status --porcelain)"
+# Prints every way the worktree may differ from HEAD's tree: what status shows, untracked files whatever
+# status.showUntrackedFiles says, and the index entries status hides (skip-worktree, as in a sparse checkout, and
+# assume-unchanged). Fails when Git cannot tell.
+changes() {
+  git status --porcelain --untracked-files=all || return
+  index="$(git ls-files -v)" || return
+  printf '%s\n' "$index" | grep -v '^H ' || :
+}
+
+before="$(changes)"
 sh -c "$command"
-if [ -n "$dirty" ] || [ -n "$(git status --porcelain)" ] || [ "$(git rev-parse 'HEAD^{tree}')" != "$tree" ]; then
+after="$(changes)"
+if [ -n "$before" ] || [ -n "$after" ] || [ "$(git rev-parse 'HEAD^{tree}')" != "$tree" ]; then
   echo "run-tests: the worktree has uncommitted changes or changed during the run: this run is not recorded."
 elif ! recorded "$tree"; then
   echo "$tree $key" >> "$record"

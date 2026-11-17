@@ -33,9 +33,9 @@ pre-push:
   parallel: true
   jobs:
     - name: tests
-      glob: "{scripts,tests,skills}/*"
       # A hook in a linked worktree exports an absolute GIT_DIR, which would aim every fixture repo in the tests at the real repo.
-      # The script reads git's ref lines on stdin and skips a pushed tree that already passed the same command on the same node.
+      # The script reads git's ref lines on stdin and skips a pushed tree that already passed the same command on the same node;
+      # with no file glob, a push of any change without such a record runs the suite.
       use_stdin: true
       run: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR sh scripts/run-tests.sh --pre-push
     - name: plugin-validate

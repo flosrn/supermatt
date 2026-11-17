@@ -14,6 +14,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 mkdir "$TMP/bin"
 printf '#!/bin/sh\n[ -n "$FAKE_NODE_VERSION" ] || exit 127\necho "$FAKE_NODE_VERSION"\n' > "$TMP/bin/node"
 chmod +x "$TMP/bin/node"
+REAL_PATH="$PATH"
 PATH="$TMP/bin:$PATH"
 FAKE_NODE_VERSION=v1.0.0
 export FAKE_NODE_VERSION
@@ -39,6 +40,10 @@ sh "$REPO/scripts/run-tests.sh" || fail "green run on a clean tree exited nonzer
 out="$(pre_push)" || fail "pre-push after a green run exited nonzero"
 [ "$(runs)" = 1 ] || fail "pre-push ran the suite again for a tree that already passed"
 case "$out" in *skip*) ;; *) fail "pre-push did not say it skips: $out" ;; esac
+
+# Worktrees share the record: a linked worktree on another commit with the same tree skips the suite.
+git worktree add -q --detach "$TMP/linked" "$(git commit-tree 'HEAD^{tree}' -p HEAD -m same-tree)"
+(cd "$TMP/linked" && pre_push > /dev/null) && [ "$(runs)" = 1 ] || fail "a linked worktree ran the suite for a tree that already passed"
 
 echo b > file && git commit -q -am change
 pre_push > /dev/null || fail "pre-push of a changed tree exited nonzero"
@@ -120,6 +125,51 @@ before="$(runs)"
 out="$(printf 'refs/heads/ghost %s refs/heads/ghost %s\n' 1111111111111111111111111111111111111111 "$zero" | sh "$REPO/scripts/run-tests.sh" --pre-push 2>&1)" \
   && [ "$(runs)" = $((before + 1)) ] || fail "pre-push of an unresolvable object did not run the suite: $out"
 case "$out" in *refs/heads/ghost*) ;; *) fail "pre-push did not name an unresolvable ref: $out" ;; esac
+# `git push origin HEAD~1:refs/heads/dest` gives the hook the source as typed; the branch it updates is the one to name.
+out="$(printf 'HEAD~1 %s refs/heads/dest %s\n' "$untested" "$zero" | sh "$REPO/scripts/run-tests.sh" --pre-push)" \
+  || fail "pre-push to another destination exited nonzero"
+case "$out" in *refs/heads/dest*) ;; *) fail "pre-push did not name the destination it did not test: $out" ;; esac
+
+# A push that only deletes refs sends no tree to test.
+before="$(runs)"
+printf '(delete) %s refs/heads/gone %s\n' "$zero" "$untested" | sh "$REPO/scripts/run-tests.sh" --pre-push > /dev/null \
+  && [ "$(runs)" = "$before" ] || fail "a deletion-only push ran the suite"
+
+# An untracked file the suite may read keeps the run unrecorded, even when status is configured to hide untracked files.
+echo j > file && git commit -q -am hidden-untracked
+git config status.showUntrackedFiles no
+echo y > untracked
+sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run beside a hidden untracked file exited nonzero"
+rm untracked
+git config --unset status.showUntrackedFiles
+before="$(runs)"
+pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run beside a hidden untracked file was recorded"
+
+# When Git cannot read the worktree after the suite, the run cannot be shown clean and stays unrecorded.
+echo k > file && git commit -q -am unreadable-index
+SUPERMATT_TEST_COMMAND="echo run >> '$TMP/runs'; if [ -f '$TMP/move' ]; then rm '$TMP/move'; cp .git/index '$TMP/index'; echo junk > .git/index; fi"
+touch "$TMP/move"
+sh "$REPO/scripts/run-tests.sh" > /dev/null 2>&1 || :
+cp "$TMP/index" .git/index
+before="$(runs)"
+pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run whose final status check failed was recorded"
+
+# A sparse checkout hides absent files from status; the suite saw only part of the tree, so the run stays unrecorded.
+SUPERMATT_TEST_COMMAND="echo run >> '$TMP/runs'"
+echo l > file && git commit -q -am sparse
+git update-index --skip-worktree file && rm file
+sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run in a sparse checkout exited nonzero"
+git update-index --no-skip-worktree file && git checkout -q -- file
+before="$(runs)"
+pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run in a sparse checkout was recorded"
+
+# A file marked assume-unchanged can differ from the commit without status showing it.
+echo m > file && git commit -q -am assume
+git update-index --assume-unchanged file && echo changed > file
+sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run beside an assume-unchanged file exited nonzero"
+git update-index --no-assume-unchanged file && git checkout -q -- file
+before="$(runs)"
+pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run beside an assume-unchanged file was recorded"
 
 # A suite that removes the changes it started with tested them, not the commit's tree.
 echo h2 > file && git commit -q -am dirty-start
@@ -128,5 +178,44 @@ echo x > leftover
 sh "$REPO/scripts/run-tests.sh" > /dev/null || fail "a green run that removed its starting changes exited nonzero"
 before="$(runs)"
 pre_push > /dev/null && [ "$(runs)" = $((before + 1)) ] || fail "a run that started with uncommitted changes was recorded"
+
+# The repository's pre-push job, run by lefthook: it hands git's ref lines to the script, and a push with no record runs
+# the suite whatever files it changes. CI installs no lefthook; the hook only runs where lefthook is installed.
+if command -v lefthook > /dev/null 2>&1; then
+  git init -q -b main "$TMP/hook"
+  cd "$TMP/hook"
+  git config user.name test && git config user.email test@example.com && git config commit.gpgsign false
+  mkdir scripts && cp "$REPO/lefthook.yml" . && cp "$REPO/scripts/run-tests.sh" scripts/
+  echo a > README.md && git add -A && git commit -q -m init
+  base="$(git rev-parse HEAD)"
+  # lefthook filters a job's files against what the remote already holds.
+  git init -q --bare "$TMP/hook-origin.git" && git remote add origin "$TMP/hook-origin.git"
+  git push -q --no-verify origin main
+  echo b > README.md && git commit -q -am prose
+  hook() { echo "refs/heads/main $(git rev-parse HEAD) refs/heads/main $base" | lefthook run pre-push --no-auto-install --job tests > /dev/null 2>&1; }
+  before="$(runs)"
+  hook && [ "$(runs)" = $((before + 1)) ] || fail "the hook did not run the suite for a prose-only push with no record"
+  hook && [ "$(runs)" = $((before + 1)) ] || fail "the hook did not hand the pushed refs to the script"
+else
+  echo "lefthook not installed: the hook cases did not run"
+fi
+
+# Without the override the script runs the repository's suite as CI does: every shell test, stopping at the first
+# failure, then node's runner on the JavaScript tests.
+git init -q -b main "$TMP/default"
+cd "$TMP/default"
+git config user.name test && git config user.email test@example.com && git config commit.gpgsign false
+mkdir tests
+echo 'echo shell >> "$ORDER"' > tests/a.test.sh
+printf '%s\n' "import { appendFileSync } from 'node:fs';" "appendFileSync(process.env.ORDER, 'node\\n');" > tests/a.test.mjs
+git add -A && git commit -q -m suite
+ORDER="$TMP/order" && export ORDER
+PATH="$REAL_PATH" env -u SUPERMATT_TEST_COMMAND sh "$REPO/scripts/run-tests.sh" > /dev/null 2>&1 || fail "the default suite failed on a green fixture"
+[ "$(cat "$ORDER")" = "shell
+node" ] || fail "the default suite did not run the shell tests, then node: $(cat "$ORDER")"
+echo 'exit 1' > tests/0.test.sh && git add -A && git commit -q -m red-shell
+rm "$ORDER"
+! PATH="$REAL_PATH" env -u SUPERMATT_TEST_COMMAND sh "$REPO/scripts/run-tests.sh" > /dev/null 2>&1 || fail "a red shell test let the default suite pass"
+[ ! -e "$ORDER" ] || fail "tests ran after the first red shell test: $(cat "$ORDER")"
 
 echo "ok"
