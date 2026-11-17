@@ -403,6 +403,55 @@ test("an observation goes stale without a live reader, or once its PR left the o
   assert.equal(dropped.stale, true);
 });
 
+test("two observations in the same millisecond still tell that the latest one dropped a PR", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  const c = clock(f);
+  await f.call("watch", ["--once"], c.overrides);
+  f.world.issues = [[]];
+  await f.call("watch", ["--once"], c.overrides);
+  const dropped = await f.call("status", ["--pr", "7"], c.overrides);
+  assert.deepEqual(dropped.reasons, ["no observer is running", "PR 7 was not in the latest observation"]);
+  assert.equal(dropped.stale, true);
+});
+
+// A watcher older than observation ids writes neither id; during a merge it can share the state with a newer one.
+test("observations an older watcher wrote without ids still tell whether the latest observation held a PR", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  const c = clock(f);
+  const observer = join(f.state, "observer.json");
+  const snapshot = join(f.state, "observations", "7.json");
+  const legacy = (...paths) => {
+    for (const path of paths) {
+      const { observationId, ...written } = JSON.parse(readFileSync(path, "utf8"));
+      writeFileSync(path, JSON.stringify(written));
+    }
+  };
+  const observe = async (prs) => {
+    f.world.issues = [prs];
+    await f.call("watch", ["--once"], c.overrides);
+  };
+  const reasons = async () => (await f.call("status", ["--pr", "7"], c.overrides)).reasons;
+  const held = ["no observer is running"];
+  const dropped = [...held, "PR 7 was not in the latest observation"];
+  await observe([issue()]);
+  legacy(observer, snapshot);
+  assert.deepEqual(await reasons(), held, "an older watcher held PR 7");
+  c.timeline.now += 1000;
+  await observe([]);
+  legacy(observer);
+  assert.deepEqual(await reasons(), dropped, "an older watcher dropped PR 7 it had observed");
+  await observe([issue()]);
+  await observe([]);
+  legacy(observer);
+  assert.deepEqual(await reasons(), dropped, "an older watcher dropped PR 7 a newer one observed in the same millisecond");
+  await observe([issue()]);
+  legacy(observer, snapshot);
+  await observe([]);
+  assert.deepEqual(await reasons(), dropped, "a newer watcher dropped PR 7 an older one observed in the same millisecond");
+});
+
 test("a live but stalled reader makes an old observation unknown after three intervals", async (t) => {
   const f = fixture(t);
   f.world.comments[7] = [[]];

@@ -554,10 +554,12 @@ function digest(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 }
 
-function snapshotOf(options, value, previous, now) {
+// observationId names the observation that wrote the snapshot: timestamps of two observations can
+// fall in the same millisecond, so only the id tells whether the PR was in the latest one.
+function snapshotOf(options, value, previous, now, observationId) {
   const observedAt = iso(now);
   const snapshot = {
-    version: 1, repo: options.repo, pr: value.number, observedAt, state: value.state, head: value.head,
+    version: 1, repo: options.repo, pr: value.number, observedAt, observationId, state: value.state, head: value.head,
     headSince: previous?.head === value.head ? previous.headSince : observedAt, updatedAt: value.updatedAt, labels: value.labels,
     checks: value.checks, merge: value.merge ?? null, postMerge: value.postMerge ?? null,
   };
@@ -582,13 +584,14 @@ function pausedUntil(options) {
 // The leader is the only writer of observations, so a read-modify-write here cannot race.
 function publish(options, deps, observation, observer, schedule, now) {
   mkdirSync(join(options.state, "observations"), { recursive: true, mode: 0o700 });
+  const observationId = randomUUID();
   for (const value of observation.tracked.values()) {
     const previous = readJson(snapshotPath(options, value.number), undefined);
-    atomicJson(snapshotPath(options, value.number), snapshotOf(options, value, previous, now));
+    atomicJson(snapshotPath(options, value.number), snapshotOf(options, value, previous, now, observationId));
   }
   const until = schedule.pauseUntil ?? 0;
   atomicJson(observerPath(options), {
-    version: 1, repo: options.repo, viewer: observation.viewer, credential: observation.credential, interval: options.interval, observedAt: iso(now),
+    version: 1, repo: options.repo, viewer: observation.viewer, credential: observation.credential, interval: options.interval, observedAt: iso(now), observationId,
     attempt: { at: iso(now), outcome: "ok" }, queue: { observedAt: iso(now), prs: observation.queue }, pauseUntil: until > now ? iso(until) : null,
   });
 }
@@ -779,6 +782,13 @@ function deliverAll(options, deps, globalCoordinator, ledger, pending, results, 
   }
 }
 
+// A watcher older than observation ids wrote neither id, so only its timestamps can tell; an id on one
+// side only means another version wrote the other side, hence another observation.
+function sameObservation(observer, snapshot) {
+  if (observer.observationId == null && snapshot.observationId == null) return snapshot.observedAt === observer.observedAt;
+  return snapshot.observationId === observer.observationId;
+}
+
 // What a consumer may rely on: the PR's last observation, and every reason it may be out of date.
 // Observations read with other GitHub credentials are refused outright, never served.
 function view(options, deps, number) {
@@ -800,7 +810,7 @@ function view(options, deps, number) {
     else if (observer.attempt.outcome !== "ok") reasons.push(`the last GitHub read was ${observer.attempt.outcome}: ${observer.attempt.error}`);
     else if (!paused && now - Date.parse(observer.attempt.at) > STALL_INTERVALS * observer.interval * 1000) reasons.push(`no observation since ${observer.attempt.at}`);
     if (number !== undefined && !snapshot) reasons.push(`PR ${number} has not been observed`);
-    else if (number !== undefined && observer?.attempt.outcome === "ok" && snapshot.observedAt !== observer.observedAt) reasons.push(`PR ${number} was not in the latest observation`);
+    else if (number !== undefined && observer?.attempt.outcome === "ok" && !sameObservation(observer, snapshot)) reasons.push(`PR ${number} was not in the latest observation`);
   }
   return {
     outcome: reasons.length ? "unknown" : "ok", reasons, ...(paused ? { retryAt: observer.pauseUntil } : {}),
