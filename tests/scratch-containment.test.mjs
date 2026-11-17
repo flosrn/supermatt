@@ -344,15 +344,31 @@ test("scratch containment skips a .pth that is not a regular file, as Python doe
   assert.match(result.stderr, /symlink escapes scratch: .*site-packages\/outside\.pth -> .*elsewhere$/m);
 });
 
-test("scratch containment splits a .pth on a carriage return alone, as Python reads it", (t) => {
+test("scratch containment ends a .pth line wherever Python's str.splitlines does", (t) => {
   const { root, scratch } = fixture(t);
   const { sitePackages } = environmentFiles(scratch);
   const outside = join(root, "source/src");
   const pth = join(sitePackages, "engine.pth");
-  writeFileSync(pth, `# harmless\r${outside}\r`);
+  for (const separator of ["\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]) {
+    writeFileSync(pth, `# harmless${separator}${outside}${separator}`);
+    const result = run(scratch);
+    assert.equal(result.status, 1, `${JSON.stringify(separator)}: ${result.stdout}`);
+    assert.ok(result.stderr.includes(`.pth path escapes scratch: ${realpathSync(pth)} -> ${join(realpathSync(root), "source/src")};`), result.stderr);
+  }
+});
+
+test("scratch containment resolves a virtualenv's .pth lines against its site directory as Python names it", (t) => {
+  const { root, scratch } = fixture(t);
+  const { venv } = environmentFiles(scratch);
+  // lib links deep inside scratch, so five steps up stay inside from the real directory but leave from the named one.
+  const storage = join(scratch, "store/a/b/c/d");
+  mkdirSync(join(storage, "python3.12/site-packages"), { recursive: true });
+  writeFileSync(join(storage, "python3.12/site-packages/engine.pth"), "../../../../../external\n");
+  rmSync(join(venv, "lib"), { recursive: true });
+  symlinkSync(relative(venv, storage), join(venv, "lib"));
   const result = run(scratch);
   assert.equal(result.status, 1, result.stdout);
-  assert.ok(result.stderr.includes(`.pth path escapes scratch: ${realpathSync(pth)} -> ${join(realpathSync(root), "source/src")};`), result.stderr);
+  assert.ok(result.stderr.includes(`.pth path escapes scratch: ${join(realpathSync(venv), "lib/python3.12/site-packages/engine.pth")} -> ${join(realpathSync(root), "external")};`), result.stderr);
 });
 
 test("scratch containment checks the .pth files of a site directory linked inside scratch", (t) => {
@@ -385,7 +401,15 @@ test("scratch containment permits an archive install record outside scratch but 
   let result = run(scratch);
   assert.equal(result.status, 0, result.stderr);
   const directory = pathToFileURL(join(root, "source")).href;
-  for (const record of [{ dir_info: { editable: true } }, { dir_info: {} }, { archive_info: {}, dir_info: { editable: true } }]) {
+  for (const record of [
+    { dir_info: { editable: true } },
+    { dir_info: {} },
+    { archive_info: {}, dir_info: { editable: true } },
+    { archive_info: {}, dir_info: null },
+    { archive_info: {}, dir_info: false },
+    { archive_info: {}, vcs_info: { vcs: "git" } },
+    { archive_info: null },
+  ]) {
     writeFileSync(metadata, JSON.stringify({ ...record, url: directory }));
     result = run(scratch);
     assert.equal(result.status, 1, `${JSON.stringify(record)}: ${result.stdout}`);

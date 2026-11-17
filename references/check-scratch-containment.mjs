@@ -68,11 +68,11 @@ function allowedSystemTarget(path, home) {
 
 const SITE_DIRECTORIES = ["site-packages", "dist-packages"];
 
-// Python's site module reads a .pth file in a site directory with universal newlines, skips it unless it is a
+// Python's site module splits a .pth file in a site directory with str.splitlines, skips it unless it is a
 // regular file, and adds each path line to sys.path resolved against the site directory as it was named.
 function checkPathFile(file, site, root, home) {
   if (!statSync(file).isFile()) return;
-  for (const line of readFileSync(file, "utf8").split(/\r\n|\r|\n/)) {
+  for (const line of readFileSync(file, "utf8").split(/\r\n|[\n\v\f\r\x1c-\x1e\x85\u2028\u2029]/)) {
     const value = line.trim();
     if (!value || value.startsWith("#") || /^import[ \t]/.test(value)) continue;
     const target = canonicalTarget(resolve(site, value));
@@ -82,9 +82,16 @@ function checkPathFile(file, site, root, home) {
   }
 }
 
-// The walk does not enter a linked directory, so a site directory linked inside scratch has its .pth files read
-// here, each link among them checked before its content is read.
-function checkLinkedSite(site, root, home) {
+// Checks the .pth files of a site directory reached through a link, which the walk does not enter, under the
+// name Python uses for it. A site directory whose canonical path leaves scratch is left to the walk, which
+// rejects the link, and each .pth link is checked before its content is read.
+function checkSite(site, root, home) {
+  try {
+    if (outside(root, realpathSync(site)) || !statSync(site).isDirectory()) return;
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return;
+    throw error;
+  }
   for (const entry of entries(site).filter((item) => (item.isFile() || item.isSymbolicLink()) && item.name.endsWith(".pth"))) {
     const file = join(site, entry.name);
     if (entry.isSymbolicLink()) {
@@ -92,6 +99,14 @@ function checkLinkedSite(site, root, home) {
       if (outside(root, target) && !lockedSystemFile(target, home)) throw new Error(`symlink escapes scratch: ${file} -> ${target}`);
     }
     checkPathFile(file, site, root, home);
+  }
+}
+
+// A virtualenv's site directories are <venv>/lib/pythonX.Y/site-packages (or dist-packages), named that way even
+// where lib or a directory below it is a link.
+function checkVirtualenvSites(venv, root, home) {
+  for (const version of entries(join(venv, "lib"))) {
+    for (const name of SITE_DIRECTORIES) checkSite(join(venv, "lib", version.name, name), root, home);
   }
 }
 
@@ -118,11 +133,12 @@ if (!directory || extra.length) {
           if (outside(root, target) && !lockedSystemFile(target, home)) {
             throw new Error(`symlink escapes scratch: ${path} -> ${target}`);
           }
-          if (SITE_DIRECTORIES.includes(entry.name) && statSync(target).isDirectory()) checkLinkedSite(path, root, home);
+          if (SITE_DIRECTORIES.includes(entry.name)) checkSite(path, root, home);
         } else if (entry.isDirectory()) {
           pending.push(path);
         } else if (entry.name === "pyvenv.cfg" && entry.isFile()) {
           checkScripts(current, root, home);
+          checkVirtualenvSites(current, root, home);
         }
         if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".pth") && SITE_DIRECTORIES.includes(basename(current))) {
           checkPathFile(path, current, root, home);
@@ -130,8 +146,10 @@ if (!directory || extra.length) {
         if ((entry.isFile() || entry.isSymbolicLink()) && entry.name === "direct_url.json") {
           const record = JSON.parse(readFileSync(path, "utf8"));
           // An archive install (a wheel or sdist) copied its files into site-packages, so its URL is provenance
-          // only; a directory install, editable or not, can still import from where its URL points.
-          if (record.archive_info && !record.dir_info) continue;
+          // only. Any other record, such as a directory install, editable or not, keeps its URL checked, and a
+          // record that names dir_info or vcs_info at all is not treated as an archive.
+          const archive = typeof record.archive_info === "object" && record.archive_info !== null;
+          if (archive && !("dir_info" in record) && !("vcs_info" in record)) continue;
           const { url } = record;
           if (typeof url === "string" && url.startsWith("file:")) {
             const target = canonicalTarget(fileURLToPath(url));
