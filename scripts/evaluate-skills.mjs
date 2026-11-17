@@ -81,9 +81,9 @@ import {execFileSync} from 'node:child_process';
 import {connect} from 'node:net';
 // Children start with stdin ignored: Codex's Linux sandbox refuses the shutdown(2) that spawnSync issues
 // on an empty stdin pipe, and the call then throws EPERM although the child succeeded.
-const shell = { env: ${JSON.stringify(shell)}, encoding: 'utf8', stdio: ['ignore','pipe','pipe'] };
-execFileSync('git',['--version'],shell);
-execFileSync('node',['-e','console.log(42)'],shell);
+const sh = (file, args) => execFileSync(file, args, { env: ${JSON.stringify(shell)}, encoding: 'utf8', stdio: ['ignore','pipe','pipe'] });
+sh('git',['--version']);
+sh('node',['-e','console.log(42)']);
 // Writes straight to fd 1. Inside Codex's Linux sandbox, Node cannot identify a socket stdout (the
 // evaluator's spawn gives Codex a socketpair) and replaces process.stdout with a stream that drops output.
 const report = line => writeSync(1, line + '\\n');
@@ -93,9 +93,9 @@ for (const path of process.argv.slice(2)) {
   report('canary ' + JSON.stringify({ path, read, write }));
 }
 writeFileSync('allowed-probe','ok');
-execFileSync('git',['add','--','allowed-probe'],shell);
-execFileSync('git',['-c','user.name=Probe','-c','user.email=probe@example.invalid','-c','commit.gpgsign=false','commit','-q','-m','probe'],shell);
-if (execFileSync('git',['log','-1','--format=%s'],shell).trim() !== 'probe') throw Error('Fixture commit not recorded');
+sh('git',['add','--','allowed-probe']);
+sh('git',['-c','user.name=Probe','-c','user.email=probe@example.invalid','-c','commit.gpgsign=false','commit','-q','-m','probe']);
+if (sh('git',['log','-1','--format=%s']).trim() !== 'probe') throw Error('Fixture commit not recorded');
 unlinkSync('allowed-probe');
 await new Promise((resolve,reject) => {
   const socket=connect(${server.address().port},'127.0.0.1');

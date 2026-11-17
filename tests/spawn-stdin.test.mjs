@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 // Inside Codex's Linux sandbox, a synchronous spawn with a piped stdin throws EPERM although the child succeeded:
 // Node shuts down the write side of the empty stdin socketpair and the seccomp filter refuses that shutdown(2) (#107, #111).
-// Every synchronous spawn in shipped code therefore either ignores or inherits stdin, or passes `input`.
+// Every synchronous spawn in shipped code therefore either ignores or inherits stdin, or passes `input`, in an options
+// object written at the call: options held in a variable stay unproven, since a mutation or an alias can pipe stdin again.
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const shippedRoots = ["skills", "references", "scripts"];
@@ -116,19 +117,10 @@ function spawnerNames(code) {
 
 const escaped = (name) => name.replace(/\$/g, "\\$");
 
-// The object literal an options argument holds: written inline, or last assigned to its identifier before the call.
-function literalOf(code, arg, before) {
-  if (arg.startsWith("{")) return arg;
-  if (!/^[A-Za-z_$][\w$]*$/.test(arg)) return null;
-  let value = null;
-  for (const match of code.slice(0, before).matchAll(new RegExp(`(?<![\\w$.])${escaped(arg)}\\s*=(?![=>])\\s*`, "g"))) {
-    value = match.index + match[0].length;
-  }
-  return value !== null && code[value] === "{" ? code.slice(value, closing(code, value)) : null;
-}
+const absent = /^(?:null|undefined|void\s+0)$/;
 
-// Whether an options literal's own top-level properties ignore or inherit stdin, or feed it `input`.
-// A later spread may override either, so it leaves stdin unproven.
+// Whether an options literal's own top-level properties ignore or inherit stdin, or feed it an `input` that is
+// not literally absent. A later spread may override either, so it leaves stdin unproven.
 function stdinIsSafe(literal) {
   let detached = false;
   let fed = false;
@@ -141,7 +133,7 @@ function stdinIsSafe(literal) {
     if (!property) continue;
     const key = property[1] ?? property[3];
     const value = property[4] ?? key;
-    if (key === "input") fed = true;
+    if (key === "input") fed = !absent.test(value.trim());
     else if (key === "stdio") detached = detachedStdin.test(value.trim());
   }
   return detached || fed;
@@ -156,10 +148,7 @@ function pipedStdinSpawns(roots) {
       for (const match of code.matchAll(call)) {
         const open = match.index + match[0].length - 1;
         const [, ...rest] = args(code.slice(open + 1, closing(code, open) - 1));
-        const safe = rest.some((arg) => {
-          const literal = literalOf(code, arg, match.index);
-          return literal !== null && stdinIsSafe(literal);
-        });
+        const safe = rest.some((arg) => arg.startsWith("{") && stdinIsSafe(arg));
         if (!safe) {
           const line = code.slice(0, match.index).split("\n").length;
           offenders.push(`${relative(repo, file)}:${line}: ${match[1]}`);
@@ -183,7 +172,7 @@ test("a synchronous spawn with default options is reported with its file", (t) =
   assert.deepEqual(pipedStdinSpawns([root]), [`${relative(repo, bad)}:2: execFileSync`]);
 });
 
-test("ignored, inherited, or fed stdin passes, and a piped one does not", (t) => {
+test("ignored, inherited, or fed stdin written at the call passes, and anything else does not", (t) => {
   const root = mkdtempSync(join(tmpdir(), "spawn-stdin-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const file = join(root, "calls.mjs");
@@ -200,7 +189,9 @@ test("ignored, inherited, or fed stdin passes, and a piped one does not", (t) =>
     'execSync("ls")',
   ].join("\n"));
   const at = (line, name) => `${relative(repo, file)}:${line}: ${name}`;
-  assert.deepEqual(pipedStdinSpawns([root]), [at(7, "spawnSync"), at(9, "execFileSync"), at(10, "execSync")]);
+  // Named options are unproven even when declared safe: a later mutation (`quiet.stdio = "pipe"`,
+  // `delete quiet.stdio`, `Object.assign(quiet, ...)`) or an alias can pipe stdin again.
+  assert.deepEqual(pipedStdinSpawns([root]), [at(5, "execFileSync"), at(7, "spawnSync"), at(9, "execFileSync"), at(10, "execSync")]);
 });
 
 test("only the options' own top-level stdio or input counts, and aliases are calls too", (t) => {
@@ -220,7 +211,13 @@ test("only the options' own top-level stdio or input counts, and aliases are cal
     'spawnSync("git", [], { stdio: "ignore", ...extra });',
     'const re = /["`]/; spawnSync("git", [], { stdio: ["ignore", "pipe", "pipe"] });',
     'execFileSync("git", [], { stdio: "ignore", stdio: "pipe" });',
+    'execFileSync("git", [], { input: null });',
+    'execFileSync("git", [], { input: undefined });',
+    'execFileSync("cat", [], { input });',
   ].join("\n"));
   const at = (line, name) => `${relative(repo, file)}:${line}: ${name}`;
-  assert.deepEqual(pipedStdinSpawns([root]), [at(2, "execFileSync"), at(3, "execFileSync"), at(6, "execFileSync"), at(7, "run"), at(10, "spawnSync"), at(12, "execFileSync")]);
+  assert.deepEqual(pipedStdinSpawns([root]), [
+    at(2, "execFileSync"), at(3, "execFileSync"), at(6, "execFileSync"), at(7, "run"), at(10, "spawnSync"), at(12, "execFileSync"),
+    at(13, "execFileSync"), at(14, "execFileSync"),
+  ]);
 });
