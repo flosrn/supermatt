@@ -15,6 +15,8 @@ command="${SUPERMATT_TEST_COMMAND:-for t in tests/*.test.sh; do sh \"\$t\" || ex
 record="$(git rev-parse --path-format=absolute --git-common-dir)/supermatt-test-runs"
 node="$(node --version)"
 key="$node $(printf '%s' "$command" | git hash-object --stdin)"
+# Succeeds when tree $1 already passed with this command and node version.
+recorded() { grep -qxF "$1 $key" "$record" 2>/dev/null; }
 
 tree="$(git rev-parse 'HEAD^{tree}')"
 head="$(git rev-parse HEAD)"
@@ -28,7 +30,7 @@ if [ "${1:-}" = --pre-push ]; then
     checked=1
     [ "$(git rev-parse "$sha^{commit}" 2>/dev/null)" = "$head" ] || elsewhere="$elsewhere $ref"
     pushed="$(git rev-parse "$sha^{tree}" 2>/dev/null)" || pushed=
-    grep -qxF "$pushed $key" "$record" 2>/dev/null || missing=1
+    recorded "$pushed" || missing=1
   done
   if [ -n "$checked" ] && [ -z "$missing" ]; then
     echo "run-tests: the pushed tree already passed: skipping the suite."
@@ -43,6 +45,6 @@ dirty="$(git status --porcelain)"
 sh -c "$command"
 if [ -n "$dirty" ] || [ -n "$(git status --porcelain)" ] || [ "$(git rev-parse 'HEAD^{tree}')" != "$tree" ]; then
   echo "run-tests: the worktree has uncommitted changes or changed during the run: this run is not recorded."
-elif ! grep -qxF "$tree $key" "$record" 2>/dev/null; then
+elif ! recorded "$tree"; then
   echo "$tree $key" >> "$record"
 fi
