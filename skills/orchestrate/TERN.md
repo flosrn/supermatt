@@ -24,7 +24,7 @@ Outside-program delivery uses `--from supermatt-merge-train`. The receiving user
 
 A registered live shim worker can fall back through `HERDR agent prompt NAME TEXT` without `--wait`, checking its exit status. The shim cannot prompt a coordinator it did not launch: naming or registering its pane creates no surface record. Adopt an existing coordinator through its own `--until-event` host job, or have the user `/restart` an inbox-off session and explicitly opt into the sender above. Until either channel is available, describe operator notification honestly; never type raw pane input as a substitute. A continuous watch without `--until-event` supplies no host-result wake by itself.
 
-When neither owner nor coordinator can receive a turn, `tern-notify.mjs --pane BLOCK "TITLE" "BODY"` targets the coordinator's operator, or the originating `TERN_PANE` when no coordinator is supplied. It is a toast/inbox notification, not an OMP message. Report the selected fallback and any unavailable route honestly; a dry-run route plan does not prove delivery.
+When neither owner nor coordinator can receive a turn, `tern-notify.mjs --pane BLOCK "TITLE" "BODY"` targets the coordinator's operator, or the originating `TERN_PANE` when no coordinator is supplied. It is a toast/inbox notification, not an OMP message. It and the Grok bot, where the operator has set one up, are the only operator alerts: never substitute a macOS notification raised by a script (`osascript`). Report the selected fallback and any unavailable route honestly; a dry-run route plan does not prove delivery.
 
 ## Answer an OMP form
 
