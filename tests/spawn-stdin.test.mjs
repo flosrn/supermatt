@@ -53,7 +53,7 @@ function args(text, separator = ",") {
     }
   }
   parts.push(text.slice(start).trim());
-  return parts.filter(Boolean);
+  return separator === "," ? parts.filter(Boolean) : parts;
 }
 
 // Blanks comments, keeping line breaks and offsets, so commented-out text never reads as code. Quoted strings,
@@ -136,31 +136,42 @@ const detaches = (value) => {
   return ["ignore", "inherit"].includes(stringLiteral(first));
 };
 
-// What a caller passes as data: a string or template literal, a constructed buffer, a concatenation with a string
-// literal, or a variable, property or call result. A keyword value (null, undefined, false, void ...) and any other
-// operator may evaluate to nothing, so it proves no input.
-function feeds(value) {
+const unwrap = (value) => {
   while (value.startsWith("(") && closing(value, 0) === value.length) value = value.slice(1, -1).trim();
-  if (stringLiteral(value) !== null) return true;
-  const operands = args(value, "+");
-  if (operands.length > 1) return operands.some((operand) => stringLiteral(operand) !== null);
-  const [reference] = /^(?:new\s+)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/.exec(value) ?? [""];
-  if (!reference || /^(?:null|undefined|void|false|true|NaN|Infinity|typeof|delete|await)\b/.test(value)) return false;
-  const rest = value.slice(reference.length).trim();
+  return value;
+};
+
+// A variable, property or call result, optionally constructed with `new`; a keyword value (null, undefined,
+// false, void ...) or anything with an operator is not one.
+function reference(value) {
+  const [head] = /^(?:new\s+)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/.exec(value) ?? [""];
+  if (!head || /^(?:null|undefined|void|false|true|NaN|Infinity|typeof|delete|await)\b/.test(value)) return false;
+  const rest = value.slice(head.length).trim();
   return rest === "" || (rest.startsWith("(") && closing(rest, 0) === rest.length);
 }
 
+// What a caller passes as data: a string or template literal, a reference, or a concatenation of those holding at
+// least one string literal. Any other operator may evaluate to nothing, so it proves no input.
+function feeds(value) {
+  const operands = args(unwrap(value), "+").map(unwrap);
+  const literal = (operand) => stringLiteral(operand) !== null;
+  if (operands.includes("")) return false;
+  if (operands.length === 1) return literal(operands[0]) || reference(operands[0]);
+  return operands.some(literal) && operands.every((operand) => literal(operand) || reference(operand));
+}
+
 // An accessor or method property's key: `get input() {}`, `async report() {}`.
-const methodKey = /^(?:(?:get|set|async)\s+)?\*?\s*(?:([A-Za-z_$][\w$]*)|(["'])([^"']*)\2)\s*\(/;
+const methodKey = /^(?:(?:get|set|async)\s+)?\*?\s*(?:([A-Za-z_$][\w$]*)|(["'])([^"'\\]*)\2)\s*\(/;
 
 // Whether an options literal's own top-level properties ignore or inherit stdin, or feed it an input. Only plain
 // `key: value` and shorthand properties settle stdio or input: an accessor or method named stdio or input unproves
-// that one, and a spread or computed key may redefine either, so it unproves both until a later plain property.
+// that one, and a spread, computed key or escaped key may redefine either, so it unproves both until a later plain
+// property.
 function stdinIsSafe(literal) {
   let detached = false;
   let fed = false;
   for (const part of args(literal.slice(1, -1))) {
-    const property = /^(?:([A-Za-z_$][\w$]*)|(["'])([^"']*)\2)\s*(?::\s*([\s\S]*))?$/.exec(part);
+    const property = /^(?:([A-Za-z_$][\w$]*)|(["'])([^"'\\]*)\2)\s*(?::\s*([\s\S]*))?$/.exec(part);
     if (!property) {
       const method = methodKey.exec(part);
       const key = method && (method[1] ?? method[3]);
@@ -283,7 +294,11 @@ test("only a plain literal stdio or a present input value proves stdin, whatever
     'execFileSync("cat", [], { input: new Uint8Array([104, 105]) });',
     'execFileSync("cat", [], { input: "hello", get note() { return 1; } });',
     'execFileSync("git", [], { stdio: "ignore", async report() {} });',
+    'execFileSync("git", [], { input: null && "hel" + "lo" });',
+    'execFileSync("git", [], { stdio: "ignore", get "st\\u0064io"() { return "pipe"; } });',
+    'execFileSync("git", [], { input: "x", "in\\u0070ut": null });',
+    'execFileSync("cat", [], { input: ("hel") + ("lo") });',
   ].join("\n"));
   const at = (line) => `${relative(repo, file)}:${line}: execFileSync`;
-  assert.deepEqual(pipedStdinSpawns([root]), [1, 2, 3, 4, 5, 6, 7, 8, 13, 14].map(at));
+  assert.deepEqual(pipedStdinSpawns([root]), [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 20, 21, 22].map(at));
 });
