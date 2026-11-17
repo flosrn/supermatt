@@ -434,6 +434,51 @@ test("a start timeout does not keep the name once the pane holds a process other
   }
 });
 
+test("a start timeout does not keep a name after its last foreground read becomes unavailable", (t) => {
+  const w = lane(t, { fakeTime: true, launch: { ...ready, states: Array(20).fill(null), failureAfterRun: { command: "inspect", skip: 1, remaining: 100, message: "os error 35" } } });
+  const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "1s");
+  assert.equal(r.error?.code, "timeout", r.stderr);
+  assert.match(r.error.message, /was not kept/);
+  assert.match(r.error.message, /could not read/);
+  assert.ok(!existsSync(join(w.stateDir, "names", "app-work-1-1.json")));
+  w.edit((x) => { x.failure.remaining = 0; });
+  assert.equal(w.run("agent", "get", "app-work-1-1").error?.code, "agent_not_found");
+});
+
+test("a start timeout keeps its error code when checking a stale name fails", (t) => {
+  const w = lane(t, { fakeTime: true });
+  assert.equal(w.run("agent", "rename", "13", "app-work-1-1").code, 0);
+  w.edit((x) => {
+    x.panes[13].foreground = omp(99);
+    x.launch = { ...ready, states: Array(20).fill(null), failureAfterRun: { command: "process", skip: 5, remaining: 1, message: "the session daemon did not answer" } };
+  });
+  const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "1s");
+  assert.equal(r.error?.code, "timeout", r.stderr);
+  assert.match(r.error.message, /was not kept/);
+  assert.match(r.error.message, /the session daemon did not answer/);
+  assert.equal(w.run("agent", "get", "app-work-1-1").error?.code, "agent_not_found");
+});
+
+test("a timed-out worker keeps its name across another start when its record is late and its process query fails", (t) => {
+  const w = lane(t, { fakeTime: true, launch: { ...ready, noRecord: true } });
+  const started = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "1s");
+  assert.equal(started.error?.code, "timeout", started.stderr);
+  assert.match(started.error.message, /was kept/);
+  const record = JSON.parse(readFileSync(join(w.stateDir, "names", "app-work-1-1.json"), "utf8")).record;
+  assert.ok(!existsSync(record));
+  w.edit((x) => {
+    x.panes[51] = { tab: 6, title: "zsh", cwd: "/repo/wt", child: shell(61), foreground: shell(61) };
+    x.panes[50].processFails = 1;
+    x.launch = { ...ready, pid: 4243 };
+  });
+  const other = w.run("agent", "start", "app-work-1-2", "--kind", "omp", "--pane", "51");
+  assert.equal(other.code, 0, other.stderr);
+  assert.equal(w.run("agent", "get", "app-work-1-1").json?.result.agent.pid, 4242);
+  writeFileSync(record, readFileSync(w.record(51)));
+  w.edit((x) => { x.panes[50].omp.record = record; });
+  assert.equal(w.run("agent", "prompt", "app-work-1-1", "go").code, 0);
+});
+
 test("a start whose launch fails does not keep the name, and says so", (t) => {
   const w = lane(t, { failure: { command: "run", remaining: 1, message: "launch denied" } });
   const r = w.run("agent", "start", "app-work-1-1", "--kind", "omp", "--pane", "50", "--timeout", "1s");

@@ -488,7 +488,7 @@ function sweepRecords() {
   }
 }
 function still(record) {
-  try { return Date.now() - statSync(record).mtimeMs > ORPHAN_MS; } catch { return true; }
+  try { return Date.now() - statSync(record).mtimeMs > ORPHAN_MS; } catch { return false; }
 }
 
 // ---- arguments
@@ -647,7 +647,7 @@ const commands = {
         try {
           claim(name, last);
         } catch (c) {
-          if (c.code !== "agent_name_in_use") throw c;
+          if (!(c instanceof Failure)) throw c;
           return c.message;
         }
       })();
