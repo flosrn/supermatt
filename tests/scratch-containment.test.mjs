@@ -317,6 +317,17 @@ test("scratch containment blocks a virtualenv .pth path line outside scratch and
   assert.match(result.stderr, /\.pth path escapes scratch: .*site-packages\/_editable_impl_engine\.pth -> .*source\/src;/m);
 });
 
+test("scratch containment inspects a .pth linked to an internal regular file", (t) => {
+  const { root, scratch } = fixture(t);
+  const { sitePackages } = environmentFiles(scratch);
+  const target = join(scratch, "data/editable-path.txt");
+  writeFileSync(target, `${join(root, "source/src")}\n`);
+  symlinkSync(relative(sitePackages, target), join(sitePackages, "engine.pth"));
+  const result = run(scratch);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /\.pth path escapes scratch: .*site-packages\/engine\.pth -> .*source\/src;/m);
+});
+
 test("scratch containment blocks a virtualenv script whose shebang names an interpreter outside scratch", (t) => {
   const { root, scratch } = fixture(t, "scratch-containment-");
   const { venv } = environmentFiles(scratch);

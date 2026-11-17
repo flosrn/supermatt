@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, closeSync, constants, cpSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { LAUNCHER, canonicalHome, lockedSystemFile, outside, shellWord } from "./scratch-paths.mjs";
 
 // Each copied runtime lives inside its own virtualenv, which repositories already ignore.
@@ -322,6 +322,15 @@ function prepare(repositoryArgument, scratchArgument) {
     relocateRuntime(venv, context, log);
     updateConfig(venv, context, log);
     rewriteSourcePaths(venv, context, rewriter, log);
+  }
+  const containment = spawnSync(process.execPath, [
+    ...(process.versions.bun ? ["--no-env-file"] : []),
+    fileURLToPath(new URL("./check-scratch-containment.mjs", import.meta.url)), root,
+  ], { cwd: "/", encoding: "utf8" });
+  if (containment.status !== 0) {
+    throw new Error(containment.error?.message || containment.stderr.trim() || `containment check exited ${containment.status}`);
+  }
+  for (const venv of environments) {
     verify(venv);
   }
   const count = `${environments.length} virtualenv${environments.length === 1 ? "" : "s"}`;

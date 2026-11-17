@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalHome, canonicalPath, lockedSystemEntry, lockedSystemFile, outside, scriptInterpreter } from "./scratch-paths.mjs";
@@ -21,6 +21,7 @@ function entries(path) {
     throw error;
   }
 }
+
 
 
 function head(file) {
@@ -95,8 +96,9 @@ if (!directory || extra.length) {
         } else if (entry.name === "pyvenv.cfg" && entry.isFile()) {
           checkScripts(current, root, home);
         }
+        // Python's site module skips a .pth it cannot read as a file, such as a link to a directory.
         if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".pth") &&
-            ["site-packages", "dist-packages"].includes(basename(current))) {
+            ["site-packages", "dist-packages"].includes(basename(current)) && statSync(path).isFile()) {
           for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
             const value = line.trim();
             if (!value || value.startsWith("#") || /^import[ \t]/.test(value)) continue;

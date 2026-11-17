@@ -338,6 +338,38 @@ test("a scratch tree without a virtualenv needs no change", (t) => {
   assert.match(result.stdout, /^Scratch Python ready: no virtualenv under /);
 });
 
+test("the helper checks the whole scratch before any virtualenv executes startup code", {
+  skip: !existsSync(systemPython) && `${systemPython} is missing`,
+}, (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "scratch-python-startup-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = join(root, "source");
+  const scratch = join(root, "scratch");
+  const external = join(root, "external-site");
+  mkdirSync(source);
+  mkdirSync(external);
+  const witnesses = [join(root, "early-startup"), join(root, "external-startup")];
+  for (const [index, name] of ["a-good", "z-linked"].entries()) {
+    const venv = join(source, name);
+    const created = spawnSync(systemPython, ["-m", "venv", "--without-pip", venv], { encoding: "utf8" });
+    assert.equal(created.status, 0, created.stderr);
+    const site = join(venv, "lib", readdirSync(join(venv, "lib"))[0], "site-packages");
+    writeFileSync(join(site, "witness.pth"), `import pathlib; pathlib.Path(${JSON.stringify(witnesses[index])}).write_text('started')\n`);
+  }
+  copy(source, scratch);
+  const linked = join(scratch, "z-linked/lib");
+  const site = join(linked, readdirSync(linked)[0], "site-packages");
+  writeFileSync(join(external, "witness.pth"), readFileSync(join(site, "witness.pth")));
+  rmSync(site, { recursive: true });
+  symlinkSync(external, site);
+  const before = snapshot(source);
+  const result = prepare(source, scratch);
+  assert.deepEqual(witnesses.map((path) => existsSync(path)), [false, false], "Python startup ran before the whole scratch was confined");
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /Scratch Python preparation failed: Unsafe scratch tree/);
+  assert.deepEqual(snapshot(source), before);
+});
+
 test("a runtime copy left by an interrupted run is replaced by a complete one", needsPython, (t) => {
   const { root, source } = fixture(t) ?? {};
   if (!source) return;
@@ -385,7 +417,8 @@ test("the helper writes no runtime through a linked .scratch-python and leaves l
   writeFileSync(join(root, "elsewhere/tool"), "");
   symlinkSync(join(root, "elsewhere/tool"), join(scratch, ".venv/bin/tool"));
   result = prepare(source, scratch);
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /symlink escapes scratch: .*\.venv\/bin\/tool -> /);
   assert.equal(readlinkSync(join(scratch, ".venv/bin/tool")), join(root, "elsewhere/tool"));
   assert.match(check(scratch).stderr, /symlink escapes scratch: .*\.venv\/bin\/tool -> /);
 });
