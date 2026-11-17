@@ -4,7 +4,7 @@
 // as {"error":{code,message}} with exit 1, and anything outside this subset
 // exits 2. See ../TERN.md.
 import { spawnSync } from "node:child_process";
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -471,13 +471,13 @@ function claim(name, agent) {
 // Clears each name whose omp has left its pane, with its record, then removes
 // the records no name holds once they have been still for ORPHAN_MS: an omp
 // that never came up, or one whose name was cleared before it exited. A name
-// whose pane Tern does not find here (closed, or in another window's sessions)
-// is cleared only once its record has been still that long too.
+// whose pane Tern does not find here is cleared once its record has been still
+// that long too, or immediately when no record exists.
 function sweepRecords() {
   for (const n of names()) {
     if (!n.record) continue;
     const pid = foregroundPid(n.pane);
-    if (pid === undefined ? still(n.record) : pid !== n.pid) forget(n.name);
+    if (pid === undefined ? still(n.record) || (!existsSync(n.record) && !snapshot().panes.has(n.pane)) : pid !== n.pid) forget(n.name);
   }
   const held = new Set(names().map((n) => n.record).filter(Boolean));
   let files;
@@ -615,10 +615,9 @@ const commands = {
     } catch (e) {
       throw e instanceof Failure ? new Failure(e.code, `${e.message}; the name ${name} was not kept: the launch failed`) : e;
     }
-    // The omp this start launched is the first omp Tern shows in the pane's
-    // foreground, which held its shell until the launch. `last` is the latest
-    // read: the agent, or undefined for none; `unread` marks a read that failed
-    // or ran out of time, which confirms nothing.
+    // Track the first observed omp pid and the latest read. A timeout may keep
+    // its name only with this launch's surface record too: a foreign omp can
+    // replace the launch before the first poll. `unread` confirms nothing.
     let launched, last, unread;
     let found;
     try {
@@ -644,6 +643,7 @@ const commands = {
         if (unread) return `Tern could not read the pane's foreground to confirm omp pid ${launched} is still there`;
         if (!last) return `omp pid ${launched} has left the pane's foreground`;
         if (last.pid !== launched) return `the pane's foreground is pid ${last.pid}, not the omp pid ${launched} this start launched`;
+        if (!last[SURFACE]?.doc) return "this launch has written no surface record, so its omp pid cannot be confirmed";
         try {
           claim(name, last);
         } catch (c) {
