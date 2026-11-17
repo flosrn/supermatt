@@ -1,8 +1,20 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
-import { execFileSyncWithStderr } from "../../../references/exec-file-sync.mjs";
+
+// This script is copied alone by review and QA, so its discovery call cannot import shared helpers.
+function execFileSyncWithStderr(file, args, options) {
+  const result = spawnSync(file, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw Object.assign(result.error, result);
+  if (result.status !== 0) {
+    let message = `Command failed: ${[options.argv0 || file, ...args].join(" ")}`;
+    if (result.stderr?.length) message += `\n${result.stderr.toString()}`;
+    throw Object.assign(new Error(message), result);
+  }
+  return result.stdout;
+}
 
 function snapshot(root, env, nested = false) {
   const absolute = path => Buffer.concat([root, Buffer.from("/"), path]);

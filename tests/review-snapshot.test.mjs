@@ -39,7 +39,18 @@ function snapshot(root, env) {
   return result.stdout;
 }
 
-test("snapshot relays local environment discovery warnings without changing JSON", (t) => {
+test("snapshot copied alone outside the tree returns the same JSON", (t) => {
+  const { base, root } = workspace(t);
+  const baseline = snapshot(root, gitEnv);
+  const copy = join(base, "snapshot-tree.mjs");
+  writeFileSync(copy, readFileSync(script));
+  const result = spawnSync(process.execPath, [copy, root], { env: gitEnv, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, baseline);
+  assert.equal(result.stderr, "");
+});
+
+test("standalone snapshot relays local environment discovery warnings without changing JSON", (t) => {
   const { base, root } = workspace(t);
   const baseline = snapshot(root, gitEnv);
   const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8", env: gitEnv }).trim();
@@ -51,7 +62,9 @@ if [ "$1 $2" = 'rev-parse --local-env-vars' ]; then
 fi
 exec "$REAL_GIT" "$@"
 `, { mode: 0o755 });
-  const result = run(root, { ...gitEnv, PATH: bin, REAL_GIT: realGit });
+  const copy = join(base, "snapshot-tree.mjs");
+  writeFileSync(copy, readFileSync(script));
+  const result = spawnSync(process.execPath, [copy, root], { env: { ...gitEnv, PATH: bin, REAL_GIT: realGit }, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, baseline);
   assert.equal(result.stderr, "git discovery warning\n");
