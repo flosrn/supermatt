@@ -3,9 +3,13 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 
 const adapter = new URL("../references/exec-file-sync.mjs", import.meta.url).href;
+// The helper ships for Node, so compare it with Node's own execFileSync even
+// when Bun runs this file: Bun's errors carry extra source-location fields and
+// lack the `error` self reference that Node's execFileSync error holds.
+const node = process.versions.bun ? "node" : process.execPath;
 
-function probe(implementation, child, options = {}, file = process.execPath) {
-  return spawnSync(process.execPath, ["--input-type=module", "-e", `
+function probe(implementation, child, options = {}, file = node) {
+  return spawnSync(node, ["--input-type=module", "-e", `
     import { ${implementation === adapter ? "execFileSyncWithStderr as execFileSync" : "execFileSync"} } from ${JSON.stringify(implementation)};
     const normalize = value => Buffer.isBuffer(value) ? { buffer: [...value] } : Array.isArray(value) ? value.map(normalize) : value;
     try {
