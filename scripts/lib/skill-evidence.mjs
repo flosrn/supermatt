@@ -61,7 +61,7 @@ export function manifest(root, { packaging = true } = {}) {
 export function project(source, destination) {
   mkdirSync(destination, { recursive: true });
   for (const name of readdirSync(source)) {
-    if ([".git", "scripts", "tests", ".github"].includes(name)) continue;
+    if ([".git", "scripts", "tests", ".github", "lefthook.yml"].includes(name)) continue;
     cpSync(join(source, name), join(destination, name), { recursive: true, dereference: false });
   }
 }
