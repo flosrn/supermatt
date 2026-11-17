@@ -390,29 +390,47 @@ test("a failed or refused read leaves the last observation visibly stale with it
   }
 });
 
-test("an observation goes stale without a live reader, or once its PR left the observed set", async (t) => {
-  const f = fixture(t);
-  f.world.comments[7] = [[]];
-  await f.watch();
-  const unattended = await f.call("status", ["--pr", "7"]);
-  assert.deepEqual([unattended.outcome, unattended.reasons], ["unknown", ["no observer is running"]]);
-  f.world.issues = [[]];
-  await f.watch();
-  const dropped = await f.call("status", ["--pr", "7"]);
-  assert.deepEqual(dropped.reasons, ["no observer is running", "PR 7 was not in the latest observation"]);
-  assert.equal(dropped.stale, true);
-});
+// A status read while another watcher holds the leader lock.
+async function statusUnderLeader(f, overrides) {
+  const lock = join(f.state, "watch.lock");
+  mkdirSync(lock);
+  writeFileSync(join(lock, "999-aaaa.json"), JSON.stringify({ pid: 999 }));
+  try { return await f.call("status", ["--pr", "7"], { ...overrides, alive: () => true }); }
+  finally { rmSync(lock, { recursive: true }); }
+}
 
-test("two observations in the same millisecond still tell that the latest one dropped a PR", async (t) => {
+// Both observations fall in the same millisecond: only their identity tells them apart.
+test("an observation goes stale without a live reader, or once its PR left the observed set", async (t) => {
   const f = fixture(t);
   f.world.comments[7] = [[]];
   const c = clock(f);
   await f.call("watch", ["--once"], c.overrides);
+  const unattended = await f.call("status", ["--pr", "7"], c.overrides);
+  assert.deepEqual([unattended.outcome, unattended.reasons], ["unknown", ["no observer is running"]]);
+  const led = await statusUnderLeader(f, c.overrides);
+  assert.deepEqual([led.outcome, led.reasons], ["ok", []]);
   f.world.issues = [[]];
   await f.call("watch", ["--once"], c.overrides);
   const dropped = await f.call("status", ["--pr", "7"], c.overrides);
   assert.deepEqual(dropped.reasons, ["no observer is running", "PR 7 was not in the latest observation"]);
   assert.equal(dropped.stale, true);
+  const droppedUnderLeader = await statusUnderLeader(f, c.overrides);
+  assert.deepEqual([droppedUnderLeader.outcome, droppedUnderLeader.reasons], ["unknown", ["PR 7 was not in the latest observation"]]);
+  assert.equal(droppedUnderLeader.stale, true);
+});
+
+// The digest stands for what the PR is, not for which observation read it.
+test("an unchanged PR never satisfies a wait for change, however many observations read it", async (t) => {
+  const f = fixture(t);
+  f.world.comments[7] = [[]];
+  await f.register();
+  const c = clock(f);
+  await f.call("watch", ["--once"], c.overrides);
+  const seen = (await f.call("status", ["--pr", "7"], c.overrides)).pr.digest;
+  await assert.rejects(f.call("wait", ["--pr", "7", "--for", "change", "--after", seen, "--timeout", "180"], c.overrides), /timed out waiting for change on PR 7/);
+  f.world.pulls[7] = pr(7, { head: { sha: NEXT } });
+  const moved = await f.call("wait", ["--pr", "7", "--for", "change", "--after", seen], c.overrides);
+  assert.equal(moved.result, "changed");
 });
 
 // A watcher older than observation ids writes neither id; during a merge it can share the state with a newer one.
@@ -432,9 +450,9 @@ test("observations an older watcher wrote without ids still tell whether the lat
     f.world.issues = [prs];
     await f.call("watch", ["--once"], c.overrides);
   };
-  const reasons = async () => (await f.call("status", ["--pr", "7"], c.overrides)).reasons;
-  const held = ["no observer is running"];
-  const dropped = [...held, "PR 7 was not in the latest observation"];
+  const reasons = async () => (await statusUnderLeader(f, c.overrides)).reasons;
+  const held = [];
+  const dropped = ["PR 7 was not in the latest observation"];
   await observe([issue()]);
   legacy(observer, snapshot);
   assert.deepEqual(await reasons(), held, "an older watcher held PR 7");
