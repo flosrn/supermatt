@@ -17,8 +17,8 @@ if (!title || !/^[0-9]+$/.test(pane || "")) {
 
 // OSC 777 splits its fields on ";", and a control character would end the sequence early.
 const clean = (s) => s.replace(/[\x00-\x1f\x7f;]/g, " ");
-const { child } = JSON.parse(execFileSync("tern", ["process", pane, "--json"], { encoding: "utf8" }));
-const tty = execFileSync("ps", ["-o", "tty=", "-p", String(child.pid)], { encoding: "utf8" }).trim();
+const { child } = JSON.parse(execFileSync("tern", ["process", pane, "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+const tty = execFileSync("ps", ["-o", "tty=", "-p", String(child.pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 if (!/^(ttys\d+|pts\/\d+)$/.test(tty)) {
   console.error(`tern-notify: the shell of pane ${pane} has no terminal (${tty || "none"})`);
   process.exit(1);

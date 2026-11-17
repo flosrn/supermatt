@@ -155,7 +155,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   }
   try {
-    const issues = local ? loadLocal(root) : JSON.parse(execFileSync("gh", ["api", "repos/{owner}/{repo}/issues?state=all&per_page=100", "--paginate", "--slurp"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 })).flat();
+    const issues = local ? loadLocal(root) : JSON.parse(execFileSync("gh", ["api", "repos/{owner}/{repo}/issues?state=all&per_page=100", "--paginate", "--slurp"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 })).flat();
     const result = keys === undefined ? { issues: pick(issues, ...args), skipped: [] } : only(issues, keys, ...args);
     for (const i of result.issues) console.log(`${key(i)}\t${i.title.replace(/[\t\r\n]/g, " ")}\t${i.stage}\t${i.tier}`);
     for (const { key, reason } of result.skipped) console.error(`skipped\t${key}\t${reason}`);

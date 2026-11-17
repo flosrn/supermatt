@@ -620,7 +620,7 @@ function main(argv) {
     id: { type: "string" }, fingerprint: { type: "string" }, disposition: { type: "string" }, key: { type: "string" },
     outcome: { type: "string" }, note: { type: "string" },
   } });
-  const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+  const git = (...args) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   const pr = values.pr == null ? null : command === "open" ? values.pr : Number(values.pr);
   if (command !== "open" && pr != null && !Number.isInteger(pr)) throw new Error(`--pr must be a PR number: ${values.pr}`);
   if (command !== "open" && !values.state) throw new Error(`--state FILE is required\n${USAGE}`);

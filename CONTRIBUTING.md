@@ -66,6 +66,7 @@ bun test --timeout=30000 tests/
 
 `tests/scratch-copy.test.mjs` compares clone and forced-fallback copies with rsync and checks metadata exclusion, symlinks, modes, source isolation, and special files. `tests/tdd-scratch-commit.test.mjs` extracts and executes the `tdd` skill's documented shell blocks. It checks linked-worktree isolation with inherited Git variables and redirecting templates, force-tracked ignored files and deletions, successive mutant independence, and interrupted TEST cleanup.
 The common-directory assertion resolves filesystem aliases such as macOS's `/var` to `/private/var`. Raw non-UTF-8 filename coverage runs where the fixture filesystem supports those names; only a failed creation with `EILSEQ`, as on APFS, skips that case.
+`tests/spawn-stdin.test.mjs` scans the shipped JavaScript under `skills/`, `references/` and `scripts/` and fails on an `execFileSync`, `spawnSync` or `execSync` call that neither ignores nor inherits stdin nor passes `input`: inside Codex's Linux sandbox such a call throws `EPERM` although the child succeeded.
 
 The changelog guard reports the protected base heading and complete new-side range for mixed Unreleased/released hunks, because replacement lines cannot be unambiguously aligned. Edits wholly within protected content report their new-side start line; pure deletions use Git's new-side anchor.
 

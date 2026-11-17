@@ -69,7 +69,7 @@ try {
   if (process.argv.length !== 3) throw new Error("Usage: snapshot-tree.mjs <repository-root>");
   process.chdir(realpathSync(process.argv[2]));
   const env = { ...process.env };
-  const localVariables = execFileSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8" }).trim().split("\n");
+  const localVariables = execFileSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim().split("\n");
   for (const key of [...localVariables, "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM"]) delete env[key];
   process.stdout.write(JSON.stringify(snapshot(Buffer.from(process.cwd()), env)) + "\n");
 } catch (error) {

@@ -52,7 +52,7 @@ const writeList = (name, paths) => writeFileSync(join(dir, name), paths.map((pat
 if (mode === "prepare") {
   // An earlier run's lists must not survive a preparation that stops below.
   for (const name of ["sources.lst", "deleted.lst"]) rmSync(join(dir, name), { force: true });
-  const listed = spawnSync("git", ["-C", repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { encoding: "utf8", maxBuffer: 1 << 30 });
+  const listed = spawnSync("git", ["-C", repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1 << 30 });
   if (listed.status !== 0) {
     console.error(`git ls-files failed in ${repo}: ${listed.stderr.trim()}`);
     process.exit(2);
