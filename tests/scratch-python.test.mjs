@@ -393,6 +393,26 @@ test("the helper prepares a copied runtime that holds pip's install record of a 
   assert.ok(existsSync(join(scratch, ".venv/.scratch-python/runtime/lib/python3.12/site-packages/pip-26.2.2.dist-info/direct_url.json")));
 });
 
+// A #! line cannot name a path holding a space, so the helper writes the launcher pip and uv use for one; a source
+// path holding a space still names the whole repository path, not its first word.
+test("the helper turns a #! line naming a repository path with a space into a /bin/sh exec launcher", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "scratch-python-space-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const runtime = join(root, "runtime");
+  mkdirSync(join(runtime, "bin"), { recursive: true });
+  writeFileSync(join(runtime, "bin/python3.12"), "#!/bin/sh\ncd \"$(dirname \"$0\")/..\" && pwd -P\n", { mode: 0o755 });
+  const source = join(root, "source (dir)");
+  mkdirSync(join(source, ".venv/bin"), { recursive: true });
+  writeFileSync(join(source, ".venv/pyvenv.cfg"), `home = ${join(runtime, "bin")}\n`);
+  symlinkSync(join(runtime, "bin/python3.12"), join(source, ".venv/bin/python"));
+  writeFileSync(join(source, ".venv/bin/engine"), `#!${join(source, ".venv/bin/python")} -I\nprint()\n`, { mode: 0o755 });
+  const scratch = copy(source, join(root, "scratch (copy)"));
+  const result = prepare(source, scratch);
+  assert.equal(result.status, 0, result.stderr);
+  const python = `'${join(scratch, ".venv/bin/python")}'`;
+  assert.equal(readFileSync(join(scratch, ".venv/bin/engine"), "utf8"), `#!/bin/sh\n'''exec' ${python} -I "$0" "$@"\n' '''\nprint()\n`);
+});
+
 test("a runtime copy left by an interrupted run is replaced by a complete one", needsPython, (t) => {
   const { root, source } = fixture(t) ?? {};
   if (!source) return;
