@@ -98,12 +98,10 @@ function pathRewriter(repositoryPaths, scratchPaths, scratch) {
   }
   const alternatives = [...targets.keys()].sort((left, right) => right.length - left.length).map(escapeRegExp);
   const pattern = new RegExp(`(?<!${PATH_CHARACTER})(?:${alternatives.join("|")})(?!${PATH_CHARACTER})`, "g");
-  const leading = new RegExp(`^(?:${alternatives.join("|")})(?!${PATH_CHARACTER})`);
   const needles = repositoryPaths.flatMap((path) => [path, jsonEscaped(path), asciiEscaped(path), ...urlPaths(path)].map((form) => Buffer.from(form, "utf8")));
   return {
     mentions: (buffer) => needles.some((needle) => buffer.includes(needle)),
     rewrite: (text) => text.replace(pattern, (match) => targets.get(match)),
-    leading: (text) => text.match(leading)?.[0] ?? "",
   };
 }
 
@@ -114,9 +112,18 @@ const UNWRITABLE_ROOT = /['"\\\x00-\x1f\x7f]/;
 const CONTROL = /[\x00-\x1f\x7f]/;
 const shellQuote = (path) => `'${path.replaceAll("'", () => "'\\''")}'`;
 
+function namesFile(path) {
+  try {
+    return statSync(Buffer.from(path, "latin1")).isFile();
+  } catch {
+    return false;
+  }
+}
+
 // A launcher script gets its interpreter requoted. A rewritten #! line longer than the kernel reads or holding
 // a space becomes a launcher, as pip and uv write it. Text is latin1, so a line's length is its size in bytes.
-// The #! interpreter is the line's first word, or a repository path holding a space with the word it begins.
+// A #! interpreter path holding a space is the longest run of the line's words that, rewritten, names a file in
+// the copy; any other line keeps its first word.
 function rewriteScript(text, rewriter) {
   const [first, second = ""] = text.split("\n", 2);
   if (first.startsWith("#!") && second.startsWith(LAUNCHER)) {
@@ -127,8 +134,8 @@ function rewriteScript(text, rewriter) {
   }
   const rest = rewriter.rewrite(text.slice(first.length));
   const [, words = "", carriage = ""] = first.match(/^#!\s*(.*?)(\r?)$/) ?? [];
-  const start = rewriter.leading(words);
-  const interpreter = start + words.slice(start.length).match(/^\S*/)[0];
+  const ends = [...words.matchAll(/\s+/g)].map((space) => space.index).concat(words.length).reverse();
+  const interpreter = ends.map((end) => words.slice(0, end)).find((path) => path && namesFile(rewriter.rewrite(path))) ?? words.match(/^\S*/)[0];
   const options = words.slice(interpreter.length);
   const replacement = rewriter.rewrite(interpreter);
   if (replacement === interpreter) return rewriter.rewrite(first) + rest;
