@@ -1,6 +1,6 @@
 name: Skill idea
 description: Propose a new skill or a change to how an existing skill works
-labels: [enhancement]
+labels: [enhancement, needs-triage]
 body:
   - type: textarea
     id: problem
