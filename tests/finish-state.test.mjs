@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -926,4 +926,108 @@ test("lane refuses a replacement pane owned by another lane without changing byt
   assert.deepEqual(readFileSync(file), before);
   assert.equal(mode(file), 0o640);
   assert.deepEqual(readdirSync(dirname(file)), ["finish.json"]);
+});
+
+function scopeFixture(t) {
+  const file = stateFile(t);
+  mkdirSync(dirname(file));
+  const root = realpathSync(dirname(file));
+  return { file, root };
+}
+
+function filterScope(file, paths) {
+  writeFileSync(file, JSON.stringify({ owned: [], retained: [], laneRetained: [], prunable: [], ...paths }) + "\n");
+  const before = readFileSync(file);
+  return (expected) => {
+    const result = run("filter-scope", file);
+    assert.deepEqual(readFileSync(file), before);
+    if (typeof expected === "number") {
+      assert.equal(result.status, expected, result.stderr);
+      assert.equal(result.stdout, "");
+    } else {
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, "");
+      assert.deepEqual(JSON.parse(result.stdout), expected);
+    }
+    return result;
+  };
+}
+
+test("filter-scope keeps live paths and drops only missing inherited paths on each call", (t) => {
+  const { file, root } = scopeFixture(t);
+  const owned = join(root, "owned");
+  const lane = join(root, "retained for lane");
+  const inherited = join(root, "inherited");
+  const removed = join(root, "removed between calls");
+  const missing = join(root, "missing");
+  const dangling = join(root, "dangling");
+  for (const path of [owned, lane, inherited, removed]) mkdirSync(path);
+  symlinkSync(missing, dangling);
+
+  const filter = filterScope(file, {
+    owned: [owned, lane],
+    retained: [missing, inherited, removed, dangling, lane],
+    laneRetained: [lane],
+  });
+  filter({ owned: [owned, lane], retained: [inherited, removed, lane], droppedRetained: [missing, dangling] });
+  rmSync(removed, { recursive: true });
+  filter({ owned: [owned, lane], retained: [inherited, lane], droppedRetained: [missing, removed, dangling] });
+});
+
+for (const role of ["owned", "laneRetained"]) {
+  test(`filter-scope refuses a missing ${role} path even when listed as retained`, (t) => {
+    const { file, root } = scopeFixture(t);
+    const path = join(root, "missing worktree");
+    const { stderr } = filterScope(file, { [role]: [path], retained: [path] })(1);
+    assert.ok(stderr.includes(role), stderr);
+    assert.ok(stderr.includes(path), stderr);
+  });
+}
+
+test("filter-scope rejects relative paths, laneRetained outside retained, and missing prunable", (t) => {
+  const { file, root } = scopeFixture(t);
+  assert.match(filterScope(file, { retained: ["relative/worktree"] })(2).stderr, /retained/);
+  assert.match(filterScope(file, { laneRetained: [root] })(2).stderr, /laneRetained/);
+  assert.match(filterScope(file, { prunable: undefined })(2).stderr, /prunable/);
+});
+
+test("filter-scope drops inherited Git-prunable paths even when their directories remain", (t) => {
+  const { file, root } = scopeFixture(t);
+  const repo = join(root, "repo");
+  const absent = join(root, "absent worktree");
+  const remaining = join(root, "remaining directory");
+  const unrelated = join(root, "unrelated worktree");
+  const git = (...args) => {
+    const result = spawnSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+    return result.stdout;
+  };
+  git("init", "--quiet", repo);
+  git("-C", repo, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+    "commit", "--quiet", "--allow-empty", "--no-gpg-sign", "-m", "fixture");
+  for (const path of [absent, remaining, unrelated]) {
+    git("-C", repo, "worktree", "add", "--quiet", "--detach", path, "HEAD");
+  }
+  rmSync(absent, { recursive: true });
+  rmSync(join(remaining, ".git"));
+  rmSync(join(unrelated, ".git"));
+
+  const listing = git("-C", repo, "worktree", "list", "--porcelain", "-z");
+  const prunable = listing.split("\0\0").flatMap((record) => {
+    const [worktree, ...attributes] = record.split("\0");
+    return attributes.some((attribute) => attribute.startsWith("prunable ")) ? [worktree.slice("worktree ".length)] : [];
+  });
+  assert.deepEqual(new Set(prunable), new Set([absent, remaining, unrelated]));
+
+  filterScope(file, { owned: [repo], retained: [remaining, repo, absent], prunable })({
+    owned: [repo], retained: [repo], droppedRetained: [remaining, absent],
+  });
+  assert.equal(existsSync(absent), false);
+  assert.ok(statSync(remaining).isDirectory());
+
+  for (const role of ["owned", "laneRetained"]) {
+    const { stderr } = filterScope(file, { [role]: [remaining], retained: [remaining], prunable })(1);
+    assert.ok(stderr.includes(role), stderr);
+    assert.ok(stderr.includes(remaining), stderr);
+  }
 });

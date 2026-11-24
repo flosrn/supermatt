@@ -192,10 +192,60 @@ function laneWrite(state, number, values) {
   state.lanes[number] = lane;
 }
 
+function filterScope(scope) {
+  if (!object(scope)) fail(2, "root: must be an object");
+  for (const field of ["owned", "retained", "laneRetained", "prunable"]) {
+    if (!Array.isArray(scope[field])) fail(2, `${field}: must be an array`);
+    for (const [index, path] of scope[field].entries()) {
+      if (typeof path !== "string" || !isAbsolute(path) || path.includes("\0")) {
+        fail(2, `${field}[${index}]: must be an absolute path without NUL bytes`);
+      }
+    }
+  }
+
+  const { owned, retained, laneRetained, prunable } = scope;
+  const retainedPaths = new Set(retained);
+  for (const [index, path] of laneRetained.entries()) {
+    if (!retainedPaths.has(path)) fail(2, `laneRetained[${index}]: must also occur in retained`);
+  }
+
+  const prunablePaths = new Set(prunable);
+  const availability = new Map();
+  function unavailable(path) {
+    if (availability.has(path)) return availability.get(path);
+    let reason = null;
+    if (prunablePaths.has(path)) reason = "marked prunable by Git";
+    else {
+      try {
+        statSync(path);
+      } catch (error) {
+        if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error;
+        reason = "missing";
+      }
+    }
+    availability.set(path, reason);
+    return reason;
+  }
+
+  for (const field of ["owned", "laneRetained"]) {
+    for (const [index, path] of scope[field].entries()) {
+      const reason = unavailable(path);
+      if (reason) fail(1, `${field}[${index}]: ${JSON.stringify(path)} is ${reason}`);
+    }
+  }
+
+  const existingRetained = [];
+  const droppedRetained = [];
+  for (const path of retained) {
+    (unavailable(path) ? droppedRetained : existingRetained).push(path);
+  }
+  return { owned, retained: existingRetained, droppedRetained };
+}
+
 function main(argv) {
   const [command, ...args] = argv;
-  const commands = { create: ["repository", "run-key", "coordinator"], coordinator: [], lane: ["issue", "branch", "pane", "status", "park-reason"], "wait-set": [], "wait-clear": [], check: [] };
-  if (!Object.hasOwn(commands, command)) fail(2, "usage: expected create, coordinator, lane, wait-set, wait-clear or check");
+  const commands = { create: ["repository", "run-key", "coordinator"], coordinator: [], lane: ["issue", "branch", "pane", "status", "park-reason"], "wait-set": [], "wait-clear": [], check: [], "filter-scope": [] };
+  if (!Object.hasOwn(commands, command)) fail(2, "usage: expected create, coordinator, lane, wait-set, wait-clear, check or filter-scope");
   const options = Object.fromEntries(commands[command].map((key) => [key, { type: "string" }]));
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options });
   const count = command === "lane" || command === "wait-set" || command === "coordinator" ? 2 : 1;
@@ -214,6 +264,8 @@ function main(argv) {
     save(file, state, true);
   } else if (command === "check") {
     check(JSON.parse(readFileSync(file, "utf8")));
+  } else if (command === "filter-scope") {
+    console.log(JSON.stringify(filterScope(JSON.parse(readFileSync(file, "utf8")))));
   } else {
     const state = JSON.parse(readFileSync(file, "utf8"));
     if (object(state) && !Object.hasOwn(state, "state_version")) fail(1, "state_version: legacy record is not rewritten");
