@@ -1,6 +1,6 @@
 name: Bug report
 description: A skill did something other than what its SKILL.md says
-labels: [bug]
+labels: [bug, needs-triage]
 body:
   - type: markdown
     attributes:

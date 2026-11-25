@@ -1,0 +1,31 @@
+name: Triage label
+
+# Every new issue enters the triage queue, unless a skill already gave it a state.
+# to-spec, to-tickets, and wayfinder label an issue just after creating it, so wait, then read its live labels and body.
+
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Add needs-triage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          sleep 60
+          skip=$(gh issue view "$NUMBER" --json state,labels,body --jq '
+            .state != "OPEN"
+            or any(.labels[].name; IN("needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix") or startswith("wayfinder:"))
+            or (.body // "" | test("(?m)^## (What to build|Problem Statement)\\s*$"))')
+          if [ "$skip" = true ]; then echo "#$NUMBER already has a state or a skill template: skipped"; exit 0; fi
+          gh issue edit "$NUMBER" --add-label needs-triage
